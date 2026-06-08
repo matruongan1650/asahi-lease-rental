@@ -1,0 +1,371 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────
+   1. Tailwind v4 @theme — Design Tokens
+   ──────────────────────────────────────────────────────── */
+@theme {
+  /* ── Cobalt (Brand) Scale ── */
+  --color-cobalt-50:  #EEF1FF;
+  --color-cobalt-100: #DEE3FF;
+  --color-cobalt-200: #BCC6FF;
+  --color-cobalt-300: #93A2FB;
+  --color-cobalt-400: #6678F4;
+  --color-cobalt-500: #3A4DE8;
+  --color-cobalt-600: #141ED2;
+  --color-cobalt-700: #1018A8;
+  --color-cobalt-800: #121885;
+  --color-cobalt-900: #141A68;
+  --color-cobalt-950: #0C0F3D;
+
+  /* ── Neutral Scale ── */
+  --color-neutral-0:   #FFFFFF;
+  --color-neutral-50:  #FBFBFD;
+  --color-neutral-100: #F5F6FA;
+  --color-neutral-150: #ECEEF3;
+  --color-neutral-200: #DFE2EA;
+  --color-neutral-300: #C7CCD8;
+  --color-neutral-400: #9AA1B2;
+  --color-neutral-500: #6B7488;
+  --color-neutral-600: #4E5667;
+  --color-neutral-700: #393F4C;
+  --color-neutral-800: #252A33;
+  --color-neutral-900: #161A21;
+  --color-neutral-950: #0C0E13;
+
+  /* ── Status Colors ── */
+  --color-success:        #1F9D57;
+  --color-success-bright: #34C77B;
+  --color-warning:        #E5961B;
+  --color-warning-bright: #F2B544;
+  --color-danger:         #DC3A28;
+  --color-danger-bright:  #FF6B5A;
+
+  /* ── Accent Colors ── */
+  --color-teal:   #0E9C97;
+  --color-purple: #7A3CE0;
+  --color-pink:   #D6409F;
+  --color-amber:  #E5961B;
+
+  /* ── Customer App (legacy compat) ── */
+  --color-primary:          #136dec;
+  --color-secondary:        #f59e0b;
+  --color-background-light: #f6f7f8;
+  --color-background-dark:  #101822;
+  --color-surface-light:    #ffffff;
+  --color-surface-dark:     #1e293b;
+
+  /* ── Font Stacks ── */
+  --font-display: "Manrope", "Noto Sans JP", sans-serif;
+  --font-body:    "Noto Sans JP", sans-serif;
+  --font-jp:      "Noto Sans JP", sans-serif;
+  --font-brand:   "Manrope", "Noto Sans JP", sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Animations ── */
+  --animate-fade-in:  fadeIn 0.2s ease-out;
+  --animate-slide-up: slideUp 0.25s ease-out;
+  --animate-drawer-in: drawerIn 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-scale-in: scaleIn 0.15s ease-out;
+  --animate-shimmer:  shimmer 1.5s ease-in-out infinite;
+}
+
+/* ────────────────────────────────────────────────────────
+   2. CSS Custom Properties — :root (Admin / Global)
+   ──────────────────────────────────────────────────────── */
+:root {
+  /* Brand tokens */
+  --brand:        #3A4DE8;
+  --brand-strong: #141ED2;
+  --brand-accent: #8C9CFF;
+  --brand-tint:   rgba(58, 77, 232, 0.16);
+
+  /* Radius scale */
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-pill: 999px;
+
+  /* Extended radius (alt) */
+  --radius-sm-alt: 8px;
+  --radius-md-alt: 12px;
+  --radius-lg-alt: 16px;
+  --radius-xl-alt: 22px;
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  /* Shadow tokens — admin */
+  --shadow-xs:    0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm:    0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md:    0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg:    0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-focus: 0 0 0 3px rgba(58, 77, 232, 0.25);
+
+  /* Admin layout */
+  --sidebar-width: 232px;
+  --topbar-height: 60px;
+}
+
+/* ────────────────────────────────────────────────────────
+   3. Staff App — Dark Theme
+   ──────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:         #080B12;
+  --surface:    #121A28;
+  --surface-2:  #182233;
+  --surface-3:  #1E2A3D;
+  --border:     #232E42;
+  --border-2:   #2C3A52;
+  --fg:         #EEF2F9;
+  --fg-muted:   #97A3B8;
+  --fg-subtle:  #6B7A92;
+  --brand:      #6678F4;
+  --brand-tint: rgba(102, 120, 244, 0.16);
+  --danger:     #FF6B5A;
+  --success:    #34C77B;
+  --warning:    #F2B544;
+
+  color-scheme: dark;
+}
+
+/* ────────────────────────────────────────────────────────
+   4. Staff App — Light Theme
+   ──────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg:         #F5F6FA;
+  --surface:    #FFFFFF;
+  --surface-2:  #F0F1F5;
+  --surface-3:  #E8EAF0;
+  --border:     #DFE2EA;
+  --border-2:   #C7CCD8;
+  --fg:         #161A21;
+  --fg-muted:   #4E5667;
+  --fg-subtle:  #9AA1B2;
+  --brand:      #3A4DE8;
+  --brand-tint: rgba(58, 77, 232, 0.10);
+  --danger:     #DC3A28;
+  --success:    #1F9D57;
+  --warning:    #E5961B;
+
+  color-scheme: light;
+}
+
+/* ────────────────────────────────────────────────────────
+   5. Tailwind v4 Utilities
+   ──────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Hide scrollbar — webkit */
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Alias */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Safe-area bottom padding (notch devices) */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Tabular numbers for data/tables */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Hover lift effect */
+  .lift {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+}
+
+/* ────────────────────────────────────────────────────────
+   6. Base Styles
+   ──────────────────────────────────────────────────────── */
+html, body {
+  font-family: "Noto Sans JP", sans-serif;
+}
+
+body {
+  background-color: var(--color-background-light);
+  color: #191b23;
+  margin: 0 auto;
+}
+
+/* Material Symbols */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.fill-1 {
+  font-variation-settings: 'FILL' 1;
+}
+
+/* ────────────────────────────────────────────────────────
+   7. Admin Layout
+   ──────────────────────────────────────────────────────── */
+.admin-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: var(--topbar-height) 1fr;
+  min-height: 100dvh;
+}
+
+.admin-layout__sidebar {
+  grid-row: 1 / -1;
+  grid-column: 1;
+}
+
+.admin-layout__topbar {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.admin-layout__content {
+  grid-row: 2;
+  grid-column: 2;
+  overflow-y: auto;
+}
+
+/* Nav items */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-neutral-500);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background-color: var(--color-cobalt-50);
+  color: var(--color-cobalt-600);
+}
+
+.nav-item.active {
+  background-color: var(--brand-tint);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* Table row hover */
+.row-hover {
+  transition: background-color 0.1s ease;
+}
+
+.row-hover:hover {
+  background-color: var(--color-neutral-50);
+}
+
+/* ────────────────────────────────────────────────────────
+   8. Custom Scrollbar (Admin)
+   ──────────────────────────────────────────────────────── */
+.admin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.admin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--color-neutral-300);
+  border-radius: var(--radius-pill);
+}
+
+.admin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-neutral-400);
+}
+
+/* Firefox */
+.admin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-neutral-300) transparent;
+}
+
+/* ────────────────────────────────────────────────────────
+   9. Keyframe Animations
+   ──────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}

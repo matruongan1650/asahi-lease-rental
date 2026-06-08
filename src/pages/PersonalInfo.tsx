@@ -1,0 +1,132 @@
+import React, { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { useUser } from "../context/UserContext";
+
+export default function PersonalInfo() {
+  const navigate = useNavigate();
+  const { profile, setProfile } = useUser();
+  const [formData, setFormData] = useState(profile);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({ ...prev, avatarUrl: reader.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = () => {
+    setProfile(formData);
+    alert("保存しました。");
+    navigate(-1);
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-background-light dark:bg-background-dark max-w-[480px] mx-auto text-slate-900 dark:text-white pb-[80px]">
+      <header className="sticky top-0 z-50 flex items-center justify-between p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+        <button onClick={() => navigate(-1)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+          <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+        </button>
+        <h1 className="text-lg font-bold">個人情報</h1>
+        <div className="w-10"></div>
+      </header>
+
+      <main className="p-4 flex flex-col gap-4">
+        <div className="flex flex-col items-center mb-6 mt-4">
+          <div className="relative mb-3 group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div className="bg-center bg-no-repeat bg-cover rounded-full h-24 w-24 border-4 border-white dark:border-slate-800 shadow-lg" style={{ backgroundImage: `url("${formData.avatarUrl}")`}}></div>
+            <button className="absolute bottom-0 right-0 p-1.5 bg-primary rounded-full text-white shadow-md hover:bg-primary/90 transition-colors">
+              <span className="material-symbols-outlined text-[14px] block">photo_camera</span>
+            </button>
+            <input 
+              type="file" 
+              accept="image/*" 
+              capture="user"
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleImageChange} 
+            />
+          </div>
+          <span className="text-xs text-primary font-bold">写真を変更</span>
+        </div>
+
+        <div className="flex flex-col gap-4 bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">会社名</label>
+            <input 
+              name="companyName"
+              value={formData.companyName}
+              onChange={handleChange}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+            />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-slate-500 mb-1">姓</label>
+              <input 
+                name="lastName"
+                value={formData.lastName}
+                onChange={handleChange}
+                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-slate-500 mb-1">名</label>
+              <input 
+                name="firstName"
+                value={formData.firstName}
+                onChange={handleChange}
+                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">メールアドレス</label>
+            <input 
+              name="email"
+              type="email"
+              value={formData.email}
+              onChange={handleChange}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">電話番号</label>
+            <input 
+              name="phone"
+              type="tel"
+              value={formData.phone}
+              onChange={handleChange}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">住所（納品・回収場所）</label>
+            <input 
+              name="address"
+              value={formData.address}
+              onChange={handleChange}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+            />
+          </div>
+        </div>
+        
+        <button 
+          onClick={handleSave}
+          className="mt-4 bg-primary text-white h-12 rounded-xl font-bold hover:bg-primary/90 active:scale-[0.98] transition-transform shadow-md"
+        >
+          保存する
+        </button>
+      </main>
+    </div>
+  );
+}

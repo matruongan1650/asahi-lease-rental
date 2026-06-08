@@ -1,0 +1,510 @@
+/**
+ * orderBus.ts — Cross-tab real-time sync via localStorage + BroadcastChannel
+ *
+ * TypeScript port of shared/order-bus.jsx.
+ * Replaces Firebase for local development. All 3 apps (customer, admin, mobile) share data.
+ *
+ * Data stores:
+ *   asahi.orders       → customer orders
+ *   asahi.products     → product catalog (single source of truth)
+ *   asahi.fieldReports → damage reports from mobile
+ *   asahi.stockMoves   → 入庫/出庫 history
+ *   (+ vehicles, maintenance, customers, suppliers, etc.)
+ *
+ * Usage:
+ *   OrderBus.subscribe("orders", callback)  → returns unsubscribe fn
+ *   OrderBus.getAll("orders")               → current array
+ *   OrderBus.push("orders", item)           → add + broadcast
+ *   OrderBus.patch("orders", id, updates)   → merge + broadcast
+ *   OrderBus.remove("orders", id)           → delete + broadcast
+ *   OrderBus.setAll("orders", items)        → replace all + broadcast
+ */
+
+import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** All supported store names */
+export type BusStore =
+  | "orders"
+  | "products"
+  | "fieldReports"
+  | "stockMoves"
+  | "vehicles"
+  | "maintenance"
+  | "customers"
+  | "suppliers"
+  | "vendors"
+  | "walkinReturns"
+  | "stockIn"
+  | "stockOut"
+  | "assets"
+  | "warehouse"
+  | "stocktake"
+  | "repairs";
+
+/** Every record stored in the bus must at least have an `id` */
+export interface BusRecord {
+  id: string;
+  firestoreId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
+}
+
+/** Callback shape for store subscriptions */
+export type BusListener<T extends BusRecord = BusRecord> = (data: T[]) => void;
+
+/** Message payload sent through BroadcastChannel */
+interface BusMessage {
+  store: BusStore;
+  ts: number;
+}
+
+/** Admin-derived order shape */
+export interface DerivedOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+  total: number;
+  subtotal: number;
+  tax: number;
+  items: Array<{ type?: string; [key: string]: unknown }>;
+  date: string;
+  customer: string;
+  site: string;
+  deliveryDate: string;
+  deliveryLocation: string;
+  rentalStart: string;
+  rentalEnd: string;
+  staffStatus: string;
+  assignedStaff: string;
+  [key: string]: unknown;
+}
+
+/** Recent transaction for admin dashboard */
+export interface RecentTransaction {
+  id: string;
+  type: "レンタル" | "販売";
+  customer: string;
+  amount: number;
+  date: string;
+  status: string;
+}
+
+/** Return value of deriveAdminData */
+export interface AdminDerivedData {
+  orders: DerivedOrder[];
+  rentals: DerivedOrder[];
+  sales: DerivedOrder[];
+  totalSales: number;
+  rentalSales: number;
+  productSales: number;
+  recentTx: RecentTransaction[];
+}
+
+/** Shape of the OrderBus API */
+export interface IOrderBus {
+  /** Subscribe to a store. Returns an unsubscribe function. Fires immediately with current data. */
+  subscribe<T extends BusRecord = BusRecord>(store: BusStore, callback: BusListener<T>): () => void;
+
+  /** Read all records from a store */
+  getAll<T extends BusRecord = BusRecord>(store: BusStore): T[];
+
+  /** Push a new record. Auto-generates `id` and `createdAt` if missing. Returns the id. */
+  push<T extends BusRecord = BusRecord>(store: BusStore, item: Partial<T> & Record<string, unknown>): string;
+
+  /** Patch (merge) a record by id. Also matches on `firestoreId`. */
+  patch(store: BusStore, id: string, updates: Record<string, unknown>): void;
+
+  /** Remove a record by id. Also matches on `firestoreId`. */
+  remove(store: BusStore, id: string): void;
+
+  /** Replace the entire store contents */
+  setAll<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): void;
+
+  /** Seed a store only if it is currently empty. Returns the count of seeded items. */
+  seedIfEmpty<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): number;
+
+  /** Clear a store entirely */
+  clear(store: BusStore): void;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const ORDER_BUS_CHANNEL = "asahi-lease-bus";
+
+const BUS_STORES: readonly BusStore[] = [
+  "orders",
+  "products",
+  "fieldReports",
+  "stockMoves",
+  "vehicles",
+  "maintenance",
+  "customers",
+  "suppliers",
+  "vendors",
+  "walkinReturns",
+  "stockIn",
+  "stockOut",
+  "assets",
+  "warehouse",
+  "stocktake",
+  "repairs",
+] as const;
+
+// ---------------------------------------------------------------------------
+// Internal state
+// ---------------------------------------------------------------------------
+
+const _listeners: Record<BusStore, BusListener[]> = {} as Record<BusStore, BusListener[]>;
+BUS_STORES.forEach((s) => {
+  _listeners[s] = [];
+});
+
+let _bc: BroadcastChannel | null = null;
+try {
+  _bc = new BroadcastChannel(ORDER_BUS_CHANNEL);
+} catch (e) {
+  console.warn("[OrderBus] BroadcastChannel unavailable — cross-tab sync disabled.", e);
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function _key(store: BusStore): string {
+  return "asahi." + store;
+}
+
+function _read<T extends BusRecord = BusRecord>(store: BusStore): T[] {
+  try {
+    const raw = localStorage.getItem(_key(store));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.warn(`[OrderBus] Store "${store}" contained non-array data; returning empty.`);
+      return [];
+    }
+    return parsed as T[];
+  } catch {
+    console.warn(`[OrderBus] Failed to parse store "${store}"; returning empty.`);
+    return [];
+  }
+}
+
+function _write<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): void {
+  try {
+    localStorage.setItem(_key(store), JSON.stringify(data));
+  } catch (e) {
+    console.error(`[OrderBus] Failed to write store "${store}" to localStorage.`, e);
+    return;
+  }
+  _notify(store, data);
+  if (_bc) {
+    try {
+      _bc.postMessage({ store, ts: Date.now() } satisfies BusMessage);
+    } catch (e) {
+      console.warn("[OrderBus] Failed to broadcast message.", e);
+    }
+  }
+}
+
+function _notify<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): void {
+  const listeners = _listeners[store];
+  if (!listeners) return;
+  for (const fn of listeners) {
+    try {
+      fn(data as BusRecord[]);
+    } catch (e) {
+      console.error(`[OrderBus] Listener error on store "${store}":`, e);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-tab listeners
+// ---------------------------------------------------------------------------
+
+/** Listen for changes from other tabs via BroadcastChannel */
+if (_bc) {
+  _bc.onmessage = (ev: MessageEvent<BusMessage>) => {
+    const { store } = ev.data ?? {};
+    if (store && _listeners[store]) {
+      const data = _read(store);
+      _notify(store, data);
+    }
+  };
+}
+
+/** Fallback: listen for localStorage storage events (fires in other tabs only) */
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (ev: StorageEvent) => {
+    const store = BUS_STORES.find((s) => ev.key === _key(s));
+    if (store) {
+      const data = _read(store);
+      _notify(store, data);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Generate unique ID
+// ---------------------------------------------------------------------------
+
+function _generateId(): string {
+  return "id-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+}
+
+// ---------------------------------------------------------------------------
+// OrderBus singleton
+// ---------------------------------------------------------------------------
+
+export const OrderBus: IOrderBus = {
+  subscribe<T extends BusRecord = BusRecord>(store: BusStore, callback: BusListener<T>): () => void {
+    if (!_listeners[store]) {
+      console.warn(`[OrderBus] Unknown store "${store}" — creating listener array.`);
+      _listeners[store] = [];
+    }
+    const wrappedCallback = callback as BusListener;
+    _listeners[store].push(wrappedCallback);
+
+    // Immediately fire with current data
+    try {
+      callback(_read<T>(store));
+    } catch (e) {
+      console.warn(`[OrderBus] subscribe initial fire error for "${store}":`, e);
+    }
+
+    // Return unsubscribe function
+    return () => {
+      _listeners[store] = (_listeners[store] || []).filter((fn) => fn !== wrappedCallback);
+    };
+  },
+
+  getAll<T extends BusRecord = BusRecord>(store: BusStore): T[] {
+    return _read<T>(store);
+  },
+
+  push<T extends BusRecord = BusRecord>(store: BusStore, item: Partial<T> & Record<string, unknown>): string {
+    const data = _read<T>(store);
+    const record = { ...item } as T & BusRecord;
+
+    if (!record.id) {
+      record.id = _generateId();
+    }
+    if (!record.createdAt) {
+      record.createdAt = new Date().toISOString();
+    }
+
+    // Prepend (newest first)
+    data.unshift(record);
+    _write(store, data);
+    return record.id;
+  },
+
+  patch(store: BusStore, id: string, updates: Record<string, unknown>): void {
+    const data = _read(store);
+    const idx = data.findIndex((d) => d.id === id || d.firestoreId === id);
+    if (idx >= 0) {
+      data[idx] = {
+        ...data[idx],
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+      _write(store, data);
+    } else {
+      console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
+    }
+  },
+
+  remove(store: BusStore, id: string): void {
+    const data = _read(store);
+    const filtered = data.filter((d) => d.id !== id && d.firestoreId !== id);
+    if (filtered.length === data.length) {
+      console.warn(`[OrderBus] remove: record with id "${id}" not found in store "${store}".`);
+    }
+    _write(store, filtered);
+  },
+
+  setAll<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): void {
+    _write(store, items);
+  },
+
+  seedIfEmpty<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): number {
+    const existing = _read(store);
+    if (existing.length === 0 && items && items.length > 0) {
+      _write(store, items);
+      return items.length;
+    }
+    return 0;
+  },
+
+  clear(store: BusStore): void {
+    try {
+      localStorage.removeItem(_key(store));
+    } catch (e) {
+      console.error(`[OrderBus] Failed to clear store "${store}":`, e);
+    }
+    _notify(store, []);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// deriveAdminData — compute admin dashboard KPIs from raw orders
+// ---------------------------------------------------------------------------
+
+export function deriveAdminData(rawOrders: BusRecord[]): AdminDerivedData {
+  const orders: DerivedOrder[] = rawOrders.map((o) => {
+    const personLastName = (o.personLastName as string) || "";
+    const personFirstName = (o.personFirstName as string) || "";
+    const fullName = (personLastName + " " + personFirstName).trim();
+
+    return {
+      ...o,
+      id: (o.id || o.firestoreId || "") as string,
+      orderNumber: (o.orderNumber as string) || "—",
+      status: (o.status as string) || "処理中",
+      total: (o.total as number) || 0,
+      subtotal: (o.subtotal as number) || 0,
+      tax: (o.tax as number) || 0,
+      items: (o.items as Array<{ type?: string; [key: string]: unknown }>) || [],
+      date: (o.date as string) || "",
+      customer:
+        (o.companyName as string) ||
+        fullName ||
+        (o.personName as string) ||
+        "ゲスト",
+      site: (o.siteName as string) || "—",
+      deliveryDate: (o.deliveryDate as string) || "",
+      deliveryLocation: (o.deliveryLocation as string) || "",
+      rentalStart: (o.rentalStartDate as string) || "",
+      rentalEnd: (o.rentalEndDate as string) || "",
+      staffStatus: (o.staffStatus as string) || "未割当",
+      assignedStaff: (o.assignedStaff as string) || "",
+    };
+  });
+
+  const rentals = orders.filter((o) =>
+    o.items.some((i) => i.type === "rent")
+  );
+  const sales = orders.filter((o) =>
+    o.items.some((i) => i.type === "buy")
+  );
+
+  let rentalSales = 0;
+  let productSales = 0;
+
+  orders.forEach((o) => {
+    let orderRentSub = 0;
+    let orderBuySub = 0;
+    o.items?.forEach((item) => {
+      const itemType = (item.type || item.kind) as string;
+      const itemQty = (item.quantity || 1) as number;
+      const itemRentPrice = (item.rentPrice || 0) as number;
+      const itemBuyPrice = (item.buyPrice || 0) as number;
+      const itemCalculated = (item.calculatedPrice) as number | undefined;
+
+      const itemVal = itemCalculated || (itemType === "rent" ? itemRentPrice * itemQty : itemBuyPrice * itemQty);
+      if (itemType === "rent") {
+        orderRentSub += itemVal;
+      } else {
+        orderBuySub += itemVal;
+      }
+    });
+
+    const orderSub = orderRentSub + orderBuySub;
+    if (orderSub > 0) {
+      rentalSales += (orderRentSub / orderSub) * (o.total || 0);
+      productSales += (orderBuySub / orderSub) * (o.total || 0);
+    } else {
+      const hasRent = o.items?.some((i) => i.type === "rent");
+      if (hasRent) {
+        rentalSales += o.total || 0;
+      } else {
+        productSales += o.total || 0;
+      }
+    }
+  });
+
+  rentalSales = Math.round(rentalSales);
+  productSales = Math.round(productSales);
+  const totalSales = rentalSales + productSales;
+
+  const recentTx: RecentTransaction[] = orders.slice(0, 10).map((o) => {
+    const isRental = o.items.some((i) => i.type === "rent");
+
+    let statusLabel: string;
+    switch (o.status) {
+      case "処理中":
+        statusLabel = "進行中";
+        break;
+      case "完了":
+      case "配送済み":
+        statusLabel = "完了";
+        break;
+      default:
+        statusLabel = o.status;
+    }
+
+    return {
+      id: o.orderNumber,
+      type: isRental ? "レンタル" : "販売",
+      customer: o.customer,
+      amount: o.total,
+      date: typeof o.date === "string" ? o.date.split("•")[0]?.trim() ?? "" : "",
+      status: statusLabel,
+    };
+  });
+
+  return { orders, rentals, sales, totalSales, rentalSales, productSales, recentTx };
+}
+
+// ---------------------------------------------------------------------------
+// React Context — OrderBusProvider
+// ---------------------------------------------------------------------------
+
+const OrderBusContext = createContext<IOrderBus | null>(null);
+
+export interface OrderBusProviderProps {
+  children: ReactNode;
+}
+
+/**
+ * Provides the OrderBus singleton via React context.
+ * Wrap your app (or a subtree) in `<OrderBusProvider>` and consume with `useOrderBus()`.
+ */
+export function OrderBusProvider({ children }: OrderBusProviderProps): React.ReactElement {
+  // The bus is a module-level singleton, so no initialization needed.
+  // The provider simply makes it available via context for convenience.
+  return React.createElement(OrderBusContext.Provider, { value: OrderBus }, children);
+}
+
+/**
+ * Access the OrderBus singleton via React context.
+ * Must be called inside an `<OrderBusProvider>`.
+ */
+export function useOrderBus(): IOrderBus {
+  const bus = useContext(OrderBusContext);
+  if (!bus) {
+    throw new Error(
+      "[useOrderBus] OrderBusProvider が見つかりません。コンポーネントを <OrderBusProvider> でラップしてください。"
+    );
+  }
+  return bus;
+}
+
+// ---------------------------------------------------------------------------
+// Expose on window for debugging (development only)
+// ---------------------------------------------------------------------------
+
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).OrderBus = OrderBus;
+  (window as unknown as Record<string, unknown>).deriveAdminData = deriveAdminData;
+}
+
+export default OrderBus;

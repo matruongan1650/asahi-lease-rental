@@ -1,0 +1,174 @@
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
+import { useOrders, Order } from "../context/OrderContext";
+
+export default function ReturnItems() {
+  const navigate = useNavigate();
+  const { orderId } = useParams();
+  const { orders } = useOrders();
+  const [returnType, setReturnType] = useState<"all" | "partial">("all");
+  const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
+
+  const order = orders.find(o => o.id === orderId);
+
+  useEffect(() => {
+    if (order) {
+      const initial: Record<string, number> = {};
+      order.items.forEach(item => {
+        if (item.type === 'rent') {
+          const remaining = item.quantity - (item.returnedQuantity || 0);
+          initial[item.id] = returnType === "all" ? remaining : 0;
+        }
+      });
+      setReturnQuantities(initial);
+    }
+  }, [order, returnType]);
+
+  if (!order) {
+    return <div className="text-center p-10">注文が見つかりません。</div>;
+  }
+
+  const rentItems = order.items.filter(item => item.type === 'rent' && (item.returnedQuantity || 0) < item.quantity);
+  const totalReturning: number = Object.values(returnQuantities).reduce<number>((a: number, b: any) => a + (Number(b) || 0), 0);
+
+  const handleUpdateQuantity = (id: string, delta: number, max: number) => {
+    setReturnQuantities(prev => {
+      const current = prev[id] || 0;
+      return { ...prev, [id]: Math.max(0, Math.min(max, current + delta)) };
+    });
+  };
+
+  const handleSetQuantity = (id: string, val: number, max: number) => {
+    setReturnQuantities(prev => {
+      if (val === -1) return { ...prev, [id]: -1 };
+      return { ...prev, [id]: Math.max(0, Math.min(max, val)) };
+    });
+  };
+
+  return (
+    <div className="relative flex h-full min-h-screen w-full flex-col overflow-hidden pb-[140px] text-slate-900 dark:text-white bg-background-light dark:bg-background-dark max-w-[480px] mx-auto">
+      <header className="sticky top-0 z-20 flex items-center justify-between bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm p-4 border-b border-slate-200 dark:border-slate-800">
+        <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate("/return")} className="flex size-10 items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+          <span className="material-symbols-outlined">arrow_back_ios_new</span>
+        </button>
+        <h2 className="text-lg font-bold leading-tight text-center flex-1 pr-10">返却アイテムの選択</h2>
+      </header>
+
+      <main className="flex flex-col gap-4 p-4">
+        {/* Return Type Selection */}
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+           <h3 className="text-sm font-bold mb-3">返却方法を選択してください</h3>
+           <div className="grid grid-cols-2 gap-3">
+             <button 
+               onClick={() => setReturnType("all")}
+               className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition-all ${returnType === "all" ? "border-primary bg-primary/5 text-primary" : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-primary/50"}`}
+             >
+               一括返却
+             </button>
+             <button 
+               onClick={() => setReturnType("partial")}
+               className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition-all ${returnType === "partial" ? "border-primary bg-primary/5 text-primary" : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-primary/50"}`}
+             >
+               一部返却
+             </button>
+           </div>
+        </div>
+
+        <div className="flex items-center justify-between px-1 mt-2">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">注文: {order.orderNumber}</p>
+        </div>
+
+        {/* Item list */}
+        {rentItems.map((item, index) => {
+          const maxReturnable = item.quantity - (item.returnedQuantity || 0);
+          return (
+            <ReturnItemCard 
+              key={`${item.id}-${index}`}
+              name={item.name}
+              image={item.image}
+              lentQuantity={maxReturnable}
+              returnType={returnType}
+              currentQuantity={returnQuantities[item.id] || 0}
+              onUpdateQuantity={(delta: number) => handleUpdateQuantity(item.id, delta, maxReturnable)}
+              onSetQuantity={(val: number) => handleSetQuantity(item.id, val, maxReturnable)}
+            />
+          );
+        })}
+
+      </main>
+
+      <div className="fixed bottom-0 left-0 right-0 z-20 w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] pb-safe">
+        <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
+          <div className="flex flex-col">
+            <p className="text-xs text-slate-500 dark:text-slate-400">返却数合計</p>
+            <p className="text-xl font-bold text-slate-900 dark:text-white">
+               {totalReturning} <span className="text-sm font-normal text-slate-500">点</span>
+            </p>
+          </div>
+          <button 
+            disabled={totalReturning === 0}
+            onClick={() => navigate(`/return/${order.id}/shipping`, { state: { returnQuantities, order, returnType }})}
+            className={`flex-1 rounded-xl font-bold h-12 flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition-transform ${totalReturning > 0 ? "bg-primary hover:bg-blue-600 text-white shadow-blue-500/20" : "bg-slate-300 text-slate-500 cursor-not-allowed"}`}
+          >
+            次へ進む
+            <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReturnItemCard({ name, image, lentQuantity, returnType, currentQuantity, onUpdateQuantity, onSetQuantity }: any) {
+  const isEditing = returnType === "partial";
+
+  return (
+    <div className={`flex flex-col gap-3 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-sm border border-slate-200 dark:border-slate-700 ${(!isEditing && currentQuantity === 0) ? "opacity-50" : ""}`}>
+      <div className="flex gap-4">
+        <div className="relative shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-900 size-[64px]">
+          <div className="absolute inset-0 bg-center bg-cover bg-no-repeat" style={{ backgroundImage: `url("${image}")`}}></div>
+        </div>
+        <div className="flex flex-1 flex-col justify-center gap-1">
+          <p className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">{name}</p>
+          <div className="text-xs text-slate-500 font-medium">
+            未返却数: {lentQuantity}
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700/50 mt-1">
+        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">返却する数量</span>
+        {isEditing ? (
+          <div className="flex items-center rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 gap-1 p-1">
+            <button onClick={() => onUpdateQuantity(-1)} className="flex size-7 items-center justify-center text-slate-600 dark:text-slate-200 hover:text-primary bg-white dark:bg-slate-700 active:bg-slate-200 dark:active:bg-slate-600 rounded-md transition-colors shadow-sm">
+              <span className="material-symbols-outlined text-[20px]">remove</span>
+            </button>
+            <input 
+              className="w-12 bg-transparent text-center text-base font-bold outline-none border-none p-0 h-9 hide-arrows" 
+              type="number" 
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={currentQuantity === -1 ? '' : currentQuantity}
+              onChange={(e) => {
+                let val = parseInt(e.target.value);
+                if (isNaN(val) && onSetQuantity) onSetQuantity(-1);
+                else if (onSetQuantity) onSetQuantity(val);
+              }}
+              onBlur={(e) => {
+                let val = parseInt(e.target.value);
+                if (isNaN(val) || val < 0) {
+                  if (onSetQuantity) onSetQuantity(0);
+                }
+              }}
+            />
+            <button onClick={() => onUpdateQuantity(1)} className="flex size-7 items-center justify-center text-white bg-primary hover:bg-primary/90 active:bg-primary/80 rounded-md transition-colors shadow-sm">
+              <span className="material-symbols-outlined text-[20px]">add</span>
+            </button>
+          </div>
+        ) : (
+           <span className="text-lg font-bold text-primary">{currentQuantity}</span>
+        )}
+      </div>
+    </div>
+  );
+}
