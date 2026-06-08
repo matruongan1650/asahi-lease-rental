@@ -14,6 +14,7 @@ import DocumentViewer from "../../components/DocumentViewer";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import B2BInvoiceViewer from "../../components/B2BInvoiceViewer";
+import AdminRentalInvoiceSection from "../../components/AdminRentalInvoiceSection";
 import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
 
 export default function AdminRental() {
@@ -32,6 +33,68 @@ export default function AdminRental() {
   const [b2bType, setB2bType] = useState<"summary" | "detailed">("summary");
 
   const liveOrders = useAdminOrders();
+
+  const getTodayStr = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  // Rental search & filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState(getTodayStr());
+  const [endDateFilter, setEndDateFilter] = useState(getTodayStr());
+
+  // Dynamically compute unique statuses and companies for the filter dropdowns from liveOrders.rentals
+  const rentalStatuses = useMemo(() => {
+    const statuses = new Set<string>();
+    liveOrders.rentals.forEach((r: any) => {
+      if (r.status) statuses.add(r.status);
+    });
+    return Array.from(statuses);
+  }, [liveOrders.rentals]);
+
+  const rentalCompanies = useMemo(() => {
+    const companies = new Set<string>();
+    liveOrders.rentals.forEach((r: any) => {
+      if (r.customer) companies.add(r.customer);
+    });
+    return Array.from(companies);
+  }, [liveOrders.rentals]);
+
+  // Apply filters to liveOrders.rentals
+  const filteredRentals = useMemo(() => {
+    return liveOrders.rentals.filter((r: any) => {
+      // 1. Text Search
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const idMatch = (r.id || "").toLowerCase().includes(query);
+        const custMatch = (r.customer || "").toLowerCase().includes(query);
+        const siteMatch = (r.site || "").toLowerCase().includes(query);
+        if (!idMatch && !custMatch && !siteMatch) return false;
+      }
+      // 2. Status Filter
+      if (statusFilter && r.status !== statusFilter) return false;
+      // 3. Company Filter
+      if (companyFilter && r.customer !== companyFilter) return false;
+      // 4. Date Range Filter
+      if (startDateFilter || endDateFilter) {
+        if (!r.date) return false;
+        const datePart = r.date.split(" • ")[0]?.replace(/\//g, "-");
+        if (datePart) {
+          if (startDateFilter && datePart < startDateFilter) return false;
+          if (endDateFilter && datePart > endDateFilter) return false;
+        } else {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [liveOrders.rentals, searchQuery, statusFilter, companyFilter, startDateFilter, endDateFilter]);
 
   const uniqueCompanies = useMemo(() => {
     const list = liveOrders.orders
@@ -52,8 +115,13 @@ export default function AdminRental() {
 
   const cols = [
     {
-      h: "契約番号",
-      cell: (r: any) => <span className="font-mono text-blue-700 font-bold">{r.id}</span>
+      h: "契約番号 / 注文日時",
+      cell: (r: any) => (
+        <div>
+          <div className="font-mono text-blue-700 font-bold">{r.id}</div>
+          <div className="text-[10px] text-slate-400 mt-0.5 font-mono">{r.date || "—"}</div>
+        </div>
+      )
     },
     {
       h: "顧客 / 現場",
@@ -201,7 +269,23 @@ export default function AdminRental() {
       </div>
 
       {/* Sub Tabs */}
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      <Tabs
+        tabs={tabs}
+        active={tab}
+        onChange={(next) => {
+          // Đổi tab thì đóng các modal/drawer còn mở để tránh chồng lên tab mới
+          setViewingDoc(null);
+          setShowInvoiceSelector(false);
+          setB2bOpen(false);
+          setViewingBlockId(null);
+          setSearchQuery("");
+          setStatusFilter("");
+          setCompanyFilter("");
+          setStartDateFilter(getTodayStr());
+          setEndDateFilter(getTodayStr());
+          setTab(next);
+        }}
+      />
 
       {/* B2B Aggregation Form (Only visible in Rental Invoice tab) */}
       {tab === "invoice" && (
@@ -268,34 +352,175 @@ export default function AdminRental() {
       )}
 
       {/* Main Grid */}
-      <Panel
-        title={tabs.find(t => t.id === tab)?.label}
-        icon="autorenew"
-        sub={liveOrders.live ? "🟢 OrderBus" : undefined}
-        action={
-          <Btn
-            size="sm"
-            variant="primary"
-            icon="add"
-            onClick={() => setDrawer({ kind: newKind })}
-          >
-            {ctaText}
-          </Btn>
-        }
-      >
-        <Table 
-          cols={cols} 
-          rows={liveOrders.rentals} 
-          onRow={(r) => {
-            const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-            if (fullOrder) {
-              setViewingOrderDrawer(fullOrder);
-            } else {
-               triggerToast("詳細データが見つかりません", "err");
-            }
-          }} 
+      {tab === "invoice" ? (
+        <AdminRentalInvoiceSection
+          orders={liveOrders.orders}
+          monthPeriod={selectedMonth || undefined}
+          companyFilter={selectedCompany || undefined}
         />
-      </Panel>
+      ) : (
+        <Panel
+          title={tabs.find(t => t.id === tab)?.label}
+          icon="autorenew"
+          sub={liveOrders.live ? "🟢 OrderBus" : undefined}
+          action={
+            <Btn
+              size="sm"
+              variant="primary"
+              icon="add"
+              onClick={() => setDrawer({ kind: newKind })}
+            >
+              {ctaText}
+            </Btn>
+          }
+        >
+          {/* Dynamic Filter bar */}
+          {liveOrders.rentals.length > 0 && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">契約番号・顧客・現場名</label>
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
+                    search
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="契約番号や現場名で検索..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-4 py-2 w-full bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">契約状態</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2.5 outline-none focus:border-blue-500 font-semibold text-xs cursor-pointer"
+                >
+                  <option value="">すべて</option>
+                  {rentalStatuses.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">取引先企業</label>
+                <select
+                  value={companyFilter}
+                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2.5 outline-none focus:border-blue-500 font-semibold text-xs cursor-pointer"
+                >
+                  <option value="">すべて</option>
+                  {rentalCompanies.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（開始）</label>
+                <input
+                  type="date"
+                  value={startDateFilter}
+                  onChange={(e) => setStartDateFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
+                />
+                <div className="flex gap-1 mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStartDateFilter(getTodayStr());
+                      setEndDateFilter(getTodayStr());
+                    }}
+                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
+                      startDateFilter === getTodayStr() && endDateFilter === getTodayStr()
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    本日
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      const y = d.getFullYear();
+                      const m = String(d.getMonth() + 1).padStart(2, "0");
+                      setStartDateFilter(`${y}-${m}-01`);
+                      const lastDay = new Date(y, d.getMonth() + 1, 0).getDate();
+                      setEndDateFilter(`${y}-${m}-${lastDay}`);
+                    }}
+                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
+                      startDateFilter === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    今月
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStartDateFilter("");
+                      setEndDateFilter("");
+                    }}
+                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
+                      !startDateFilter && !endDateFilter
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    全期間
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（終了）</label>
+                <input
+                  type="date"
+                  value={endDateFilter}
+                  onChange={(e) => setEndDateFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Matches Counter & Clear Filter */}
+          {filteredRentals.length !== liveOrders.rentals.length && (
+            <div className="text-xs font-bold text-slate-500 mb-3 bg-blue-50/50 border border-blue-100 rounded-lg px-3 py-2 flex justify-between items-center">
+              <span>絞り込み結果: {filteredRentals.length} 件 / 全体: {liveOrders.rentals.length} 件</span>
+              <button 
+                onClick={() => {
+                  setSearchQuery("");
+                  setStatusFilter("");
+                  setCompanyFilter("");
+                  setStartDateFilter("");
+                  setEndDateFilter("");
+                }}
+                className="text-blue-600 hover:text-blue-700 font-bold transition-colors cursor-pointer flex items-center gap-1 border-0 bg-transparent p-0"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+                フィルターをクリア
+              </button>
+            </div>
+          )}
+
+          <Table
+            cols={cols}
+            rows={filteredRentals}
+            onRow={(r) => {
+              const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
+              if (fullOrder) {
+                setViewingOrderDrawer(fullOrder);
+              } else {
+                 triggerToast("詳細データが見つかりません", "err");
+              }
+            }}
+          />
+        </Panel>
+      )}
 
       <AdminDocDrawer
         open={!!drawer}

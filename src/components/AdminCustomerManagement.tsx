@@ -62,6 +62,20 @@ export default function AdminCustomerManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
+  // Local state for rental history filtering
+  const [rentalSearch, setRentalSearch] = useState("");
+  const [rentalStatusFilter, setRentalStatusFilter] = useState("");
+  const [rentalStartDateFilter, setRentalStartDateFilter] = useState("");
+  const [rentalEndDateFilter, setRentalEndDateFilter] = useState("");
+
+  // Reset filters when selectedCustomerId changes
+  useEffect(() => {
+    setRentalSearch("");
+    setRentalStatusFilter("");
+    setRentalStartDateFilter("");
+    setRentalEndDateFilter("");
+  }, [selectedCustomerId]);
+
   // Form states for adding customer
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyAddress, setNewCompanyAddress] = useState("");
@@ -233,13 +247,13 @@ export default function AdminCustomerManagement() {
       compUsers.find((u) => u.role === "customer") || compUsers[0];
     const code = `C-100${idx + 1}`;
 
-    // Compute stats from orders where personName belongs to this company (mock: simply use random logic or match by companyName)
-    // Actually, order doesn't have companyName stored reliably, so we will try to match personName.
+    // Compute stats from orders where personName belongs to this company or companyName matches
     const companyOrders = orders.filter((o) =>
+      (o.companyName && o.companyName.trim() === companyName.trim()) ||
       compUsers.some(
         (u) =>
           `${u.lastName} ${u.firstName}` === o.personName ||
-          u.companyName === o.companyName,
+          (u.companyName && o.companyName && u.companyName.trim() === o.companyName.trim()),
       ),
     );
 
@@ -478,6 +492,35 @@ export default function AdminCustomerManagement() {
 
     const rentalOrders = customer.orders.filter(o => o.items.some(i => i.type === 'rent'));
     const purchaseOrders = customer.orders.filter(o => o.items.some(i => i.type === 'buy'));
+
+    // Extract unique statuses dynamically
+    const rentalStatuses = Array.from(new Set(rentalOrders.map((o) => o.status).filter(Boolean)));
+
+    // Filtered rental orders
+    const filteredRentalOrders = rentalOrders.filter((o) => {
+      if (rentalSearch.trim()) {
+        const query = rentalSearch.toLowerCase();
+        const orderNo = (o.orderNumber || o.id || "").toLowerCase();
+        const site = (o.siteName || o.deliveryLocation || "").toLowerCase();
+        if (!orderNo.includes(query) && !site.includes(query)) {
+          return false;
+        }
+      }
+      if (rentalStatusFilter && o.status !== rentalStatusFilter) {
+        return false;
+      }
+      if (rentalStartDateFilter || rentalEndDateFilter) {
+        if (!o.date) return false;
+        const datePart = o.date.split(" • ")[0]?.replace(/\//g, "-");
+        if (datePart) {
+          if (rentalStartDateFilter && datePart < rentalStartDateFilter) return false;
+          if (rentalEndDateFilter && datePart > rentalEndDateFilter) return false;
+        } else {
+          return false;
+        }
+      }
+      return true;
+    });
 
     const handleLoginAsCustomer = () => {
       setProfile(customer.mainUser);
@@ -987,30 +1030,99 @@ export default function AdminCustomerManagement() {
 
             {activeTab === "rentalHistory" && (
               <div>
-                <h2 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-4">
-                  <RefreshCw size={18} className="text-slate-400" />
-                  レンタル履歴
-                </h2>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <RefreshCw size={18} className="text-slate-400" />
+                    レンタル履歴
+                  </h2>
+                  {rentalOrders.length > 0 && (
+                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                      検索結果: {filteredRentalOrders.length}件 / 全体: {rentalOrders.length}件
+                    </span>
+                  )}
+                </div>
+
+                {/* Filter bar */}
+                {rentalOrders.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 block mb-1">契約番号・現場名</label>
+                      <div className="relative">
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
+                          search
+                        </span>
+                        <input
+                          type="text"
+                          placeholder="契約番号や現場名で検索..."
+                          value={rentalSearch}
+                          onChange={(e) => setRentalSearch(e.target.value)}
+                          className="pl-9 pr-4 py-2 w-full bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-medium"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 block mb-1">契約状態</label>
+                      <select
+                        value={rentalStatusFilter}
+                        onChange={(e) => setRentalStatusFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2.5 outline-none focus:border-blue-500 font-semibold text-xs cursor-pointer"
+                      >
+                        <option value="">すべて</option>
+                        {rentalStatuses.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 block mb-1">注文日（開始）</label>
+                      <input
+                        type="date"
+                        value={rentalStartDateFilter}
+                        onChange={(e) => setRentalStartDateFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 block mb-1">注文日（終了）</label>
+                      <input
+                        type="date"
+                        value={rentalEndDateFilter}
+                        onChange={(e) => setRentalEndDateFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
                   {rentalOrders.length === 0 ? (
                     <div className="p-8 text-center text-slate-400 font-bold">
                       レンタル履歴がありません
                     </div>
+                  ) : filteredRentalOrders.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 font-bold">
+                      検索条件に一致するレンタル履歴がありません
+                    </div>
                   ) : (
                     <table className="w-full text-sm text-left">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                          <th className="p-4 font-bold">契約番号</th>
+                          <th className="p-4 font-bold">契約番号 / 注文日時</th>
                           <th className="p-4 font-bold">現場</th>
                           <th className="p-4 font-bold text-right">金額</th>
                           <th className="p-4 font-bold text-right">状態</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {rentalOrders.map((o) => (
+                        {filteredRentalOrders.map((o) => (
                           <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-4 font-bold text-blue-700 font-mono">
-                              {o.orderNumber || o.id.slice(0, 8).toUpperCase()}
+                            <td className="p-4">
+                              <div className="font-bold text-blue-700 font-mono">
+                                {o.orderNumber || o.id.slice(0, 8).toUpperCase()}
+                              </div>
+                              <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                                {o.date || "—"}
+                              </div>
                             </td>
                             <td className="p-4 font-bold text-slate-800">
                               {o.siteName || "未登録"}

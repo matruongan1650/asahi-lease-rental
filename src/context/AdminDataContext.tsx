@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import OrderBus, { type BusRecord, type AdminDerivedData, deriveAdminData } from "../lib/orderBus";
 import { COLLECTIONS_MOCK_DATA, B2B_MOCK_ORDERS, KPIS } from "../data/adminMockData";
 import { pushOrder as pushFirebaseOrder, patchOrder as patchFirebaseOrder, subscribeOrders } from "../lib/firebase";
@@ -66,6 +66,37 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
       setDerived(deriveAdminData(raw as BusRecord[]));
     }
   }, [raw]);
+
+  const hasCheckedSeeding = useRef(false);
+
+  // 4. Auto-seed missing B2B orders on startup (single run, chunked to avoid browser lockup)
+  useEffect(() => {
+    if (connected && !hasCheckedSeeding.current) {
+      hasCheckedSeeding.current = true;
+      
+      const existingNumbers = raw.map(o => o.orderNumber);
+      const missingOrders = B2B_MOCK_ORDERS.filter(o => !existingNumbers.includes(o.orderNumber));
+      
+      if (missingOrders.length > 0) {
+        console.log(`[AdminDataProvider] Auto-seeding ${missingOrders.length} missing B2B orders...`);
+        const seedOrders = async () => {
+          const chunkSize = 5;
+          for (let i = 0; i < missingOrders.length; i += chunkSize) {
+            const chunk = missingOrders.slice(i, i + chunkSize);
+            await Promise.all(
+              chunk.map(ord => 
+                pushFirebaseOrder(ord as any).catch(err => 
+                  console.error("Auto-seeding error:", ord.orderNumber, err)
+                )
+              )
+            );
+          }
+          console.log("[AdminDataProvider] Auto-seeding completed.");
+        };
+        seedOrders();
+      }
+    }
+  }, [connected]);
 
   const patchOrder = (id: string, updates: Record<string, any>) => {
     OrderBus.patch("orders", id, updates);
@@ -187,6 +218,7 @@ export function useAdminOrders() {
       firestoreId: o.firestoreId || o.id,
       customer: o.customer,
       site: o.site,
+      date: o.date,
       start: o.rentalStart?.replace(/-/g, "/") || "—",
       end: o.rentalEnd?.replace(/-/g, "/") || "—",
       items: (o.items || []).length,

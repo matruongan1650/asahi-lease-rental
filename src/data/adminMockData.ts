@@ -501,298 +501,278 @@ export const USERS = [
 ];
 
 // B2B mock orders for Taisei Construction (大成建設 株式会社) with multiple placing members in June 2026
-export const B2B_MOCK_ORDERS = [
+// B2B mock orders for Taisei Construction (大成建設 株式会社) with multiple placing members in June 2026
+// Dynamically generated 5 people, each renting 10 orders (50 orders total) to showcase multi-page cover sheets and renter summaries.
+const poolOfItems = [
   {
-    id: "b2b-ord-1",
-    orderNumber: "#ORD-2026-7821",
-    date: "2026/06/01 • 09:00",
-    status: "レンタル中",
-    staffStatus: "レンタル中",
-    companyName: "大成建設 株式会社",
-    personName: "田中 一郎",
-    siteName: "品川駅前再開発 B工区",
-    constructionNumber: "TAI-SHINA-001",
-    rentalStartDate: "2026-06-01",
-    rentalEndDate: "2026-06-15",
-    deliveryDate: "2026-06-01",
-    deliveryLocation: "東京都港区港南2-15-3",
-    items: [
-      {
-        id: "c1",
-        name: "レボリューションコーン赤白",
-        image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono44627688-230815-02.jpg",
-        rentPrice: 5,
-        rentPriceLongTerm: 5,
-        quantity: 30,
-        type: "rent",
-        category: "カラーコーン",
-        rentalDays: 15,
-        billedDays: 15,
-        calculatedPrice: 75,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 15,
-            discounted: false,
-            price: 75
-          }
-        ],
-        guaranteeFeeFlat: 100
-      },
-      {
-        id: "c3",
-        name: "コーンバー黒/黄",
-        image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono21411454-230314-02.jpg",
-        rentPrice: 5,
-        rentPriceLongTerm: 5,
-        quantity: 15,
-        type: "rent",
-        category: "コーンバー",
-        rentalDays: 15,
-        billedDays: 15,
-        calculatedPrice: 75,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 15,
-            discounted: false,
-            price: 75
-          }
-        ],
-        guaranteeFeeFlat: 30
-      },
-      {
-        id: "c5",
-        name: "A型バリケート",
-        image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono31259840-230711-02.jpg",
-        rentPrice: 20,
-        rentPriceLongTerm: 10,
-        quantity: 10,
-        type: "rent",
-        category: "バリケード",
-        rentalDays: 15,
-        billedDays: 15,
-        calculatedPrice: 300,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 15,
-            discounted: false,
-            price: 300
-          }
-        ],
-        guaranteeFeeFlat: 30
-      }
-    ],
-    subtotal: 6535,
-    tax: 653,
-    total: 7188,
-    invoiceBlocks: [
-      {
-        id: "block-b2b-ord-1-2026-06",
-        monthPeriod: "2026-06",
-        startDate: "2026/06/01",
-        endDate: "2026/06/15",
-        actualDays: 15,
-        chargeableDays: 15,
-        tierApplied: "Price_A",
-        guaranteeFee: 160,
-        baseSubtotal: 6375,
-        subtotal: 6535,
-        tax: 653,
-        total: 7188,
-        status: "pending",
-        extraCosts: []
-      }
-    ]
+    id: "c1",
+    name: "レボリューションコーン赤白",
+    image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono44627688-230815-02.jpg",
+    rentPrice: 5,
+    rentPriceLongTerm: 5,
+    category: "カラーコーン",
+    guaranteeFeeFlat: 100
   },
   {
-    id: "b2b-ord-2",
-    orderNumber: "#ORD-2026-7822",
-    date: "2026/06/10 • 10:30",
-    status: "レンタル中",
-    staffStatus: "レンタル中",
-    companyName: "大成建設 株式会社",
-    personName: "渡辺 隆",
-    siteName: "豊洲スマートシティ C街区",
-    constructionNumber: "TAI-TOYO-002",
-    rentalStartDate: "2026-06-10",
-    rentalEndDate: "2026-06-25",
-    deliveryDate: "2026-06-10",
-    deliveryLocation: "東京都江東区豊洲6-4-1",
-    items: [
-      {
-        id: "1",
-        name: "軽トラック",
-        image: "https://img1.kakaku.k-img.com/Images/prdnews/2021122%2F20211220190008_457_.jpg",
-        rentPrice: 3500,
-        rentPriceLongTerm: 2100,
-        quantity: 1,
-        type: "rent",
-        category: "軽トラック",
-        rentalDays: 16,
-        billedDays: 16,
-        calculatedPrice: 56000,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 16,
-            discounted: false,
-            price: 56000
-          }
-        ],
-        guaranteeFeeFlat: 0
-      },
-      {
-        id: "5",
-        name: "2t Wキャブノーマル",
-        image: "https://www.imagiire.co.jp/files/topics/495_ext_05_0_L.png",
-        rentPrice: 7000,
-        rentPriceLongTerm: 4000,
-        quantity: 1,
-        type: "rent",
-        category: "2t Wキャブノーマル",
-        rentalDays: 16,
-        billedDays: 16,
-        calculatedPrice: 112000,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 16,
-            discounted: false,
-            price: 112000
-          }
-        ],
-        guaranteeFeeFlat: 0
-      }
-    ],
-    subtotal: 168000,
-    tax: 16800,
-    total: 184800,
-    invoiceBlocks: [
-      {
-        id: "block-b2b-ord-2-2026-06",
-        monthPeriod: "2026-06",
-        startDate: "2026/06/10",
-        endDate: "2026/06/25",
-        actualDays: 16,
-        chargeableDays: 16,
-        tierApplied: "Price_A",
-        guaranteeFee: 0,
-        baseSubtotal: 168000,
-        subtotal: 168000,
-        tax: 16800,
-        total: 184800,
-        status: "pending",
-        extraCosts: []
-      }
-    ]
+    id: "c3",
+    name: "コーンバー黒/黄",
+    image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono21411454-230314-02.jpg",
+    rentPrice: 5,
+    rentPriceLongTerm: 5,
+    category: "コーンバー",
+    guaranteeFeeFlat: 30
   },
   {
-    id: "b2b-ord-3",
-    orderNumber: "#ORD-2026-7823",
-    date: "2026/06/05 • 14:15",
-    status: "レンタル中",
-    staffStatus: "レンタル中",
-    companyName: "大成建設 株式会社",
-    personName: "佐藤 健一",
-    siteName: "品川駅前再開発 B工区",
-    constructionNumber: "TAI-SHINA-001",
-    rentalStartDate: "2026-06-05",
-    rentalEndDate: "2026-06-30",
-    deliveryDate: "2026-06-05",
-    deliveryLocation: "東京都港区港南2-15-3",
-    items: [
-      {
-        id: "c10",
-        name: "ソーラーミラクルエイト",
-        image: "https://tshop.r10s.jp/rune/cabinet/image122/tk-m8-so-mk2_1.jpg",
-        rentPrice: 520,
-        rentPriceLongTerm: 200,
-        quantity: 5,
-        type: "rent",
-        category: "回転灯",
-        rentalDays: 26,
-        billedDays: 26,
-        calculatedPrice: 5200,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 26,
-            discounted: true,
-            price: 5200
-          }
-        ],
-        guaranteeFeeFlat: 0
-      },
-      {
-        id: "c11",
-        name: "折りたたみ矢印板",
-        image: "https://shop.r10s.jp/h-impact/cabinet/kihon/1bn225.jpg",
-        rentPrice: 250,
-        rentPriceLongTerm: 100,
-        quantity: 4,
-        type: "rent",
-        category: "矢印板",
-        rentalDays: 26,
-        billedDays: 26,
-        calculatedPrice: 2600,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 26,
-            discounted: true,
-            price: 2600
-          }
-        ],
-        guaranteeFeeFlat: 0
-      },
-      {
-        id: "c5",
-        name: "A型バリケート",
-        image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono31259840-230711-02.jpg",
-        rentPrice: 20,
-        rentPriceLongTerm: 10,
-        quantity: 8,
-        type: "rent",
-        category: "バリケード",
-        rentalDays: 26,
-        billedDays: 26,
-        calculatedPrice: 260,
-        monthlyBreakdown: [
-          {
-            monthStr: "2026-06",
-            days: 26,
-            discounted: true,
-            price: 260
-          }
-        ],
-        guaranteeFeeFlat: 24
-      }
-    ],
-    subtotal: 38504,
-    tax: 3850,
-    total: 42354,
-    invoiceBlocks: [
-      {
-        id: "block-b2b-ord-3-2026-06",
-        monthPeriod: "2026-06",
-        startDate: "2026/06/05",
-        endDate: "2026/06/30",
-        actualDays: 26,
-        chargeableDays: 26,
-        tierApplied: "Price_B",
-        guaranteeFee: 24,
-        baseSubtotal: 38480,
-        subtotal: 38504,
-        tax: 3850,
-        total: 42354,
-        status: "pending",
-        extraCosts: []
-      }
-    ]
+    id: "c5",
+    name: "A型バリケート",
+    image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono31259840-230711-02.jpg",
+    rentPrice: 20,
+    rentPriceLongTerm: 10,
+    category: "バリケード",
+    guaranteeFeeFlat: 30
+  },
+  {
+    id: "c7",
+    name: "ソーラーキングミニ 工事灯",
+    image: "https://jp.images-monotaro.com/Monotaro3/pi/highreso/mono31594728-190218-02.jpg",
+    rentPrice: 20,
+    rentPriceLongTerm: 10,
+    category: "工事灯",
+    guaranteeFeeFlat: 50
+  },
+  {
+    id: "c8",
+    name: "フラッシュコーン 工事灯",
+    image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSAQkQSFnUqWs8QZQvPIBaNtfmrAXaEshL-Bg&s",
+    rentPrice: 35,
+    rentPriceLongTerm: 15,
+    category: "工事灯",
+    guaranteeFeeFlat: 20
   }
 ];
+
+const people = [
+  "田中 一郎",
+  "渡辺 隆",
+  "佐藤 健一",
+  "高橋 裕二",
+  "鈴木 次郎"
+];
+
+const sites = [
+  "品川駅前再開発 B工区",
+  "豊洲スマートシティ C街区",
+  "渋谷桜丘地区開発 A棟",
+  "新宿駅西口地区開発",
+  "虎ノ門・麻布台プロジェクト"
+];
+
+const generateMockB2BOrders = () => {
+  const list: any[] = [];
+  let ordIdCounter = 7800;
+  
+  // 1. Taisei Construction (5 members, 10 orders each = 50 orders)
+  people.forEach((person, pIdx) => {
+    for (let oIdx = 1; oIdx <= 10; oIdx++) {
+      ordIdCounter++;
+      const orderId = `b2b-ord-gen-${pIdx + 1}-${oIdx}`;
+      const orderNo = `#ORD-2026-${ordIdCounter}`;
+      
+      const siteName = sites[(pIdx + oIdx) % sites.length];
+      const dayVal = (pIdx * 2) + oIdx; 
+      const dayStr = String(dayVal % 28 + 1).padStart(2, "0");
+      const rentalDays = 15;
+      
+      const item1 = poolOfItems[(pIdx + oIdx) % poolOfItems.length];
+      const item2 = poolOfItems[(pIdx + oIdx + 2) % poolOfItems.length];
+      
+      const qty1 = ((pIdx + oIdx) % 3) + 2; 
+      const qty2 = ((pIdx + oIdx) % 2) + 1; 
+      
+      const calcPrice1 = item1.rentPrice * rentalDays;
+      const calcPrice2 = item2.rentPrice * rentalDays;
+      
+      const orderItems = [
+        {
+          ...item1,
+          quantity: qty1,
+          type: "rent" as const,
+          rentalDays,
+          billedDays: rentalDays,
+          calculatedPrice: calcPrice1,
+          monthlyBreakdown: [
+            {
+              monthStr: "2026-06",
+              days: rentalDays,
+              discounted: false,
+              price: calcPrice1
+            }
+          ]
+        },
+        {
+          ...item2,
+          quantity: qty2,
+          type: "rent" as const,
+          rentalDays,
+          billedDays: rentalDays,
+          calculatedPrice: calcPrice2,
+          monthlyBreakdown: [
+            {
+              monthStr: "2026-06",
+              days: rentalDays,
+              discounted: false,
+              price: calcPrice2
+            }
+          ]
+        }
+      ];
+      
+      const itemTotal1 = calcPrice1 * qty1;
+      const itemTotal2 = calcPrice2 * qty2;
+      const baseSubtotal = itemTotal1 + itemTotal2;
+      
+      // Real-life guarantee fee calculation: flat fee per line item type, not multiplied by quantity
+      const guaranteeFee = item1.guaranteeFeeFlat + item2.guaranteeFeeFlat;
+      const subtotal = baseSubtotal + guaranteeFee;
+      const tax = Math.floor(subtotal * 0.1);
+      const total = subtotal + tax;
+      
+      const endDayVal = ((dayVal % 28 + 1) + 14) % 28 + 1;
+      const endDayStr = String(endDayVal).padStart(2, "0");
+
+      list.push({
+        id: orderId,
+        orderNumber: orderNo,
+        date: `2026/06/${dayStr} • 10:00`,
+        status: "レンタル中",
+        staffStatus: "レンタル中",
+        companyName: "大成建設 株式会社",
+        personName: person,
+        siteName,
+        constructionNumber: `TAI-SITE-${String(pIdx + 1).padStart(3, "0")}`,
+        rentalStartDate: `2026-06-${dayStr}`,
+        rentalEndDate: `2026-06-${endDayStr}`,
+        deliveryDate: `2026-06-${dayStr}`,
+        deliveryLocation: `東京都港区港南2-15-${pIdx + 1}`,
+        items: orderItems,
+        subtotal,
+        tax,
+        total,
+        invoiceBlocks: [
+          {
+            id: `block-${orderId}-2026-06`,
+            monthPeriod: "2026-06",
+            startDate: `2026/06/${dayStr}`,
+            endDate: `2026/06/${endDayStr}`,
+            actualDays: rentalDays,
+            chargeableDays: rentalDays,
+            tierApplied: "Price_A",
+            guaranteeFee,
+            baseSubtotal,
+            subtotal,
+            tax,
+            total,
+            status: "pending",
+            extraCosts: []
+          }
+        ]
+      });
+    }
+  });
+
+  // 2. Shimizu Construction (3 members, 4 orders each = 12 orders)
+  const shimizuPeople = [
+    "鈴木 健",
+    "佐藤 拓也",
+    "小林 茂"
+  ];
+  
+  shimizuPeople.forEach((person, pIdx) => {
+    for (let oIdx = 1; oIdx <= 4; oIdx++) {
+      ordIdCounter++;
+      const orderId = `shimizu-ord-gen-${pIdx + 1}-${oIdx}`;
+      const orderNo = `#ORD-2026-${ordIdCounter}`;
+      
+      const siteName = "新木場物流センター";
+      const dayVal = (pIdx * 3) + oIdx + 5;
+      const dayStr = String(dayVal % 28 + 1).padStart(2, "0");
+      const rentalDays = 10;
+      
+      const item1 = poolOfItems[(pIdx + oIdx + 1) % poolOfItems.length];
+      const calcPrice1 = item1.rentPrice * rentalDays;
+      
+      const orderItems = [
+        {
+          ...item1,
+          quantity: 5,
+          type: "rent" as const,
+          rentalDays,
+          billedDays: rentalDays,
+          calculatedPrice: calcPrice1,
+          monthlyBreakdown: [
+            {
+              monthStr: "2026-06",
+              days: rentalDays,
+              discounted: false,
+              price: calcPrice1
+            }
+          ]
+        }
+      ];
+      
+      const baseSubtotal = calcPrice1 * 5;
+      const guaranteeFee = item1.guaranteeFeeFlat;
+      const subtotal = baseSubtotal + guaranteeFee;
+      const tax = Math.floor(subtotal * 0.1);
+      const total = subtotal + tax;
+      
+      const endDayVal = ((dayVal % 28 + 1) + 9) % 28 + 1;
+      const endDayStr = String(endDayVal).padStart(2, "0");
+
+      list.push({
+        id: orderId,
+        orderNumber: orderNo,
+        date: `2026/06/${dayStr} • 14:00`,
+        status: "レンタル中",
+        staffStatus: "レンタル中",
+        companyName: "清水建設 株式会社",
+        personName: person,
+        siteName,
+        constructionNumber: `SHI-SITE-${String(pIdx + 1).padStart(3, "0")}`,
+        rentalStartDate: `2026-06-${dayStr}`,
+        rentalEndDate: `2026-06-${endDayStr}`,
+        deliveryDate: `2026-06-${dayStr}`,
+        deliveryLocation: `東京都江東区新木場2-1`,
+        items: orderItems,
+        subtotal,
+        tax,
+        total,
+        invoiceBlocks: [
+          {
+            id: `block-${orderId}-2026-06`,
+            monthPeriod: "2026-06",
+            startDate: `2026/06/${dayStr}`,
+            endDate: `2026/06/${endDayStr}`,
+            actualDays: rentalDays,
+            chargeableDays: rentalDays,
+            tierApplied: "Price_A",
+            guaranteeFee,
+            baseSubtotal,
+            subtotal,
+            tax,
+            total,
+            status: "pending",
+            extraCosts: []
+          }
+        ]
+      });
+    }
+  });
+  
+  return list;
+};
+
+export const B2B_MOCK_ORDERS = generateMockB2BOrders();
 
 // Pack all mock collections to simplify seeding
 export const COLLECTIONS_MOCK_DATA: Record<string, any[]> = {
