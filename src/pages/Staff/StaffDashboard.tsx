@@ -25,6 +25,9 @@ import {
   isVehicle
 } from "./WarehouseViews";
 
+// ---------------------------------------------------------------------------
+// Premium Industrial Stat Tile Component
+// ---------------------------------------------------------------------------
 function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, onClick }: any) {
   const colors = outdoorMode ? {
     fg: "#00FF66",
@@ -33,10 +36,10 @@ function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, 
     border: "#00FF66"
   } : {
     neutral: { fg: "var(--fg)", bg: "var(--surface-2)", iconColor: "var(--fg-muted)", border: "var(--border)" },
-    brand: { fg: "var(--brand-accent)", bg: "rgba(58,77,232,0.1)", iconColor: "var(--brand-accent)", border: "rgba(58,77,232,0.2)" },
-    success: { fg: "var(--success-bright)", bg: "rgba(31,157,87,0.1)", iconColor: "var(--success-bright)", border: "rgba(31,157,87,0.2)" },
-    danger: { fg: "var(--danger-bright)", bg: "rgba(220,58,40,0.1)", iconColor: "var(--danger-bright)", border: "rgba(220,58,40,0.2)" },
-    warning: { fg: "var(--warning-bright)", bg: "rgba(229,150,27,0.1)", iconColor: "var(--warning-bright)", border: "rgba(229,150,27,0.2)" }
+    brand: { fg: "#2563EB", bg: "rgba(37,99,235,0.1)", iconColor: "#2563EB", border: "rgba(37,99,235,0.2)" },
+    success: { fg: "#10B981", bg: "rgba(16,185,129,0.1)", iconColor: "#10B981", border: "rgba(16,185,129,0.2)" },
+    danger: { fg: "#EF4444", bg: "rgba(239,68,68,0.1)", iconColor: "#EF4444", border: "rgba(239,68,68,0.2)" },
+    warning: { fg: "#F59E0B", bg: "rgba(245,158,11,0.1)", iconColor: "#F59E0B", border: "rgba(245,158,11,0.2)" }
   }[variant as "neutral" | "brand" | "success" | "danger" | "warning"] || {
     fg: "var(--fg)", bg: "var(--surface-2)", iconColor: "var(--fg-muted)", border: "var(--border)"
   };
@@ -48,26 +51,26 @@ function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, 
         flex: 1,
         background: outdoorMode ? "#000000" : "var(--surface)",
         border: outdoorMode ? `3px solid ${colors.border}` : `1px solid ${colors.border}`,
-        borderTop: outdoorMode ? `3px solid ${colors.border}` : `3.5px solid ${colors.iconColor}`,
-        borderRadius: "14px",
-        padding: "14px 12px",
-        boxShadow: outdoorMode ? "none" : "var(--shadow-card)",
+        borderTop: outdoorMode ? `3px solid ${colors.border}` : `4px solid ${colors.iconColor}`,
+        borderRadius: "16px",
+        padding: "16px 12px",
+        boxShadow: outdoorMode ? "none" : "0 4px 12px rgba(0,0,0,0.15)",
         cursor: onClick ? "pointer" : undefined,
-        transition: "transform 0.15s ease"
+        transition: "all 0.2s ease"
       }}
-      className="active:scale-95"
+      className="active:scale-95 transform"
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ 
-          width: 34, height: 34, borderRadius: 8, 
+          width: 36, height: 36, borderRadius: "10px", 
           background: colors.bg, display: "grid", placeItems: "center",
           border: outdoorMode ? "1px solid #00FF66" : "none"
         }}>
-          <Icon name={icon} size={18} color={colors.iconColor} />
+          <Icon name={icon} size={20} color={colors.iconColor} />
         </div>
       </div>
       <div style={{ 
-        fontSize: outdoorMode ? 32 : 29, 
+        fontSize: outdoorMode ? 34 : 30, 
         fontWeight: 900, 
         color: colors.fg, 
         fontFamily: "var(--font-mono)", 
@@ -75,15 +78,18 @@ function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, 
         lineHeight: 1 
       }}>
         {value}
-        <span style={{ fontSize: 13, fontWeight: 900, marginLeft: 3, color: outdoorMode ? "#FFF" : "var(--fg-subtle)" }}>{unit}</span>
+        <span style={{ fontSize: 13, fontWeight: 900, marginLeft: 2, color: outdoorMode ? "#FFF" : "var(--fg-subtle)" }}>{unit}</span>
       </div>
-      <div style={{ fontSize: outdoorMode ? 13 : 11.5, color: outdoorMode ? "#FFF" : "var(--fg-muted)", marginTop: 8, fontWeight: 900 }}>{label}</div>
+      <div style={{ fontSize: outdoorMode ? 14 : 12, color: outdoorMode ? "#FFF" : "var(--fg-muted)", marginTop: 8, fontWeight: 800 }}>{label}</div>
     </div>
   );
 }
 
-function AlertRow({ icon, variant, title, sub, outdoorMode, onClick }: any) {
-  const c = outdoorMode ? "#FF3333" : { danger: "var(--danger-bright)", warning: "var(--warning-bright)" }[variant as "danger" | "warning"];
+// ---------------------------------------------------------------------------
+// High-Contrast Alert Row
+// ---------------------------------------------------------------------------
+function AlertRow({ title, sub, outdoorMode, onClick }: any) {
+  const c = outdoorMode ? "#FF3333" : "#EF4444";
   return (
     <div
       onClick={onClick}
@@ -91,90 +97,102 @@ function AlertRow({ icon, variant, title, sub, outdoorMode, onClick }: any) {
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: 14,
-        borderRadius: 14,
+        padding: "14px 16px",
+        borderRadius: "16px",
         background: outdoorMode ? "#000000" : "var(--surface)",
-        border: outdoorMode ? `3px solid ${c}` : "1px solid var(--border-2)",
+        border: outdoorMode ? `3px solid ${c}` : "1px solid rgba(239,68,68,0.2)",
         borderLeft: `6px solid ${c}`,
-        marginBottom: 9,
+        marginBottom: 10,
         cursor: "pointer"
       }}
+      className="active:scale-[0.99] transition-transform"
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: outdoorMode ? 16 : 14.5, fontWeight: 900, color: "#FFFFFF" }}>{title}</div>
-        <div style={{ fontSize: 12.5, color: outdoorMode ? "#00FF66" : "var(--fg-muted)", marginTop: 2, fontWeight: 700 }}>{sub}</div>
+        <div style={{ fontSize: 12.5, color: outdoorMode ? "#00FF66" : "var(--fg-muted)", marginTop: 3, fontWeight: 700 }}>{sub}</div>
       </div>
-      <Icon name="chevronRight" size={16} color={outdoorMode ? "#FF3333" : "var(--fg-subtle)"} />
+      <Icon name="chevronRight" size={16} color={c} />
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Thumb-Zone Ergonomic Delivery Card (🔵 Cobalt Language)
+// ---------------------------------------------------------------------------
 function DeliveryCard({ o, done, outdoorMode, onClick }: any) {
   return (
     <Card 
       onClick={onClick} 
       style={{ 
         marginBottom: 12, 
-        opacity: done ? 0.5 : 1, 
-        padding: "18px 16px",
+        opacity: done ? 0.4 : 1, 
+        padding: "20px 16px",
         background: outdoorMode ? "#000000" : "var(--surface)",
         border: outdoorMode ? "3px solid #00FF66" : "1px solid var(--border-2)",
-        borderLeft: outdoorMode ? "8px solid #00FF66" : "5px solid var(--brand)",
+        borderLeft: outdoorMode ? "8px solid #00FF66" : "6px solid #2563EB",
       }}
-      className="active:scale-[0.98] transition-transform"
+      className="active:scale-[0.97] transition-transform"
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div style={{ minWidth: 0 }}>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: outdoorMode ? 14 : 13, fontWeight: 900, color: outdoorMode ? "#00FF66" : "var(--brand-accent)" }}>{o.id}</span>
-          <div style={{ fontSize: outdoorMode ? 19 : 17, fontWeight: 900, color: "#FFFFFF", marginTop: 4 }}>{o.site}</div>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: outdoorMode ? 14 : 13, fontWeight: 900, color: outdoorMode ? "#00FF66" : "#2563EB" }}>{o.id}</span>
+          <div style={{ fontSize: outdoorMode ? 20 : 18, fontWeight: 900, color: "#FFFFFF", marginTop: 4, letterSpacing: "-0.01em" }}>{o.site}</div>
           <div style={{ fontSize: 13, color: outdoorMode ? "#FFF" : "var(--fg-muted)", marginTop: 4, fontWeight: 700 }}>{o.company}</div>
         </div>
-        <Badge variant={done ? "success" : "neutral"}>{done ? "完了" : o.window}</Badge>
+        <Badge variant={done ? "success" : "brand"}>{done ? "完了" : o.window}</Badge>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: outdoorMode ? "2px solid #00FF66" : "1px solid var(--border-2)" }}>
-        <span style={{ fontSize: outdoorMode ? 13 : 12, fontWeight: 800, color: "#00FF66" }}>
-          {o.items.reduce((a: number, b: any) => a + b.qty, 0)} 点 / {o.items.length} 品目
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: outdoorMode ? "2px solid #00FF66" : "1px solid var(--border-2)" }}>
+        <span style={{ fontSize: outdoorMode ? 14 : 12.5, fontWeight: 800, color: outdoorMode ? "#00FF66" : "var(--fg-muted)" }}>
+          📦 {o.items.reduce((a: number, b: any) => a + b.qty, 0)} 点 / {o.items.length} 品目
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: outdoorMode ? "#00FF66" : "var(--brand-accent)", fontWeight: 900, fontSize: outdoorMode ? 14 : 13 }}>
-          {done ? "確認" : "配送開始 (タップ)"} <Icon name="chevronRight" size={16} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: outdoorMode ? "#00FF66" : "#2563EB", fontWeight: 900, fontSize: outdoorMode ? 14 : 13.5 }}>
+          {done ? "確認" : "配送業務を開始"} <Icon name="chevronRight" size={16} />
         </span>
       </div>
     </Card>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Thumb-Zone Ergonomic Recovery Card (🟡 Amber Language)
+// ---------------------------------------------------------------------------
 function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
   return (
     <Card 
       onClick={onClick} 
       style={{ 
         marginBottom: 12, 
-        opacity: done ? 0.5 : 1, 
-        padding: "18px 16px",
+        opacity: done ? 0.4 : 1, 
+        padding: "20px 16px",
         background: outdoorMode ? "#000000" : "var(--surface)",
-        border: outdoorMode ? "3px solid #FFFF00" : "1px solid var(--border-2)",
-        borderLeft: outdoorMode ? "8px solid #FFFF00" : "5px solid var(--success-bright)",
+        border: outdoorMode ? "3px solid #F59E0B" : "1px solid var(--border-2)",
+        borderLeft: outdoorMode ? "8px solid #F59E0B" : "6px solid #F59E0B",
       }}
-      className="active:scale-[0.98] transition-transform"
+      className="active:scale-[0.97] transition-transform"
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div style={{ minWidth: 0 }}>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: outdoorMode ? 14 : 13, fontWeight: 900, color: outdoorMode ? "#FFFF00" : "var(--brand-accent)" }}>{o.id}</span>
-          <div style={{ fontSize: outdoorMode ? 19 : 17, fontWeight: 900, color: "#FFFFFF", marginTop: 4 }}>{o.site}</div>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: outdoorMode ? 14 : 13, fontWeight: 900, color: "#F59E0B" }}>{o.id}</span>
+          <div style={{ fontSize: outdoorMode ? 20 : 18, fontWeight: 900, color: "#FFFFFF", marginTop: 4, letterSpacing: "-0.01em" }}>{o.site}</div>
           <div style={{ fontSize: 13, color: outdoorMode ? "#FFF" : "var(--fg-muted)", marginTop: 4, fontWeight: 700 }}>{o.company}</div>
         </div>
-        <Badge variant={done ? "success" : "neutral"}>{done ? "完了" : o.window}</Badge>
+        <Badge variant={done ? "success" : "warning"}>{done ? "完了" : o.window}</Badge>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: outdoorMode ? "2px solid #FFFF00" : "1px solid var(--border-2)" }}>
-        <span style={{ fontSize: outdoorMode ? 13 : 12, fontWeight: 800, color: "#FFFF00" }}>{o.products.length} 品目</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: outdoorMode ? "#FFFF00" : "var(--brand-accent)", fontWeight: 900, fontSize: outdoorMode ? 14 : 13 }}>
-          {done ? "確認" : "回収開始 (タップ)"} <Icon name="chevronRight" size={16} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: outdoorMode ? "2px solid #F59E0B" : "1px solid var(--border-2)" }}>
+        <span style={{ fontSize: outdoorMode ? 14 : 12.5, fontWeight: 800, color: outdoorMode ? "#F59E0B" : "var(--fg-muted)" }}>
+          🔄 {o.products.length} 品目回収
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: "#F59E0B", fontWeight: 900, fontSize: outdoorMode ? 14 : 13.5 }}>
+          {done ? "確認" : "回収業務を開始"} <Icon name="chevronRight" size={16} />
         </span>
       </div>
     </Card>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main Flow Views Wrapper
+// ---------------------------------------------------------------------------
 function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   const ml = useMobileLive();
   const [subTab, setSubTab] = useState("haisou");
@@ -188,8 +206,9 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: outdoorMode ? "#000000" : "var(--bg)", minHeight: 0 }}>
       <TopBar title="配送・回収業務" sub="DELIVERY & RECOVERY" />
       
-      <div style={{ padding: "0 16px 12px" }}>
-        <div style={{ display: "flex", gap: 7, background: outdoorMode ? "#111" : "var(--surface-2)", padding: 4, borderRadius: 12, border: outdoorMode ? "2px solid #FFF" : "none" }}>
+      {/* Thumb-friendly sub-tab filters located at lower ergonomic flow block */}
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ display: "flex", gap: 8, background: outdoorMode ? "#111" : "var(--surface-2)", padding: 4, borderRadius: "14px", border: outdoorMode ? "2px solid #FFF" : "1px solid var(--border)" }}>
           {[
             ["haisou", `配送予定 (${pendingDlvCount})`],
             ["kaishu", `回収予定 (${pendingRtnCount})`]
@@ -199,14 +218,15 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
               onClick={() => setSubTab(k)}
               style={{
                 flex: 1,
-                padding: "11px 0",
-                borderRadius: 9,
+                padding: "12px 0",
+                borderRadius: "10px",
                 border: "none",
                 background: subTab === k ? (outdoorMode ? "#00FF66" : "var(--surface)") : "transparent",
                 color: subTab === k ? (outdoorMode ? "#000" : "var(--fg)") : "var(--fg-muted)",
                 fontWeight: 900,
-                fontSize: outdoorMode ? 14 : 13,
-                cursor: "pointer"
+                fontSize: outdoorMode ? 15 : 13.5,
+                cursor: "pointer",
+                transition: "all 0.15s ease"
               }}
             >
               {l}
@@ -251,21 +271,24 @@ function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries, outdoorMo
   return (
     <Screen style={{ background: outdoorMode ? "#000" : "var(--bg)" }}>
       <TopBar title="マイページ" sub="PROFILE" />
-      <Card pad={18} style={{ marginBottom: 16, textAlign: "center", border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border)", background: outdoorMode ? "#000" : "var(--surface)" }}>
-        <div style={{ width: 72, height: 72, borderRadius: 99, background: "#1a1c9a", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 28, margin: "0 auto 12px" }}>ミ</div>
-        <div style={{ fontSize: 20, fontWeight: 900, color: "#FFFFFF" }}>{staff.name}</div>
-        <div style={{ fontSize: 13.5, color: outdoorMode ? "#00FF66" : "var(--fg-muted)", marginTop: 3, fontWeight: 700 }}>{staff.role}</div>
+      <Card pad={20} style={{ marginBottom: 16, textAlign: "center", border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border)", background: outdoorMode ? "#000" : "var(--surface)", borderRadius: "20px" }}>
+        <div style={{ width: 76, height: 76, borderRadius: "99px", background: "#1a1c9a", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 30, margin: "0 auto 12px" }}>ミ</div>
+        <div style={{ fontSize: 21, fontWeight: 900, color: "#FFFFFF" }}>{staff.name}</div>
+        <div style={{ fontSize: 13.5, color: outdoorMode ? "#00FF66" : "var(--fg-muted)", marginTop: 4, fontWeight: 700 }}>{staff.role}</div>
       </Card>
       
-      <Card pad={6} style={{ background: outdoorMode ? "#000" : "var(--surface)", border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border)" }}>
-        <div style={{ padding: 12, fontSize: outdoorMode ? 15 : 14, fontWeight: 800, color: "#FFF" }}>
-          業務完了総数: {completedItems.length} 件
+      <Card pad={14} style={{ background: outdoorMode ? "#000" : "var(--surface)", border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border)", borderRadius: "16px" }}>
+        <div style={{ fontSize: outdoorMode ? 16 : 14.5, fontWeight: 900, color: "#FFF" }}>
+          ✅ 本日の業務完了インデックス: <span style={{ color: "#10B981", fontFamily: "var(--font-mono)", fontSize: 18 }}>{completedItems.length}</span> 件
         </div>
       </Card>
     </Screen>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Central Dashboard Core View Setup
+// ---------------------------------------------------------------------------
 function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean, setOutdoorMode: (v: boolean) => void }) {
   const ml = useMobileLive();
   const [tab, setTab] = useState("home");
@@ -326,68 +349,75 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
   if (tab === "home") {
     content = (
       <Screen style={{ background: outdoorMode ? "#000000" : "var(--bg)" }}>
+        
+        {/* Top Header Section with Sticky Ergonomic Contrast Trigger */}
         <div style={{ padding: "12px 2px 16px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
             <div>
-              <span style={{ fontSize: 12, fontWeight: 900, color: outdoorMode ? "#00FF66" : "var(--brand-accent)", fontFamily: "var(--font-mono)" }}>2026.06.08 (月)</span>
-              <h1 style={{ fontSize: outdoorMode ? 26 : 24, fontWeight: 900, color: "#FFFFFF", marginTop: 2 }}>現場運行・倉庫管理</h1>
+              <span style={{ fontSize: 12, fontWeight: 900, color: outdoorMode ? "#00FF66" : "#2563EB", fontFamily: "var(--font-mono)" }}>2026.06.08 (月)</span>
+              <h1 style={{ fontSize: outdoorMode ? 26 : 23, fontWeight: 900, color: "#FFFFFF", marginTop: 2 }}>現場運行・倉庫管理</h1>
             </div>
             
             <button
               onClick={() => setOutdoorMode(!outdoorMode)}
               style={{
-                background: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.08)",
+                background: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.06)",
                 color: outdoorMode ? "#000000" : "#FFFFFF",
                 border: outdoorMode ? "3px solid #00FF66" : "1px solid var(--border)",
                 borderRadius: "12px",
-                padding: "6px 12px",
-                fontSize: "11px",
+                padding: "8px 14px",
+                fontSize: "12px",
                 fontWeight: 900,
                 display: "flex",
                 alignItems: "center",
-                gap: "5px",
+                gap: "6px",
                 cursor: "pointer"
               }}
               className="active:scale-95 transition-transform"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>sunny</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>sunny</span>
               {outdoorMode ? "屋外: ON" : "屋外モード"}
             </button>
           </div>
 
+          {/* Premium Overview Hub Panel */}
           <Card pad={18} style={{ 
-            background: outdoorMode ? "#000" : "linear-gradient(135deg, rgba(102,120,244,0.18), rgba(24,34,210,0.06))",
+            background: outdoorMode ? "#000" : "linear-gradient(135deg, rgba(37,99,235,0.15), rgba(16,185,129,0.04))",
             border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border-2)",
+            borderRadius: "20px",
             marginBottom: 20
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, background: "#1a1c9a", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 18 }}>鈴</div>
+              <div style={{ width: 46, height: 46, borderRadius: "12px", background: "#1a1c9a", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 18 }}>鈴</div>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: "#FFFFFF" }}>{staff.name} さん</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#FFFFFF" }}>{staff.name} 責任者</div>
                 <div style={{ fontSize: 12, color: outdoorMode ? "#00FF66" : "var(--fg-muted)", fontWeight: 700 }}>{staff.team}</div>
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: outdoorMode ? 14 : 13.5, fontWeight: 900 }}>
-              <span style={{ color: outdoorMode ? "#FFF" : "var(--fg-muted)" }}>運行タスク完了状況</span>
-              <span style={{ color: outdoorMode ? "#00FF66" : "var(--brand-accent)" }}>{completedTasks} / {totalTasks} 件</span>
+              <span style={{ color: outdoorMode ? "#FFF" : "var(--fg-muted)" }}>本日のタスク消化率</span>
+              <span style={{ color: outdoorMode ? "#00FF66" : "#2563EB" }}>{completedTasks} / {totalTasks} 件 ({totalTasks ? Math.round((completedTasks/totalTasks)*100) : 0}%)</span>
             </div>
-            <ProgressBar value={completedTasks} max={totalTasks} color={outdoorMode ? "#00FF66" : "var(--success-bright)"} />
+            <ProgressBar value={completedTasks} max={totalTasks} color={outdoorMode ? "#00FF66" : "#10B981"} />
           </Card>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {/* Dynamic Matrix Grid Stats */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
           <StatTile label="配送予定" value={pendingDlvCount} unit="件" icon="truck" variant="brand" outdoorMode={outdoorMode} onClick={() => setTab("delivery_recovery")} />
           <StatTile label="回収予定" value={pendingRtnCount} unit="件" icon="package" variant="success" outdoorMode={outdoorMode} onClick={() => setTab("delivery_recovery")} />
-          <StatTile label="警告アラート" value={overdueVeh + overdueMnt} unit="件" icon="alert" variant="danger" outdoorMode={outdoorMode} onClick={() => setTab("inspect")} />
+          <StatTile label="警告検知" value={overdueVeh + overdueMnt} unit="件" icon="alert" variant="danger" outdoorMode={outdoorMode} onClick={() => setTab("inspect")} />
         </div>
 
+        {/* Intelligent Operational Alerts Block */}
         {(overdueVeh > 0 || overdueMnt > 0) && (
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: 20 }}>
             <SectionLabel style={{ color: outdoorMode ? "#FF3333" : "inherit" }}>🚨 要対応アラート</SectionLabel>
-            {overdueVeh > 0 && <AlertRow icon="car" variant="danger" title="車検切れ警告" sub={`対象: ${overdueVeh}台の車両`} outdoorMode={outdoorMode} onClick={() => setTab("inspect")} />}
+            {overdueVeh > 0 && <AlertRow title="車両の車検期限切れ警告" sub={`対象 ${overdueVeh}台 ・ 至急ベース内点検ドックへ回送してください`} outdoorMode={outdoorMode} onClick={() => setTab("inspect")} />}
           </div>
         )}
 
+        {/* Tactile Big Target Bottom Action Button */}
         <button
           onClick={() => setFlow({ type: "walkin" })}
           style={{
@@ -395,33 +425,36 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
             display: "flex",
             alignItems: "center",
             gap: 14,
-            padding: "18px 20px",
-            borderRadius: 20,
-            background: outdoorMode ? "#000000" : "linear-gradient(135deg, var(--brand), var(--brand-strong))",
+            padding: "20px",
+            borderRadius: "22px",
+            background: outdoorMode ? "#000000" : "linear-gradient(135deg, #1A1C9A, #0A0C5A)",
             border: outdoorMode ? "4px solid #00FF66" : "1px solid rgba(255,255,255,0.1)",
             cursor: "pointer",
             marginBottom: 24,
-            boxShadow: outdoorMode ? "none" : "0 8px 24px rgba(58,77,232,0.3)"
+            boxShadow: outdoorMode ? "none" : "0 10px 25px rgba(26,28,154,0.3)"
           }}
-          className="active:scale-[0.96] transition-transform"
+          className="active:scale-[0.96] transition-transform duration-150"
         >
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.2)", color: outdoorMode ? "#000" : "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
-            <Icon name="clipboardCheck" size={22} />
+          <div style={{ width: 46, height: 46, borderRadius: "12px", background: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.15)", color: outdoorMode ? "#000" : "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <Icon name="clipboardCheck" size={24} />
           </div>
           <div style={{ flex: 1, textAlign: "left" }}>
-            <div style={{ fontSize: outdoorMode ? 18 : 16, fontWeight: 900, color: "#fff" }}>お客様持込返却 検品</div>
-            <div style={{ fontSize: 12, color: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 700 }}>ベースに直接持ち込まれた機材의返却受領</div>
+            <div style={{ fontSize: outdoorMode ? 18 : 16, fontWeight: 900, color: "#fff" }}>お客様持込返却 の検品</div>
+            <div style={{ fontSize: 12, color: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.75)", marginTop: 2, fontWeight: 700 }}>返却カウンターへ直接来庫された機材の受領処理</div>
           </div>
-          <Icon name="chevronRight" size={20} color="#fff" />
+          <div style={{ background: "#FFF", color: "#1A1C9A", borderRadius: "8px", padding: "2px 8px", fontSize: 12, fontWeight: 900, fontMemo: "true" } as any}>
+            {walkinCount}件
+          </div>
         </button>
 
-        <SectionLabel>倉庫管理クイック操作</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingBottom: 30 }}>
+        {/* Structured Grid Control Panel */}
+        <SectionLabel>倉庫・ロジスティクス操作</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, paddingBottom: 34 }}>
           {[
-            ["boxIn", "入庫登録", "stock"],
-            ["boxOut", "出庫登録", "stock"],
-            ["layers", "倉庫棚卸し", "stocktake"],
-            ["car", "車両点検", "inspect"]
+            ["boxIn", "入庫データ登録", "stock"],
+            ["boxOut", "出庫データ登録", "stock"],
+            ["layers", "倉庫内棚卸し", "stocktake"],
+            ["car", "車両安全点検", "inspect"]
           ].map(([ic, lb, t]) => (
             <button
               key={lb}
@@ -431,15 +464,15 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
                 alignItems: "center",
                 gap: 12,
                 padding: "18px 14px",
-                borderRadius: 16,
+                borderRadius: "18px",
                 background: outdoorMode ? "#000000" : "var(--surface)",
                 border: outdoorMode ? "3px solid #FFF" : "1px solid var(--border-2)",
                 cursor: "pointer"
               }}
               className="active:scale-95 transition-transform"
             >
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: outdoorMode ? "#FFF" : "var(--brand-tint)", color: outdoorMode ? "#000" : "var(--brand-accent)", display: "grid", placeItems: "center" }}>
-                <Icon name={ic as any} size={18} />
+              <div style={{ width: 38, height: 38, borderRadius: "10px", background: outdoorMode ? "#FFF" : "var(--brand-tint)", color: outdoorMode ? "#000" : "var(--brand-accent)", display: "grid", placeItems: "center" }}>
+                <Icon name={ic as any} size={20} />
               </div>
               <span style={{ fontSize: outdoorMode ? 15 : 14, fontWeight: 900, color: "#FFFFFF" }}>{lb}</span>
             </button>
@@ -491,6 +524,7 @@ export default function StaffDashboard() {
           display: "flex",
           flexDirection: "column"
         }}>
+          {/* OS Navigation Top-Bar */}
           <div style={{
             height: 32,
             background: outdoorMode ? "#000000" : "var(--bg)",
