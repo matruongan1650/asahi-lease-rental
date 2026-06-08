@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import {
   Panel,
   Btn,
-  Toolbar,
   Table,
   Badge,
   KPI,
@@ -26,6 +25,9 @@ export default function AdminRental() {
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
   const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
   
+  // Workspace split view state
+  const [activeWorkspaceOrder, setActiveWorkspaceOrder] = useState<any>(null);
+
   // B2B Aggregation states
   const [selectedCompany, setSelectedCompany] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -119,7 +121,9 @@ export default function AdminRental() {
       cell: (r: any) => (
         <div>
           <div className="font-mono text-blue-700 font-bold">{r.id}</div>
-          <div className="text-[10px] text-slate-400 mt-0.5 font-mono">{r.date || "—"}</div>
+          <div className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 font-mono bg-slate-100 border border-slate-200/60 font-medium">
+            {r.date || "—"}
+          </div>
         </div>
       )
     },
@@ -182,7 +186,6 @@ export default function AdminRental() {
             }}
             className="inline-flex items-center gap-1 h-[24px] px-2 rounded-sm border border-slate-200 bg-white hover:bg-slate-50 text-[10.5px] font-bold text-slate-500 cursor-pointer active:scale-95 transition-transform"
           >
-            <span className="material-symbols-outlined text-[12px]">local_shipping</span>
             納品書
           </button>
           <button
@@ -203,21 +206,7 @@ export default function AdminRental() {
             }}
             className="inline-flex items-center gap-1 h-[24px] px-2 rounded-sm border border-slate-200 bg-white hover:bg-slate-50 text-[10.5px] font-bold text-slate-500 cursor-pointer active:scale-95 transition-transform"
           >
-            <span className="material-symbols-outlined text-[12px]">receipt</span>
             請求書
-          </button>
-          <button
-            onClick={() => {
-              const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-              if (fullOrder) {
-                setSelectedOrder(fullOrder);
-                setViewingDoc("回収書");
-              } else triggerToast("データが見つかりません", "err");
-            }}
-            className="inline-flex items-center gap-1 h-[24px] px-2 rounded-sm border border-slate-200 bg-white hover:bg-slate-50 text-[10.5px] font-bold text-slate-500 cursor-pointer active:scale-95 transition-transform"
-          >
-            <span className="material-symbols-outlined text-[12px]">inventory_2</span>
-            回収書
           </button>
         </div>
       )
@@ -273,7 +262,6 @@ export default function AdminRental() {
         tabs={tabs}
         active={tab}
         onChange={(next) => {
-          // Đổi tab thì đóng các modal/drawer còn mở để tránh chồng lên tab mới
           setViewingDoc(null);
           setShowInvoiceSelector(false);
           setB2bOpen(false);
@@ -283,11 +271,12 @@ export default function AdminRental() {
           setCompanyFilter("");
           setStartDateFilter(getTodayStr());
           setEndDateFilter(getTodayStr());
+          setActiveWorkspaceOrder(null);
           setTab(next);
         }}
       />
 
-      {/* B2B Aggregation Form (Only visible in Rental Invoice tab) */}
+      {/* B2B Aggregation Form */}
       {tab === "invoice" && (
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5 flex flex-col md:flex-row gap-4 items-end bg-gradient-to-r from-blue-50/20 to-indigo-50/20">
           <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -351,7 +340,7 @@ export default function AdminRental() {
         </div>
       )}
 
-      {/* Main Grid */}
+      {/* Main Grid Workspace Container */}
       {tab === "invoice" ? (
         <AdminRentalInvoiceSection
           orders={liveOrders.orders}
@@ -359,167 +348,187 @@ export default function AdminRental() {
           companyFilter={selectedCompany || undefined}
         />
       ) : (
-        <Panel
-          title={tabs.find(t => t.id === tab)?.label}
-          icon="autorenew"
-          sub={liveOrders.live ? "🟢 OrderBus" : undefined}
-          action={
-            <Btn
-              size="sm"
-              variant="primary"
-              icon="add"
-              onClick={() => setDrawer({ kind: newKind })}
-            >
-              {ctaText}
-            </Btn>
-          }
-        >
-          {/* Dynamic Filter bar */}
-          {liveOrders.rentals.length > 0 && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-5 gap-4">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">契約番号・顧客・現場名</label>
-                <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
-                    search
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="契約番号や現場名で検索..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-9 pr-4 py-2 w-full bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-medium"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">契約状態</label>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2.5 outline-none focus:border-blue-500 font-semibold text-xs cursor-pointer"
+        <div className="flex flex-col lg:flex-row gap-6 items-start">
+          
+          {/* Left Layout Panel: Table List */}
+          <div className={`w-full transition-all duration-300 ${activeWorkspaceOrder ? "lg:w-[60%]" : "lg:w-full"}`}>
+            <Panel
+              title={tabs.find(t => t.id === tab)?.label}
+              icon="autorenew"
+              sub={liveOrders.live ? "🟢 OrderBus Split Workspace" : undefined}
+              action={
+                <Btn
+                  size="sm"
+                  variant="primary"
+                  icon="add"
+                  onClick={() => setDrawer({ kind: newKind })}
                 >
-                  <option value="">すべて</option>
-                  {rentalStatuses.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">取引先企業</label>
-                <select
-                  value={companyFilter}
-                  onChange={(e) => setCompanyFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 py-2.5 outline-none focus:border-blue-500 font-semibold text-xs cursor-pointer"
-                >
-                  <option value="">すべて</option>
-                  {rentalCompanies.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（開始）</label>
-                <input
-                  type="date"
-                  value={startDateFilter}
-                  onChange={(e) => setStartDateFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
-                />
-                <div className="flex gap-1 mt-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStartDateFilter(getTodayStr());
-                      setEndDateFilter(getTodayStr());
-                    }}
-                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
-                      startDateFilter === getTodayStr() && endDateFilter === getTodayStr()
-                        ? "bg-blue-600 border-blue-600 text-white"
-                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    本日
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      const y = d.getFullYear();
-                      const m = String(d.getMonth() + 1).padStart(2, "0");
-                      setStartDateFilter(`${y}-${m}-01`);
-                      const lastDay = new Date(y, d.getMonth() + 1, 0).getDate();
-                      setEndDateFilter(`${y}-${m}-${lastDay}`);
-                    }}
-                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
-                      startDateFilter === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`
-                        ? "bg-blue-600 border-blue-600 text-white"
-                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    今月
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStartDateFilter("");
-                      setEndDateFilter("");
-                    }}
-                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border ${
-                      !startDateFilter && !endDateFilter
-                        ? "bg-blue-600 border-blue-600 text-white"
-                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    全期間
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（終了）</label>
-                <input
-                  type="date"
-                  value={endDateFilter}
-                  onChange={(e) => setEndDateFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500 font-mono text-xs cursor-pointer h-[38px]"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Matches Counter & Clear Filter */}
-          {filteredRentals.length !== liveOrders.rentals.length && (
-            <div className="text-xs font-bold text-slate-500 mb-3 bg-blue-50/50 border border-blue-100 rounded-lg px-3 py-2 flex justify-between items-center">
-              <span>絞り込み結果: {filteredRentals.length} 件 / 全体: {liveOrders.rentals.length} 件</span>
-              <button 
-                onClick={() => {
-                  setSearchQuery("");
-                  setStatusFilter("");
-                  setCompanyFilter("");
-                  setStartDateFilter("");
-                  setEndDateFilter("");
-                }}
-                className="text-blue-600 hover:text-blue-700 font-bold transition-colors cursor-pointer flex items-center gap-1 border-0 bg-transparent p-0"
-              >
-                <span className="material-symbols-outlined text-[14px]">close</span>
-                フィルターをクリア
-              </button>
-            </div>
-          )}
-
-          <Table
-            cols={cols}
-            rows={filteredRentals}
-            onRow={(r) => {
-              const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-              if (fullOrder) {
-                setViewingOrderDrawer(fullOrder);
-              } else {
-                 triggerToast("詳細データが見つかりません", "err");
+                  {ctaText}
+                </Btn>
               }
-            }}
-          />
-        </Panel>
+            >
+              {/* Dynamic Filter bar */}
+              {liveOrders.rentals.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">契約番号・顧客・現場名</label>
+                    <div className="relative">
+                      <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[16px]">search</span>
+                      <input
+                        type="text"
+                        placeholder="検索..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-8 pr-3 py-1.5 w-full bg-white border border-slate-200 rounded-lg text-xs outline-none font-medium focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">契約状態</label>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-semibold cursor-pointer outline-none focus:border-blue-500"
+                    >
+                      <option value="">すべて</option>
+                      {rentalStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">取引先企業</label>
+                    <select
+                      value={companyFilter}
+                      onChange={(e) => setCompanyFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-semibold cursor-pointer outline-none focus:border-blue-500"
+                    >
+                      <option value="">すべて</option>
+                      {rentalCompanies.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（開始）</label>
+                    <input
+                      type="date"
+                      value={startDateFilter}
+                      onChange={(e) => setStartDateFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-xs cursor-pointer font-mono h-[32px] outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（終了）</label>
+                    <input
+                      type="date"
+                      value={endDateFilter}
+                      onChange={(e) => setEndDateFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-xs cursor-pointer font-mono h-[32px] outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Clear Filter matches banner */}
+              {filteredRentals.length !== liveOrders.rentals.length && (
+                <div className="text-xs font-bold text-slate-500 mb-3 bg-blue-50/50 border border-blue-100 rounded-lg px-3 py-1.5 flex justify-between items-center">
+                  <span>結果: {filteredRentals.length}件 / 全体: {liveOrders.rentals.length}件</span>
+                  <button 
+                    onClick={() => {
+                      setSearchQuery(""); setStatusFilter(""); setCompanyFilter(""); setStartDateFilter(""); setEndDateFilter("");
+                    }}
+                    className="text-blue-600 font-bold flex items-center gap-0.5 text-[11px] bg-transparent border-0 cursor-pointer"
+                  >
+                    クリア
+                  </button>
+                </div>
+              )}
+
+              <Table
+                cols={cols}
+                rows={filteredRentals}
+                onRow={(r) => {
+                  const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
+                  if (fullOrder) {
+                    setActiveWorkspaceOrder(fullOrder);
+                  } else {
+                    triggerToast("詳細データが見つかりません", "err");
+                  }
+                }}
+              />
+            </Panel>
+          </div>
+
+          {/* Right Layout Panel: Real-time Split Workspace Screen */}
+          {activeWorkspaceOrder && (
+            <div className="w-full lg:w-[40%] bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden sticky top-6 animate-[fadeIn_0.25s_ease-out]">
+              <div className="p-4 border-b border-slate-100 bg-slate-50/60 flex justify-between items-center">
+                <div>
+                  <span className="text-[10px] font-bold text-blue-600 tracking-wider block font-mono">LIVE SPLIT WORKSPACE</span>
+                  <h3 className="font-bold text-slate-800 text-sm mt-0.5 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[18px] text-slate-400">grid_view</span>
+                    {activeWorkspaceOrder.orderNumber || activeWorkspaceOrder.id}
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => setActiveWorkspaceOrder(null)}
+                  className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center cursor-pointer transition-colors shadow-sm"
+                >
+                  <span className="material-symbols-outlined text-[16px]">close</span>
+                </button>
+              </div>
+
+              <div className="p-5 space-y-5">
+                {/* Order Summary Metadata */}
+                <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-100 text-xs space-y-2">
+                  <div className="flex justify-between"><span className="text-slate-400 font-bold">企業名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.companyName || "個人顧客"}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400 font-bold">現場名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.constructionSiteName || "—"}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400 font-bold">担当者</span><span className="font-semibold text-slate-700">{activeWorkspaceOrder.employeeName || activeWorkspaceOrder.customerName}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400 font-bold">状況</span><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold font-mono text-[10px]">{activeWorkspaceOrder.status}</span></div>
+                </div>
+
+                {/* Real-time Document Quick Triggers */}
+                <div>
+                  <h4 className="text-[11px] font-black text-slate-400 tracking-wider uppercase mb-2">書類クイック発行</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => { setSelectedOrder(activeWorkspaceOrder); setViewingDoc("納品書"); }}
+                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-blue-500 text-[18px]">local_shipping</span>納品書表示
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedOrder(activeWorkspaceOrder);
+                        const blocks = getOrGenerateInvoiceBlocks(activeWorkspaceOrder);
+                        if (blocks && blocks.length > 1) setShowInvoiceSelector(true);
+                        else if (blocks && blocks.length === 1) { setViewingBlockId(blocks[0].id); setViewingDoc("請求書"); }
+                        else setViewingDoc("請求書");
+                      }}
+                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-indigo-500 text-[18px]">receipt</span>請求書表示
+                    </button>
+                    <button
+                      onClick={() => { setSelectedOrder(activeWorkspaceOrder); setViewingDoc("回収書"); }}
+                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-emerald-500 text-[18px]">inventory_2</span>回収書表示
+                    </button>
+                  </div>
+                </div>
+
+                {/* Full Specification Overlay Drawer Trigger */}
+                <div className="pt-2 border-t border-slate-100 flex gap-2">
+                  <button
+                    onClick={() => setViewingOrderDrawer(activeWorkspaceOrder)}
+                    className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold text-center hover:bg-slate-800 transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                    詳細編集・ phụ phí (ExtraCost)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <AdminDocDrawer
@@ -540,6 +549,9 @@ export default function AdminRental() {
         onUpdateOrder={(id, updates) => {
           liveOrders.patchOrder(id, updates);
           setViewingOrderDrawer(prev => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
+          if (activeWorkspaceOrder && (activeWorkspaceOrder.firestoreId === id || activeWorkspaceOrder.id === id)) {
+            setActiveWorkspaceOrder((prev: any) => ({ ...prev, ...updates }));
+          }
         }}
       />
 
@@ -561,7 +573,7 @@ export default function AdminRental() {
           const blocks = getOrGenerateInvoiceBlocks(selectedOrder);
           return (
             <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4">
-              <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden p-5 animate-scaleIn text-sm">
+              <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden p-5 text-sm animate-[scaleIn_0.2s_ease-out]">
                 <h3 className="font-bold text-slate-800 text-base mb-4 flex items-center gap-2">
                   <span className="material-symbols-outlined text-blue-600 text-[20px]">request_quote</span>
                   対象月を選択してください
@@ -593,10 +605,7 @@ export default function AdminRental() {
                     全体合計の請求書を表示
                   </button>
                   <button
-                    onClick={() => {
-                      setShowInvoiceSelector(false);
-                      setSelectedOrder(null);
-                    }}
+                    onClick={() => { setShowInvoiceSelector(false); setSelectedOrder(null); }}
                     className="w-full text-center py-2.5 text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
                   >
                     キャンセル
