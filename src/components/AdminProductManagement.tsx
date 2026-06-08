@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useProducts } from "../context/ProductContext";
 import { useVehicles } from "../context/VehicleContext";
 import { Product } from "../types";
@@ -12,7 +12,6 @@ export default function AdminProductManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   
   const securityProducts = (products || []).filter(p => !isVehicleCategory(p?.category));
-  // Filter functionality
   const filteredProducts = securityProducts.filter(p => 
     p?.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
     p?.category?.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -32,11 +31,22 @@ export default function AdminProductManagement() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isGuaranteeChecked, setIsGuaranteeChecked] = useState(false);
 
+  // Bulk add & Spreadsheet states
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
+  const [bulkItems, setBulkItems] = useState<any[]>([]);
 
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<any | null>(null);
+
+  // Re-parse when text changes to initialize spreadsheet rows
+  useEffect(() => {
+    if (bulkText) {
+      setBulkItems(parseBulkText(bulkText));
+    } else {
+      setBulkItems([]);
+    }
+  }, [bulkText]);
 
   const handleAddProduct = () => {
     setEditingProduct(null);
@@ -110,12 +120,9 @@ export default function AdminProductManagement() {
       const name = parts[0] || "";
       const category = parts[1] || "";
 
-      // Skip CSV/TSV header lines
       if (
-        name === "商品名" ||
-        name.toLowerCase() === "name" ||
-        category === "カテゴリ" ||
-        category.toLowerCase() === "category"
+        name === "商品名" || name.toLowerCase() === "name" ||
+        category === "カテゴリ" || category.toLowerCase() === "category"
       ) {
         return;
       }
@@ -143,10 +150,26 @@ export default function AdminProductManagement() {
     return parsed;
   };
 
+  // Inline edit spreadsheet cell function
+  const updateBulkItemCell = (index: number, field: string, value: any) => {
+    setBulkItems((prev) =>
+      prev.map((item, idx) => {
+        if (idx !== index) return item;
+        const updated = { ...item, [field]: field.includes("Price") || field === "stock" ? Number(value) || 0 : value };
+        
+        // Inline validation checks
+        if (!updated.name) updated.error = "商品名は必須です";
+        else if (!updated.category) updated.error = "カテゴリは必須です";
+        else delete updated.error;
+        
+        return updated;
+      })
+    );
+  };
+
   const handleBulkSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsed = parseBulkText(bulkText);
-    const validItems = parsed.filter((item) => !item.error);
+    const validItems = bulkItems.filter((item) => !item.error);
 
     if (validItems.length === 0) {
       alert("登録可能な有効なデータがありません。");
@@ -169,26 +192,18 @@ export default function AdminProductManagement() {
 
     setIsBulkModalOpen(false);
     setBulkText("");
+    setBulkItems([]);
     alert(`${validItems.length}件の保安用品を一括追加しました。`);
   };
 
-  const handleAddVehicle = () => {
-    setEditingVehicle(null);
-    setIsVehicleModalOpen(true);
-  };
-
-  const handleEditVehicle = (v: any) => {
-    setEditingVehicle(v);
-    setIsVehicleModalOpen(true);
-  };
+  const handleAddVehicle = () => { setEditingVehicle(null); setIsVehicleModalOpen(true); };
+  const handleEditVehicle = (v: any) => { setEditingVehicle(v); setIsVehicleModalOpen(true); };
 
   const handleDeleteVehicle = (id: string) => {
     if (window.confirm("この車両を削除してもよろしいですか？")) {
       deleteVehicle(id);
       const v = vehicles.find(vh => vh.id === id);
-      if (v?.productId) {
-         deleteProduct(v.productId);
-      }
+      if (v?.productId) deleteProduct(v.productId);
     }
   };
 
@@ -214,7 +229,6 @@ export default function AdminProductManagement() {
 
     if (editingVehicle) {
       updateVehicle(editingVehicle.id, vehicleData);
-      
       const vProdId = editingVehicle.productId || editingVehicle.id;
       const linkedProduct = products.find(p => p.id === vProdId);
       if (linkedProduct) {
@@ -224,24 +238,8 @@ export default function AdminProductManagement() {
       const vid = "veh_" + Date.now();
       const pid = "vprod_" + Date.now();
 
-      addVehicle({
-        id: vid,
-        productId: pid,
-        category: category,
-        statusColor: vehicleData.status === "使用中" ? "emerald" : vehicleData.status === "整備中" ? "orange" : "blue",
-        ...vehicleData
-      });
-      // automatically sync to products list
-      addProduct({
-        id: pid,
-        name: vehicleData.name,
-        category: category,
-        stock: stock,
-        rentPrice: rentPrice,
-        rentPriceLongTerm: rentPriceLongTerm,
-        buyPrice: buyPrice,
-        image: formData.get("image") as string || "https://imagedelivery.net/W-O2N6-kYOfvEexU-w0YSA/6ca65aee-8da0-466f-ff84-9de55ae2ee00/public" // Generic Van URL placeholder for now
-      });
+      addVehicle({ id: vid, productId: pid, category: category, statusColor: vehicleData.status === "使用中" ? "emerald" : vehicleData.status === "整備中" ? "orange" : "blue", ...vehicleData });
+      addProduct({ id: pid, name: vehicleData.name, category: category, stock: stock, rentPrice: rentPrice, rentPriceLongTerm: rentPriceLongTerm, buyPrice: buyPrice, image: formData.get("image") as string || "https://imagedelivery.net/W-O2N6-kYOfvEexU-w0YSA/6ca65aee-8da0-466f-ff84-9de55ae2ee00/public" });
     }
     setIsVehicleModalOpen(false);
   };
@@ -282,18 +280,8 @@ export default function AdminProductManagement() {
       {/* Tabs */}
       <div className="border-b border-slate-200">
         <div className="flex gap-8">
-          <button 
-            className={`pb-3 text-[15px] font-bold transition-colors ${activeSubTab === 'security' ? 'text-blue-700 border-b-[3px] border-blue-700' : 'text-slate-500 hover:text-slate-800'}`}
-            onClick={() => setActiveSubTab("security")}
-          >
-            保安用品 ({securityProducts.length})
-          </button>
-          <button 
-            className={`pb-3 text-[15px] font-bold transition-colors ${activeSubTab === 'vehicles' ? 'text-blue-700 border-b-[3px] border-blue-700' : 'text-slate-500 hover:text-slate-800'}`}
-            onClick={() => setActiveSubTab("vehicles")}
-          >
-            保安車両 ({vehicles.length})
-          </button>
+          <button className={`pb-3 text-[15px] font-bold ${activeSubTab === 'security' ? 'text-blue-700 border-b-[3px] border-blue-700' : 'text-slate-500'}`} onClick={() => setActiveSubTab("security")}>保安用品 ({securityProducts.length})</button>
+          <button className={`pb-3 text-[15px] font-bold ${activeSubTab === 'vehicles' ? 'text-blue-700 border-b-[3px] border-blue-700' : 'text-slate-500'}`} onClick={() => setActiveSubTab("vehicles")}>保安車両 ({vehicles.length})</button>
         </div>
       </div>
 
@@ -301,95 +289,57 @@ export default function AdminProductManagement() {
       <div className="flex justify-between items-center gap-4 mt-6">
         <div className="relative flex-1 max-w-[400px]">
           <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">search</span>
-          <input 
-            type="text" 
-            placeholder="商品名・カテゴリ・IDで検索" 
-            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          <input type="text" placeholder="検索..." className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}/>
         </div>
         <div className="flex gap-2">
           {activeSubTab === 'security' && (
-            <button 
-              onClick={() => setIsBulkModalOpen(true)} 
-              className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors shadow-sm cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">library_add</span>
-              一括追加
+            <button onClick={() => setIsBulkModalOpen(true)} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-sm cursor-pointer">
+              <span className="material-symbols-outlined text-[18px]">library_add</span>一括追加
             </button>
           )}
-          <button 
-            onClick={activeSubTab === 'security' ? handleAddProduct : handleAddVehicle} 
-            className="bg-[#1a1c9a] hover:bg-blue-800 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors shadow-sm cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[18px]">add</span>
-            {activeSubTab === 'security' ? '保安用品 を追加' : '保安車両 を追加'}
+          <button onClick={activeSubTab === 'security' ? handleAddProduct : handleAddVehicle} className="bg-[#1a1c9a] hover:bg-blue-800 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-sm cursor-pointer">
+            <span className="material-symbols-outlined text-[18px]">add</span>追加
           </button>
         </div>
       </div>
 
-      {/* Main Table */}
+      {/* Main Table View */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2">
-            <span className="material-symbols-outlined text-slate-400">{activeSubTab === 'security' ? 'security' : 'local_shipping'}</span>
-            {activeSubTab === 'security' ? '保安用品 一覧' : '保安車両 一覧'}
-            <span className="font-normal text-slate-400 text-sm ml-2">{activeSubTab === 'security' ? filteredProducts.length : filteredVehicles.length} 件</span>
-          </h3>
-          <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-             <span className="w-2 h-2 rounded-full bg-emerald-500"></span> OrderBus
-          </div>
-        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-white border-b border-slate-100">
-                <th className="p-4 text-xs font-bold text-slate-500 w-[300px]">商品</th>
-                <th className="p-4 text-xs font-bold text-slate-500 w-[150px]">カテゴリ</th>
-                <th className="p-4 text-xs font-bold text-slate-500 whitespace-nowrap">レンタル単価</th>
-                <th className="p-4 text-xs font-bold text-slate-500 whitespace-nowrap">長期単価</th>
-                <th className="p-4 text-xs font-bold text-slate-500 whitespace-nowrap">販売価格</th>
+                <th className="p-4 text-xs font-bold text-slate-500">商品</th>
+                <th className="p-4 text-xs font-bold text-slate-500">カテゴリ</th>
+                <th className="p-4 text-xs font-bold text-slate-500">レンタル単価</th>
+                <th className="p-4 text-xs font-bold text-slate-500">長期単価</th>
+                <th className="p-4 text-xs font-bold text-slate-500">販売価格</th>
                 <th className="p-4 text-xs font-bold text-slate-500">在庫</th>
-                <th className="p-4 text-xs font-bold text-slate-500">保証料</th>
                 <th className="p-4 text-xs font-bold text-slate-500 text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {activeSubTab === 'security' ? (
                 filteredProducts.map(product => (
-                  <tr key={product.id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={product.id} className="hover:bg-slate-50">
                     <td className="p-4">
                       <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 bg-white rounded-lg flex-shrink-0 bg-contain bg-center bg-no-repeat border border-slate-200 p-1" style={{backgroundImage: `url("${product.image}")`}}></div>
+                        <div className="w-14 h-14 bg-white rounded-lg border p-1 bg-contain bg-center bg-no-repeat" style={{backgroundImage: `url("${product.image}")`}}></div>
                         <div>
                           <div className="font-bold text-slate-800 text-sm">{product.name}</div>
-                          <div className="text-xs text-slate-400 font-mono mt-0.5">{product.id}</div>
+                          <div className="text-xs text-slate-400 font-mono">{product.id}</div>
                         </div>
                       </div>
                     </td>
                     <td className="p-4 text-sm text-slate-600">{product.category}</td>
-                    <td className="p-4 text-sm font-bold text-slate-800">
-                      {product.rentPrice ? `¥${product.rentPrice.toLocaleString()}/日` : "—"}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {product.rentPriceLongTerm ? `¥${product.rentPriceLongTerm.toLocaleString()}` : "—"}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {product.buyPrice ? `¥${product.buyPrice.toLocaleString()}` : "—"}
-                    </td>
-                    <td className="p-4">
-                      <span className="font-bold text-slate-800">{product.stock || 0}</span>
-                    </td>
-                    <td className="p-4 text-slate-400 text-sm">—</td>
+                    <td className="p-4 text-sm font-bold text-slate-800">¥{product.rentPrice?.toLocaleString()}/日</td>
+                    <td className="p-4 text-sm text-slate-600">¥{product.rentPriceLongTerm?.toLocaleString()}</td>
+                    <td className="p-4 text-sm text-slate-600">¥{product.buyPrice?.toLocaleString()}</td>
+                    <td className="p-4 font-bold text-slate-800">{product.stock || 0}</td>
                     <td className="p-4 text-right">
                       <div className="flex justify-end gap-2">
-                        <button onClick={() => handleEditProduct(product)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors text-xs font-bold">
-                          <span className="material-symbols-outlined text-[16px]">edit</span> 編集
-                        </button>
-                        <button onClick={() => handleDeleteProduct(product.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors text-xs font-bold bg-white">
-                          <span className="material-symbols-outlined text-[16px]">delete</span> 削除
-                        </button>
+                        <button onClick={() => handleEditProduct(product)} className="px-3 py-1.5 rounded-lg border text-xs font-bold">編集</button>
+                        <button onClick={() => handleDeleteProduct(product.id)} className="px-3 py-1.5 rounded-lg border text-xs font-bold text-red-600 bg-white">削除</button>
                       </div>
                     </td>
                   </tr>
@@ -398,454 +348,226 @@ export default function AdminProductManagement() {
                 filteredVehicles.map(v => {
                   const linkedProduct = products.find(p => p.id === (v.productId || v.id));
                   return (
-                  <tr key={v.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 bg-white rounded-lg flex-shrink-0 bg-contain bg-center bg-no-repeat border border-slate-200" style={{backgroundImage: `url("${linkedProduct?.image || ''}")`}}></div>
-                        <div>
-                          <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                            {v.name}
-                            <span className="material-symbols-outlined text-[16px] text-orange-400">star</span>
-                          </div>
-                          <div className="text-xs text-slate-400 mt-0.5">{v.id}</div>
+                    <tr key={v.id} className="hover:bg-slate-50">
+                      <td className="p-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-14 h-14 bg-white rounded-lg border bg-contain bg-center bg-no-repeat" style={{backgroundImage: `url("${linkedProduct?.image || ''}")`}}></div>
+                          <div><div className="font-bold text-slate-800 text-sm">{v.name}</div><div className="text-xs text-slate-400">{v.id}</div></div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">{v.category}</td>
-                    <td className="p-4 text-sm font-bold text-slate-800">
-                      {linkedProduct?.rentPrice ? `¥${linkedProduct.rentPrice.toLocaleString()}/日` : "—"}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {linkedProduct?.rentPriceLongTerm ? `¥${linkedProduct.rentPriceLongTerm.toLocaleString()}` : "—"}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {linkedProduct?.buyPrice ? `¥${linkedProduct.buyPrice.toLocaleString()}` : "—"}
-                    </td>
-                    <td className="p-4">
-                      <span className="font-bold text-slate-800">{v.stock || linkedProduct?.stock || 0}</span>
-                    </td>
-                    <td className="p-4 text-slate-400 text-sm">—</td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => handleEditVehicle(v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors text-xs font-bold">
-                          <span className="material-symbols-outlined text-[16px]">edit</span> 編集
-                        </button>
-                        <button onClick={() => handleDeleteVehicle(v.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors text-xs font-bold bg-white">
-                          <span className="material-symbols-outlined text-[16px]">delete</span> 削除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="p-4 text-sm text-slate-600">{v.category}</td>
+                      <td className="p-4 text-sm font-bold text-slate-800">¥{linkedProduct?.rentPrice?.toLocaleString()}/日</td>
+                      <td className="p-4 text-sm text-slate-600">¥{linkedProduct?.rentPriceLongTerm?.toLocaleString()}</td>
+                      <td className="p-4 text-sm text-slate-600">¥{linkedProduct?.buyPrice?.toLocaleString()}</td>
+                      <td className="p-4 font-bold text-slate-800">{v.stock || 0}</td>
+                      <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => handleEditVehicle(v)} className="px-3 py-1.5 rounded-lg border text-xs font-bold">編集</button>
+                          <button onClick={() => handleDeleteVehicle(v.id)} className="px-3 py-1.5 rounded-lg border text-xs font-bold text-red-600 bg-white">削除</button>
+                        </div>
+                      </td>
+                    </tr>
                   );
                 })
               )}
             </tbody>
           </table>
-          {((activeSubTab === 'security' && filteredProducts.length === 0) || (activeSubTab === 'vehicles' && filteredVehicles.length === 0)) && (
-            <div className="p-8 text-center text-slate-500">
-              見つかりませんでした。
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
       {/* Product Modal */}
       {isProductModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
-            <div className="px-8 py-5 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10 shrink-0">
-              <div>
-                <h2 className="text-[22px] font-bold text-slate-800 flex items-center gap-3">
-                  {editingProduct ? "商品を編集" : "保安用品を追加"}
-                </h2>
-                <p className="text-slate-500 text-sm mt-1">{editingProduct ? editingProduct.id : "新規登録"}</p>
-              </div>
-              <button type="button" onClick={() => setIsProductModalOpen(false)} className="w-[38px] h-[38px] flex items-center justify-center rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-500 transition-colors">
-                <span className="material-symbols-outlined text-[24px]">close</span>
-              </button>
+            <div className="px-8 py-5 border-b border-slate-200 flex justify-between items-center">
+              <div><h2 className="text-[22px] font-bold text-slate-800">{editingProduct ? "商品を編集" : "保安用品を追加"}</h2></div>
+              <button type="button" onClick={() => setIsProductModalOpen(false)} className="w-[38px] h-[38px] border rounded-xl">✕</button>
             </div>
             <div className="overflow-y-auto flex-1 p-8">
-              <form id="productForm" onSubmit={saveProduct} className="space-y-8">
-                
-                {/* Header preview in modal */}
-                <div className="flex items-center gap-5 py-5 px-6 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="w-20 h-20 bg-white rounded-xl flex items-center justify-center border border-slate-200 overflow-hidden p-2">
-                    {editingProduct?.image ? (
-                       <img src={editingProduct.image} alt="" className="w-full h-full object-contain" />
-                    ) : (
-                       <span className="material-symbols-outlined text-slate-300 text-[32px]">image_not_supported</span>
-                    )}
+              <form id="productForm" onSubmit={saveProduct} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">商品名 *</label>
+                  <input required defaultValue={editingProduct?.name || ""} name="name" className="w-full border rounded-xl p-3 text-sm outline-none" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">カテゴリ *</label>
+                    <select required defaultValue={editingProduct?.category || "カラーコーン"} name="category" className="w-full border rounded-xl p-3 text-sm">
+                      <option value="ガス検知器">ガス検知器</option>
+                      <option value="セイフティブロック">セイフティブロック</option>
+                      <option value="発電機">発電機</option>
+                      <option value="カラーコーン">カラーコーン</option>
+                      <option value="その他">その他</option>
+                    </select>
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-800 text-xl leading-tight">{editingProduct?.name || "(商品名未入力)"}</h3>
-                    <p className="text-sm text-slate-500 mt-1">保安用品 ・ {editingProduct?.category || "カラーコーン"}</p>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">在庫数</label>
+                    <input type="number" required defaultValue={editingProduct?.stock || 0} name="stock" className="w-full border rounded-xl p-3 text-sm" />
                   </div>
                 </div>
-
-                {/* 基本情報 */}
-                <div>
-                  <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                    <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                    基本情報
-                  </h4>
-                  <div className="space-y-5">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">商品名 <span className="text-red-500">*</span></label>
-                      <input required defaultValue={editingProduct?.name || ""} name="name" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="例：レボリューションコーン赤白" />
-                    </div>
-                    <div className="flex gap-5">
-                      <div className="flex-1">
-                        <label className="block text-sm font-bold text-slate-700 mb-2 flex justify-between">
-                          <span>カテゴリ <span className="text-red-500">*</span></span>
-                        </label>
-                        <div className="flex gap-2">
-                          <select required defaultValue={editingProduct?.category || "カラーコーン"} name="category" className="flex-1 border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow">
-                            <option value="ガス検知器">ガス検知器</option>
-                            <option value="セイフティブロック">セイフティブロック</option>
-                            <option value="発電機">発電機</option>
-                            <option value="カラーコーン">カラーコーン</option>
-                            <option value="その他">その他</option>
-                          </select>
-                          <button type="button" className="font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-4 rounded-xl text-sm flex items-center gap-1 transition-colors">
-                             <span className="material-symbols-outlined text-[18px]">add</span> 新規
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-sm font-bold text-slate-700 mb-2">管理ID</label>
-                        <input defaultValue={editingProduct?.id || ""} name="id" disabled={!!editingProduct} className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow disabled:bg-slate-50 disabled:text-slate-500" placeholder="空欄で自動採番" />
-                        <p className="text-xs text-slate-400 mt-1">{editingProduct ? "変更不可" : "空欄で自動採番"}</p>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">画像URL</label>
-                      <input type="text" defaultValue={editingProduct?.image || ""} name="image" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="https://..." />
-                    </div>
-                  </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div><label className="block text-sm font-bold text-slate-700 mb-2">レンタル単価</label><input type="number" defaultValue={editingProduct?.rentPrice || ""} name="rentPrice" className="w-full border rounded-xl p-3 text-sm"/></div>
+                  <div><label className="block text-sm font-bold text-slate-700 mb-2">長期単価</label><input type="number" defaultValue={editingProduct?.rentPriceLongTerm || ""} name="rentPriceLongTerm" className="w-full border rounded-xl p-3 text-sm"/></div>
+                  <div><label className="block text-sm font-bold text-slate-700 mb-2">販売価格</label><input type="number" defaultValue={editingProduct?.buyPrice || ""} name="buyPrice" className="w-full border rounded-xl p-3 text-sm"/></div>
                 </div>
-
-                {/* 価格・在庫 */}
-                <div>
-                  <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                    <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                    価格・在庫
-                  </h4>
-                  <div className="grid grid-cols-3 gap-5 mb-5">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">レンタル単価（円/日）</label>
-                      <input type="number" defaultValue={editingProduct?.rentPrice || ""} name="rentPrice" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="—" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">長期単価（円/日）</label>
-                      <input type="number" defaultValue={editingProduct?.rentPriceLongTerm || ""} name="rentPriceLongTerm" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="—" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">販売価格（円）</label>
-                      <input type="number" defaultValue={editingProduct?.buyPrice || ""} name="buyPrice" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="—" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-5">
-                    <div>
-                       <label className="block text-sm font-bold text-slate-700 mb-2">在庫数</label>
-                       <input type="number" required defaultValue={editingProduct?.stock || 0} name="stock" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" />
-                    </div>
-                    <div>
-                       <label className="block text-sm font-bold text-slate-700 mb-2">バッジ</label>
-                       <select className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow">
-                         <option>レンタル</option>
-                         <option>販売のみ</option>
-                       </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 保証料 */}
-                <div>
-                  <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                    <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                    保証料（数量別・円・初回のみ）
-                  </h4>
-                  <div className="mb-5">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        name="isGuarantee" 
-                        checked={isGuaranteeChecked}
-                        onChange={(e) => setIsGuaranteeChecked(e.target.checked)}
-                        className="w-5 h-5 text-[#1a1c9a] rounded focus:ring-blue-500 border-slate-300 cursor-pointer" 
-                      />
-                      <span className="text-sm font-bold text-slate-800">この商品に保証料を設定する</span>
-                    </label>
-                  </div>
-                  
-                  {isGuaranteeChecked && (
-                    <div className="grid grid-cols-2 gap-5 mb-5">
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">1〜50個（円）</label>
-                        <input name="guarantee_range1" defaultValue={editingProduct?.guaranteeFees?.range1 || ""} type="number" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="0" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">51〜100個（円）</label>
-                        <input name="guarantee_range2" defaultValue={editingProduct?.guaranteeFees?.range2 || ""} type="number" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="0" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">101〜150個（円）</label>
-                        <input name="guarantee_range3" defaultValue={editingProduct?.guaranteeFees?.range3 || ""} type="number" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="0" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">151〜200個（円）</label>
-                        <input name="guarantee_range4" defaultValue={editingProduct?.guaranteeFees?.range4 || ""} type="number" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="0" />
-                      </div>
-                    </div>
-                  )}
-                  <p className="text-sm text-slate-500 bg-slate-50 p-5 rounded-xl border border-slate-200">
-                    初回レンタル時のみ適用される準備費用です。ご延長のご場合は保証料はかかりません。複数月レンタルの場合、初月の請求書にのみ計上されます。
-                  </p>
-                </div>
-
-                {/* 詳細 */}
-                <div>
-                  <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                    <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                    詳細
-                  </h4>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">商品説明</label>
-                    <textarea name="description" defaultValue={editingProduct?.description || ""} className="w-full border border-slate-300 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow min-h-[120px]" placeholder="現場での用途や特徴など"></textarea>
-                  </div>
-                </div>
-
               </form>
             </div>
-            
-            <div className="px-8 py-5 border-t border-slate-200 bg-white flex justify-end gap-4 shrink-0">
-              <button type="button" onClick={() => setIsProductModalOpen(false)} className="px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors">
-                キャンセル
-              </button>
-              <button form="productForm" type="submit" className="px-8 py-3 text-sm font-bold text-white bg-[#1a1c9a] hover:bg-blue-800 rounded-xl shadow-sm flex items-center gap-2 transition-colors">
-                <span className="material-symbols-outlined text-[18px]">save</span>
-                {editingProduct ? "変更を保存" : "登録する"}
-              </button>
+            <div className="px-8 py-5 border-t bg-white flex justify-end gap-4">
+              <button form="productForm" type="submit" className="px-8 py-3 text-white bg-[#1a1c9a] font-bold rounded-xl">保存する</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Vehicle Modal - Keep simple for now, can be expanded later to match */}
+      {/* Vehicle Modal */}
       {isVehicleModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-           {/* Previous vehicle form implementation */}
-          <div className="bg-white rounded-2xl w-full max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
-            <div className="px-8 py-5 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10 shrink-0">
-              <div>
-                <h2 className="text-[22px] font-bold text-slate-800 flex items-center gap-3">{editingVehicle ? "保安車両を編集" : "保安車両を追加"}</h2>
-                <p className="text-slate-500 text-sm mt-1">{editingVehicle ? editingVehicle.id : "新規登録"}</p>
-              </div>
-              <button type="button" onClick={() => setIsVehicleModalOpen(false)} className="w-[38px] h-[38px] flex items-center justify-center rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-500 transition-colors border border-slate-200">
-                <span className="material-symbols-outlined text-[24px]">close</span>
-              </button>
-            </div>
-            <div className="overflow-y-auto flex-1 p-8">
-              <form id="vehicleForm" onSubmit={saveVehicle} className="space-y-8">
-                <div>
-                   <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                     <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                     車両データ
-                   </h4>
-                   <div className="space-y-5">
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">カテゴリ</label>
-                        <select name="category" defaultValue={editingVehicle?.category || "軽トラック"} className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none">
-                          <option value="軽トラック">軽トラック</option>
-                          <option value="軽バン">軽バン</option>
-                          <option value="2tノーマル">2tノーマル</option>
-                          <option value="2tロング">2tロング</option>
-                          <option value="2t Wキャブノーマル">2t Wキャブノーマル</option>
-                        </select>
-                      </div>
-                      <div className="flex gap-5">
-                        <div className="flex-1">
-                          <label className="block text-sm font-bold text-slate-700 mb-2">モデル／商品名 <span className="text-red-500">*</span></label>
-                          <input required defaultValue={editingVehicle?.name || ""} name="name" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
-                        </div>
-                        <div className="flex-1">
-                          <label className="block text-sm font-bold text-slate-700 mb-2">在庫数（台数） <span className="text-red-500">*</span></label>
-                          <input type="number" required defaultValue={editingVehicle?.stock || 1} name="stock" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
-                        </div>
-                      </div>
-                      <div className="flex gap-5">
-                        <div className="flex-1">
-                          <label className="block text-sm font-bold text-slate-700 mb-2">代表ナンバー（識別用）</label>
-                          <input defaultValue={editingVehicle?.plate || ""} name="plate" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
-                        </div>
-                        <div className="flex-1">
-                          <label className="block text-sm font-bold text-slate-700 mb-2">状況</label>
-                          <select name="status" defaultValue={editingVehicle?.status || "使用中"} className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none">
-                            <option value="使用中">使用中</option>
-                            <option value="整備中">整備中</option>
-                            <option value="空き">空き</option>
-                          </select>
-                        </div>
-                      </div>
-                   </div>
-                </div>
-
-                <div>
-                   <h4 className="flex items-center gap-2 font-bold text-slate-800 text-[15px] mb-5">
-                     <span className="w-1.5 h-4 bg-[#1a1c9a] rounded-full inline-block"></span>
-                     価格設定（表示用）
-                   </h4>
-                    <div className="grid grid-cols-3 gap-5 mb-5">
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">レンタル単価（円/日）</label>
-                        <input type="number" defaultValue={editingVehicle ? (products.find(p => p.id === (editingVehicle.productId || editingVehicle.id))?.rentPrice || 3500) : 3500} name="rentPrice" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="—" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">長期単価（円/日）</label>
-                        <input type="number" defaultValue={editingVehicle ? (products.find(p => p.id === (editingVehicle.productId || editingVehicle.id))?.rentPriceLongTerm || 2100) : 2100} name="rentPriceLongTerm" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="—" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">販売価格（円）</label>
-                        <input type="number" defaultValue={editingVehicle ? (products.find(p => p.id === (editingVehicle.productId || editingVehicle.id))?.buyPrice || "") : ""} name="buyPrice" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="—" />
-                      </div>
-                    </div>
-                </div>
-                 
-                 <div>
-                   <label className="block text-sm font-bold text-slate-700 mb-2">画像URL</label>
-                   <input type="text" defaultValue={editingVehicle ? (products.find(p => p.id === (editingVehicle.productId || editingVehicle.id))?.image || "") : ""} name="image" className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="https://" />
-                 </div>
-                 
-              </form>
-            </div>
-            <div className="px-8 py-5 border-t border-slate-200 bg-white flex justify-end gap-3 shrink-0">
-               <button type="button" onClick={() => setIsVehicleModalOpen(false)} className="px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors">
-                 キャンセル
-               </button>
-                <button type="button" onClick={() => setIsVehicleModalOpen(false)} className="px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors">
-                  キャンセル
-                </button>
-                <button form="vehicleForm" type="submit" className="px-8 py-3 text-sm font-bold text-white bg-[#1a1c9a] hover:bg-blue-800 rounded-xl shadow-sm flex items-center gap-2 transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">save</span>
-                  {editingVehicle ? "変更を保存" : "登録する"}
-                </button>
-              </div>
+          <div className="bg-white rounded-2xl w-full max-w-[800px] flex flex-col shadow-2xl p-6">
+            <form onSubmit={saveVehicle} className="space-y-4">
+              <h3 className="text-lg font-bold">車両登録</h3>
+              <input required name="name" placeholder="車両名" defaultValue={editingVehicle?.name || ""} className="w-full border rounded-xl p-3" />
+              <input name="plate" placeholder="ナンバープレート" defaultValue={editingVehicle?.plate || ""} className="w-full border rounded-xl p-3" />
+              <button type="submit" className="w-full py-3 bg-[#1a1c9a] text-white font-bold rounded-xl">保存</button>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Bulk Add Modal */}
+      {/* Bulk Add Modal with Advanced Interactive Spreadsheet Cells */}
       {isBulkModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-[1000px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-white rounded-2xl w-full max-w-[1100px] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-[fadeIn_0.2s_ease-out]">
             <div className="px-8 py-5 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10 shrink-0">
               <div>
-                <h2 className="text-[22px] font-bold text-slate-800 flex items-center gap-3">
-                  <span className="material-symbols-outlined text-blue-600 bg-blue-50 w-8 h-8 rounded-full flex items-center justify-center">library_add</span>
-                  保安用品を一括追加
+                <h2 className="text-[20px] font-bold text-slate-800 flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-blue-600 bg-blue-50 w-8 h-8 rounded-full flex items-center justify-center">grid_on</span>
+                  保安用品一括追加 (Live Spreadsheet UI)
                 </h2>
-                <p className="text-slate-500 text-sm mt-1">CSVまたはタブ区切りのテキストを貼り付けて、複数の商品を一括で登録します。</p>
+                <p className="text-slate-500 text-xs mt-0.5">左側に入力したテキストが右側でスプレッドシート化されます。セルを直接クリックしてインライン修正が可能です。</p>
               </div>
-              <button type="button" onClick={() => { setIsBulkModalOpen(false); setBulkText(""); }} className="w-[38px] h-[38px] flex items-center justify-center rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-500 transition-colors cursor-pointer">
-                <span className="material-symbols-outlined text-[24px]">close</span>
-              </button>
+              <button type="button" onClick={() => { setIsBulkModalOpen(false); setBulkText(""); setBulkItems([]); }} className="w-8 h-8 border rounded-full text-slate-400">✕</button>
             </div>
 
-            <div className="overflow-y-auto flex-1 p-8">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Left Column: Input Area */}
-                <div className="space-y-4">
+            <div className="overflow-y-auto flex-1 p-6 bg-slate-50/50">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full items-stretch">
+                
+                {/* Left Side: Original Raw Textarea */}
+                <div className="lg:col-span-4 flex flex-col space-y-3">
                   <div className="flex justify-between items-center">
-                    <label className="block text-sm font-bold text-slate-700">コピーしたデータを貼り付け</label>
+                    <label className="text-xs font-bold text-slate-700">CSV/TSV テキストデータ入力</label>
                     <button 
                       type="button" 
                       onClick={() => {
                         setBulkText(
                           "LEDコーンバー 黄黒,カラーコーン,200,150,800,100\n" +
+                          ",カラーコーン,150,100,500,200\n" + 
                           "クッションドラム 黄黒,その他,1500,1000,25000,20\n" +
                           "ポータブルガス検知器,ガス検知器,2500,1800,85000,15\n" +
-                          "セイフティブロック 20m,セイフティブロック,3500,2500,110000,8\n" +
-                          "小型発電機 2.0kVA,発電機,1800,1200,65000,12"
+                          "セイフティブロック 20m,,3500,2500,110000,8" 
                         );
                       }}
-                      className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                      className="text-[11px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-1 rounded hover:bg-blue-100 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[14px]">terminal</span>
-                      サンプルデータを読込
+                      テスト用読込
                     </button>
                   </div>
-                  
                   <textarea 
                     value={bulkText}
                     onChange={(e) => setBulkText(e.target.value)}
-                    className="w-full h-[320px] font-mono text-sm p-4 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none resize-none transition-shadow"
-                    placeholder="[商品名], [カテゴリ], [レンタル単価], [長期単価], [販売価格], [在庫数]&#10;例:&#10;カラーコーン赤,カラーコーン,150,100,500,200&#10;LEDコーンバー 黄黒,カラーコーン,200,150,800,100"
+                    className="w-full flex-1 min-h-[350px] font-mono text-xs p-3.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none resize-none bg-white shadow-inner"
+                    placeholder="商品名,カテゴリ,レンタル単価,長期単価,販売価格,在庫数"
                   />
-                  
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs text-slate-500 space-y-1">
-                    <div className="font-bold text-slate-700 mb-1">【入力ルール】</div>
-                    <p>・1行に1つの商品をカンマ ( , ) または タブで区切って入力してください。</p>
-                    <p>・項目順：商品名, カテゴリ, レンタル単価, 長期単価, 販売価格, 在庫数</p>
-                    <p>・レンタル単価、長期単価、販売価格、在庫数は半角数字で入力してください。</p>
-                    <p>・画像のURLや説明文は、一括追加後に個別編集から変更できます。</p>
-                  </div>
                 </div>
 
-                {/* Right Column: Live Preview Area */}
-                <div className="flex flex-col h-full">
-                  <div className="flex justify-between items-center mb-4 shrink-0">
-                    <label className="block text-sm font-bold text-slate-700">プレビューと検証結果</label>
-                    {bulkText && (
-                      <span className="text-xs font-bold px-2 py-1 rounded bg-slate-100 text-slate-600">
-                        解析件数: {parseBulkText(bulkText).length} 件
-                      </span>
-                    )}
+                {/* Right Side: Interactive Live Inline Spreadsheet */}
+                <div className="lg:col-span-8 flex flex-col">
+                  <div className="text-xs font-bold text-slate-700 mb-3 flex items-center justify-between">
+                    <span>リアルタイムスプレッドシート（直接編集可能）</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-200/80 font-mono text-slate-600 font-bold">{bulkItems.length} 件解析</span>
                   </div>
 
-                  <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden flex flex-col bg-slate-50 min-h-[300px] lg:max-h-[500px]">
-                    {bulkText && parseBulkText(bulkText).length > 0 ? (
-                      <div className="overflow-auto flex-1 max-h-[460px]">
-                        <table className="w-full text-left border-collapse text-xs">
+                  <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col min-h-[350px]">
+                    {bulkItems.length > 0 ? (
+                      <div className="overflow-auto max-h-[500px]">
+                        <table className="w-full text-left border-collapse text-xs table-fixed">
                           <thead>
-                            <tr className="bg-slate-100 border-b border-slate-200 sticky top-0">
-                              <th className="p-3 font-bold text-slate-600 w-12 text-center">状態</th>
-                              <th className="p-3 font-bold text-slate-600">商品名</th>
-                              <th className="p-3 font-bold text-slate-600 w-24">カテゴリ</th>
-                              <th className="p-3 font-bold text-slate-600 w-16 text-right">レンタル</th>
-                              <th className="p-3 font-bold text-slate-600 w-16 text-right">長期</th>
-                              <th className="p-3 font-bold text-slate-600 w-16 text-right">販売</th>
-                              <th className="p-3 font-bold text-slate-600 w-12 text-right">在庫</th>
+                            <tr className="bg-slate-100/90 border-b border-slate-200 sticky top-0 z-10">
+                              <th className="p-2.5 font-bold text-slate-600 w-[50px] text-center">状態</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[200px]">商品名 *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[120px]">カテゴリ *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">日単価</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">長期</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">販売</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[70px] text-right">在庫</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-200 bg-white">
-                            {parseBulkText(bulkText).map((row, idx) => (
-                              <tr key={idx} className={row.error ? "bg-red-50/50" : "hover:bg-slate-50"}>
-                                <td className="p-3 text-center">
+                          <tbody className="divide-y divide-slate-150">
+                            {bulkItems.map((row, idx) => (
+                              <tr key={idx} className={row.error ? "bg-red-50/70" : "hover:bg-slate-50/50"}>
+                                <td className="p-2 text-center">
                                   {row.error ? (
                                     <span className="material-symbols-outlined text-red-500 font-bold text-[18px]" title={row.error}>error</span>
                                   ) : (
                                     <span className="material-symbols-outlined text-emerald-500 font-bold text-[18px]">check_circle</span>
                                   )}
                                 </td>
-                                <td className="p-3">
-                                  <div className="font-bold text-slate-800">{row.name || "—"}</div>
-                                  {row.error && <div className="text-[10px] text-red-500 font-bold mt-0.5">{row.error}</div>}
+                                <td className="p-1">
+                                  <input 
+                                    type="text" 
+                                    value={row.name} 
+                                    onChange={(e) => updateBulkItemCell(idx, "name", e.target.value)}
+                                    className={`w-full p-1.5 font-bold rounded outline-none border transition-colors ${row.error && !row.name ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
+                                  />
                                 </td>
-                                <td className="p-3 text-slate-600">{row.category || "—"}</td>
-                                <td className="p-3 text-right font-mono font-bold text-slate-700">¥{row.rentPrice.toLocaleString()}</td>
-                                <td className="p-3 text-right font-mono text-slate-500">¥{row.rentPriceLongTerm.toLocaleString()}</td>
-                                <td className="p-3 text-right font-mono text-slate-500">¥{row.buyPrice.toLocaleString()}</td>
-                                <td className="p-3 text-right font-mono font-bold text-slate-700">{row.stock}</td>
+                                <td className="p-1">
+                                  <input 
+                                    type="text" 
+                                    value={row.category} 
+                                    onChange={(e) => updateBulkItemCell(idx, "category", e.target.value)}
+                                    className={`w-full p-1.5 rounded outline-none border text-slate-700 transition-colors ${row.error && !row.category ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input 
+                                    type="number" 
+                                    value={row.rentPrice || ""} 
+                                    onChange={(e) => updateBulkItemCell(idx, "rentPrice", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-700"
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input 
+                                    type="number" 
+                                    value={row.rentPriceLongTerm || ""} 
+                                    onChange={(e) => updateBulkItemCell(idx, "rentPriceLongTerm", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input 
+                                    type="number" 
+                                    value={row.buyPrice || ""} 
+                                    onChange={(e) => updateBulkItemCell(idx, "buyPrice", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input 
+                                    type="number" 
+                                    value={row.stock || 0} 
+                                    onChange={(e) => updateBulkItemCell(idx, "stock", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-800"
+                                  />
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
                     ) : (
-                      <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
-                        <span className="material-symbols-outlined text-[48px] text-slate-300 mb-2">find_in_page</span>
-                        <p className="text-sm font-bold">検証プレビュー</p>
-                        <p className="text-xs mt-1 text-slate-400 max-w-[280px]">左側の入力エリアに商品データを貼り付けると、リアルタイムに検証結果が表示されます。</p>
+                      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center">
+                        <span className="material-symbols-outlined text-[36px] text-slate-300 mb-1">view_spreadsheet</span>
+                        <p className="font-bold text-xs">データがありません</p>
                       </div>
                     )}
                   </div>
@@ -853,39 +575,24 @@ export default function AdminProductManagement() {
               </div>
             </div>
 
-            <div className="px-8 py-5 border-t border-slate-200 bg-white flex justify-between items-center shrink-0">
+            <div className="px-8 py-4 border-t border-slate-200 bg-white flex justify-between items-center shrink-0">
               <div className="text-xs font-bold text-slate-500">
-                {bulkText && (
+                {bulkItems.length > 0 && (
                   <div className="flex gap-4">
-                    <span className="text-emerald-600 flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                      追加対象: {parseBulkText(bulkText).filter(r => !r.error).length} 件
-                    </span>
-                    {parseBulkText(bulkText).some(r => r.error) && (
-                      <span className="text-red-500 flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span>
-                        エラー: {parseBulkText(bulkText).filter(r => r.error).length} 件（登録されません）
-                      </span>
-                    )}
+                    <span className="text-emerald-600">正常アイテム: {bulkItems.filter(r => !r.error).length} 件</span>
+                    {bulkItems.some(r => r.error) && <span className="text-red-500 font-bold">エラー項目: {bulkItems.filter(r => r.error).length} 件</span>}
                   </div>
                 )}
               </div>
-              <div className="flex gap-3">
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setIsBulkModalOpen(false); setBulkText(""); setBulkItems([]); }} className="px-5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer">キャンセル</button>
                 <button 
                   type="button" 
-                  onClick={() => { setIsBulkModalOpen(false); setBulkText(""); }} 
-                  className="px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer border border-transparent"
-                >
-                  キャンセル
-                </button>
-                <button 
-                  type="button"
                   onClick={handleBulkSubmit}
-                  disabled={!bulkText || parseBulkText(bulkText).filter(r => !r.error).length === 0}
-                  className="px-8 py-3 text-sm font-bold text-white bg-[#1a1c9a] hover:bg-blue-800 disabled:bg-slate-200 disabled:text-slate-400 rounded-xl shadow-sm flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  disabled={bulkItems.filter(r => !r.error).length === 0}
+                  className="px-6 py-2 text-xs font-bold text-white bg-[#1a1c9a] rounded-xl shadow-sm disabled:bg-slate-200 disabled:text-slate-400 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  <span className="material-symbols-outlined text-[18px]">publish</span>
-                  一括登録を実行
+                  {bulkItems.filter(r => r.error).length > 0 ? "エラーを除いて一括追加を実行" : "一括登録を実行"}
                 </button>
               </div>
             </div>
