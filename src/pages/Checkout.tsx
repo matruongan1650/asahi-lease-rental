@@ -91,16 +91,22 @@ export default function Checkout() {
 
   updatedItems.forEach(item => {
     // Find the full product matching this item to get guarantee settings
-    const fullProduct = products.find(p => p.id === item.id);
+    const fullProduct = products.find(p => p && p.id === item.id);
     let guaranteeFeeFlat = 0;
     
     // We only apply guarantee fees to rentals as per requirements
-    if (item.type === 'rent' && fullProduct?.isGuarantee && fullProduct.guaranteeFees) {
+    if (item.type === 'rent' && fullProduct?.isGuarantee) {
       const qty = item.quantity;
-      if (qty <= 50) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range1) || 0;
-      else if (qty <= 100) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range2) || 0;
-      else if (qty <= 150) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range3) || 0;
-      else guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range4) || 0;
+      if (fullProduct.guaranteeType === 'flat') {
+        guaranteeFeeFlat = (fullProduct.guaranteeRate || 0) * qty;
+      } else if (fullProduct.guaranteeFees) {
+        if (qty <= 50) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range1) || 0;
+        else if (qty <= 100) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range2) || 0;
+        else if (qty <= 150) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range3) || 0;
+        else if (qty <= 200) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range4) || 0;
+        else if (qty <= 250) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range5) || Number(fullProduct.guaranteeFees.range4) || 0;
+        else guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range6) || Number(fullProduct.guaranteeFees.range5) || Number(fullProduct.guaranteeFees.range4) || 0;
+      }
     }
     
     // Assign guarantee fee to item for display

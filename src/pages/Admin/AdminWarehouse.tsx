@@ -37,11 +37,11 @@ export default function AdminWarehouse() {
   });
 
   // Map products to warehouse rows
-  const liveRows = products.map(p => {
+  const liveRows = (products || []).filter(Boolean).map(p => {
     const rented = rentedCounts[p.id] || 0;
     const total = p.stock || 0;
     // Generate a pseudo location based on ID if none exists
-    const numMatch = p.id.match(/\d+/);
+    const numMatch = p.id?.match(/\d+/);
     const loc = `S-${numMatch ? numMatch[0].padStart(2, '0') : '01'}`;
     
     return {

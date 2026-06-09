@@ -13,12 +13,12 @@ export default function AdminStocktake() {
   const { rows: products } = useAdminCollection("products");
   
   // Generate stocktake list from real products
-  const rows = products.map((p: any) => {
+  const rows = (products || []).filter(Boolean).map((p: any) => {
     const sysStock = p.stock || 0;
     return {
       id: p.id,
       name: p.name,
-      loc: `S-${p.id.match(/\d+/)?.[0].padStart(2, '0') || '01'}`,
+      loc: `S-${(p.id?.match(/\d+/)?.[0] || '01').padStart(2, '0')}`,
       system: sysStock,
       counted: sysStock, // By default matches system stock
       state: "確認済"

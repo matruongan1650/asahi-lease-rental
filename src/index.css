@@ -117,26 +117,41 @@
   /* Admin layout */
   --sidebar-width: 232px;
   --topbar-height: 60px;
+
+  /* Status Colors (Global fallback mapping) */
+  --success-bright: #1F9D57;
+  --success-tint:   rgba(31, 157, 87, 0.08);
+  --danger-bright:  #DC3A28;
+  --danger-tint:    rgba(220, 58, 40, 0.08);
+  --warning-bright: #E5961B;
+  --warning-tint:   rgba(229, 150, 27, 0.08);
 }
 
 /* ────────────────────────────────────────────────────────
    3. Staff App — Dark Theme
    ──────────────────────────────────────────────────────── */
 [data-theme="dark"] {
-  --bg:         #080B12;
-  --surface:    #121A28;
-  --surface-2:  #182233;
-  --surface-3:  #1E2A3D;
-  --border:     #232E42;
-  --border-2:   #2C3A52;
-  --fg:         #EEF2F9;
-  --fg-muted:   #97A3B8;
-  --fg-subtle:  #6B7A92;
-  --brand:      #6678F4;
-  --brand-tint: rgba(102, 120, 244, 0.16);
-  --danger:     #FF6B5A;
-  --success:    #34C77B;
-  --warning:    #F2B544;
+  --bg:             #080B12;
+  --surface:        #121A28;
+  --surface-2:      #182233;
+  --surface-3:      #1E2A3D;
+  --border:         #232E42;
+  --border-2:       #2C3A52;
+  --fg:             #EEF2F9;
+  --fg-muted:       #CBD5E1; /* Brightened for high contrast readability */
+  --fg-subtle:      #94A3B8; /* Brightened for high contrast readability */
+  --brand:          #6678F4;
+  --brand-accent:   #A5B4FC; /* Bright high-contrast cobalt accent */
+  --brand-tint:     rgba(102, 120, 244, 0.16);
+  --danger:         #FF6B5A;
+  --danger-bright:  #FF6B5A;
+  --danger-tint:    rgba(255, 107, 90, 0.12);
+  --success:        #34C77B;
+  --success-bright: #34C77B;
+  --success-tint:   rgba(52, 199, 123, 0.12);
+  --warning:        #F2B544;
+  --warning-bright: #F2B544;
+  --warning-tint:   rgba(242, 181, 68, 0.12);
 
   color-scheme: dark;
 }
@@ -145,20 +160,27 @@
    4. Staff App — Light Theme
    ──────────────────────────────────────────────────────── */
 [data-theme="light"] {
-  --bg:         #F5F6FA;
-  --surface:    #FFFFFF;
-  --surface-2:  #F0F1F5;
-  --surface-3:  #E8EAF0;
-  --border:     #DFE2EA;
-  --border-2:   #C7CCD8;
-  --fg:         #161A21;
-  --fg-muted:   #4E5667;
-  --fg-subtle:  #9AA1B2;
-  --brand:      #3A4DE8;
-  --brand-tint: rgba(58, 77, 232, 0.10);
-  --danger:     #DC3A28;
-  --success:    #1F9D57;
-  --warning:    #E5961B;
+  --bg:             #F5F6FA;
+  --surface:        #FFFFFF;
+  --surface-2:      #F0F1F5;
+  --surface-3:      #E8EAF0;
+  --border:         #DFE2EA;
+  --border-2:       #C7CCD8;
+  --fg:             #161A21;
+  --fg-muted:       #4E5667;
+  --fg-subtle:      #8A94A6;
+  --brand:          #3A4DE8;
+  --brand-accent:   #3A4DE8;
+  --brand-tint:     rgba(58, 77, 232, 0.10);
+  --danger:         #DC3A28;
+  --danger-bright:  #DC3A28;
+  --danger-tint:    rgba(220, 58, 40, 0.08);
+  --success:        #1F9D57;
+  --success-bright: #1F9D57;
+  --success-tint:   rgba(31, 157, 87, 0.08);
+  --warning:        #E5961B;
+  --warning-bright: #E5961B;
+  --warning-tint:   rgba(229, 150, 27, 0.08);
 
   color-scheme: light;
 }

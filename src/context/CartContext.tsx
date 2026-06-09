@@ -58,7 +58,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (products.length > 0 && items.length > 0) {
       setItems(prevItems => prevItems.map(item => {
-        const prod = products.find(p => p.id === item.id);
+        const prod = products.find(p => p && p.id === item.id);
         if (prod) {
           return {
             ...item,
@@ -88,7 +88,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems((prevItems) => {
       return prevItems.map(item => {
         if (item.id === id) {
-          const product = products.find(p => p.id === id);
+          const product = products.find(p => p && p.id === id);
           const stock = product ? product.stock : 999;
           const newQuantity = Math.max(1, Math.min(stock, item.quantity + delta));
           return { ...item, quantity: newQuantity };
@@ -102,7 +102,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems((prevItems) => {
       return prevItems.map(item => {
         if (item.id === id) {
-          const product = products.find(p => p.id === id);
+          const product = products.find(p => p && p.id === id);
           const stock = product ? product.stock : 999;
           const newQuantity = amount === 0 ? 0 : Math.max(1, Math.min(stock, amount)); // allow 0 temporarily
           return { ...item, quantity: newQuantity };
