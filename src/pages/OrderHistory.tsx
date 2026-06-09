@@ -98,14 +98,14 @@ export default function OrderHistory() {
                 date={order.date}
                 status={order.status}
                 statusColor={order.status === "返却済" ? "blue" : order.status === "一部返却" ? "purple" : "amber"}
-                statusIcon={order.status === "返却済" ? "check_circle" : order.status === "一部返却" ? "halfway" : "pending"}
+                statusIcon={order.status === "返却済" ? "check_circle" : order.status === "一部返却" ? "halfway" : order.status === "検品待ち" ? "fact_check" : "pending"}
                 productName={firstItem ? firstItem.name : "不明な商品"}
                 provider={order.items.length > 1 ? `他 ${order.items.length - 1} 点` : "提供: 株式会社ビルドテック"}
-                detail={order.status === "返却済" ? "返却が完了し、最終金額が確定しました" : order.status === "一部返却" ? "一部のアイテムが返却されました" : "現在処理中です"}
+                detail={order.status === "返却済" ? "返却が完了し、最終金額が確定しました" : order.status === "一部返却" ? "一部のアイテムが返却されました" : order.status === "検品待ち" ? "倉庫での検品をお待ちください" : "現在処理中です"}
                 price={order.total.toLocaleString()}
                 image={firstItem ? firstItem.image : ""}
                 type={firstItem?.type === 'rent' ? "レンタル" : "購入"}
-                progress={order.status === "返却済" ? 100 : order.status === "一部返却" ? 75 : 25}
+                progress={order.status === "返却済" ? 100 : order.status === "一部返却" ? 75 : order.status === "検品待ち" ? 60 : 25}
                 isSecondaryButton={true}
               />
             );

@@ -174,7 +174,7 @@ export function Badge({ children, variant = "neutral", icon, mono }: BadgeProps)
 
 export function statusVariant(s: string) {
   if (["完了", "正常", "受領済", "確認済", "使用中", "支払済", "確認済み", "完了済み"].includes(s)) return "success";
-  if (["急ぎ", "期限間近", "予定", "未確認", "整備中", "未払い", "準備中"].includes(s)) return "warning";
+  if (["急ぎ", "期限間近", "予定", "未確認", "整備中", "未払い", "準備中", "検品待ち"].includes(s)) return "warning";
   if (["期限切れ", "超過", "不足", "破損あり", "要対応", "廃車予定", "一部返却"].includes(s)) return "danger";
   if (["進行中", "配送中", "回収中", "レンタル中"].includes(s)) return "brand";
   return "neutral";

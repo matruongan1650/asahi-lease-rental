@@ -28,6 +28,9 @@ import {
   WhStocktake,
   isVehicle
 } from "./WarehouseViews";
+import { useOrders } from "../../context/OrderContext";
+import OrderBus from "../../lib/orderBus";
+import { finalizePartialReturn } from "../../utils/returnProcessing";
 
 // ---------------------------------------------------------------------------
 // 1. Premium Stats and Alert helper components (Japanese Aesthetics)
@@ -43,27 +46,27 @@ function StatTile({ label, value, unit, icon, variant = "neutral", onClick }: an
     },
     brand: {
       fg: "var(--brand-accent)",
-      bg: "rgba(58,77,232,0.1)",
+      bg: "rgba(58,77,232,0.12)",
       iconColor: "var(--brand-accent)",
-      border: "rgba(58,77,232,0.2)"
+      border: "rgba(58,77,232,0.25)"
     },
     success: {
       fg: "var(--success-bright)",
-      bg: "rgba(31,157,87,0.1)",
+      bg: "rgba(31,157,87,0.12)",
       iconColor: "var(--success-bright)",
-      border: "rgba(31,157,87,0.2)"
+      border: "rgba(31,157,87,0.25)"
     },
     danger: {
       fg: "var(--danger-bright)",
-      bg: "rgba(220,58,40,0.1)",
+      bg: "rgba(220,58,40,0.12)",
       iconColor: "var(--danger-bright)",
-      border: "rgba(220,58,40,0.2)"
+      border: "rgba(220,58,40,0.25)"
     },
     warning: {
       fg: "var(--warning-bright)",
-      bg: "rgba(229,150,27,0.1)",
+      bg: "rgba(229,150,27,0.12)",
       iconColor: "var(--warning-bright)",
-      border: "rgba(229,150,27,0.2)"
+      border: "rgba(229,150,27,0.25)"
     }
   }[variant as "neutral" | "brand" | "success" | "danger" | "warning"] || {
     fg: "var(--fg)",
@@ -76,31 +79,30 @@ function StatTile({ label, value, unit, icon, variant = "neutral", onClick }: an
     <div
       onClick={onClick}
       style={{
-        flex: 1,
-        background: "var(--surface)",
+        background: "linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%)",
         border: `1px solid ${colors.border}`,
-        borderTop: `3.5px solid ${colors.iconColor}`,
-        borderRadius: "14px",
-        padding: "14px 12px",
-        boxShadow: "var(--shadow-card)",
+        borderTop: `3px solid ${colors.iconColor}`,
+        borderRadius: "16px",
+        padding: "16px 14px",
+        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
         cursor: onClick ? "pointer" : undefined,
-        transition: "transform 0.2s ease, border-color 0.2s ease"
+        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ 
-          width: 34, height: 34, borderRadius: 8, 
+          width: 38, height: 38, borderRadius: 10, 
           background: colors.bg, display: "grid", placeItems: "center"
         }}>
-          <Icon name={icon} size={18} color={colors.iconColor} />
+          <Icon name={icon} size={20} color={colors.iconColor} />
         </div>
-        {onClick && <Icon name="chevronRight" size={14} color="var(--fg-subtle)" style={{ opacity: 0.7 }} />}
+        {onClick && <Icon name="chevronRight" size={15} color="var(--fg-subtle)" style={{ opacity: 0.8 }} />}
       </div>
-      <div style={{ fontSize: 29, fontWeight: 850, color: colors.fg, fontFamily: "var(--font-mono)", marginTop: 12, lineHeight: 1, letterSpacing: "-0.02em" }}>
+      <div style={{ fontSize: 32, fontWeight: 900, color: colors.fg, fontFamily: "var(--font-mono)", marginTop: 12, lineHeight: 1, letterSpacing: "-0.02em" }}>
         {value}
-        <span style={{ fontSize: 13, fontWeight: 800, marginLeft: 3, fontFamily: "var(--font-jp)", color: "var(--fg-subtle)", verticalAlign: "baseline" }}>{unit}</span>
+        <span style={{ fontSize: 13, fontWeight: 800, marginLeft: 4, fontFamily: "var(--font-jp)", color: "var(--fg-subtle)", verticalAlign: "baseline" }}>{unit}</span>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--fg-muted)", marginTop: 8, fontWeight: 800, letterSpacing: "0.02em" }}>{label}</div>
+      <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 8, fontWeight: 800, letterSpacing: "0.02em" }}>{label}</div>
     </div>
   );
 }
@@ -130,7 +132,7 @@ function AlertRow({ icon, variant, title, sub, onClick }: any) {
         <Icon name={icon} size={19} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14.5, fontWeight: 800, color: "#FFFFFF" }}>{title}</div>
+        <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)" }}>{title}</div>
         <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 2, fontWeight: 500 }}>{sub}</div>
       </div>
       <Icon name="chevronRight" size={16} color="var(--fg-subtle)" />
@@ -160,7 +162,7 @@ function DeliveryCard({ o, done, onClick }: any) {
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 800, color: "var(--brand-accent)", letterSpacing: "0.02em" }}>{o.id}</span>
             {o.priority === "急ぎ" && !done && <Badge variant="warning">急ぎ</Badge>}
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.01em", lineHeight: 1.35 }}>{o.site}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.35 }}>{o.site}</div>
           <div style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 5, fontWeight: 700 }}>{o.company}</div>
         </div>
         <Badge variant={done ? "success" : "neutral"} icon={done ? "check" : "clock"}>{done ? "完了" : o.window}</Badge>
@@ -205,7 +207,7 @@ function RecoveryCard({ o, done, onClick }: any) {
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 800, color: "var(--brand-accent)", letterSpacing: "0.02em" }}>{o.id}</span>
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.01em", lineHeight: 1.35 }}>{o.site}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.35 }}>{o.site}</div>
           <div style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 5, fontWeight: 700 }}>{o.company}</div>
         </div>
         <Badge variant={done ? "success" : "neutral"} icon={done ? "check" : "clock"}>{done ? "完了" : o.window}</Badge>
@@ -328,7 +330,7 @@ function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries }: any) {
                       <Icon name="checkCircle" size={22} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14.5, fontWeight: 800, color: "#FFFFFF" }}>{o.site}</div>
+                      <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)" }}>{o.site}</div>
                       <div style={{ fontSize: 12, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{o.id} ・ {o.kind}</div>
                     </div>
                     <Badge variant="success">完了</Badge>
@@ -347,7 +349,7 @@ function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries }: any) {
       <TopBar title="マイページ" sub="PROFILE" />
       <Card pad={18} style={{ marginBottom: 16, textAlign: "center" }}>
         <div style={{ width: 72, height: 72, borderRadius: 99, background: "linear-gradient(135deg,var(--brand),var(--brand-strong))", display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: 28, margin: "0 auto 12px" }}>ミ</div>
-        <div style={{ fontSize: 19, fontWeight: 800, color: "#FFFFFF" }}>{staff.name}</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: "var(--fg)" }}>{staff.name}</div>
         <div style={{ fontSize: 13.5, color: "var(--fg-muted)", marginTop: 3 }}>{staff.role}</div>
         <div style={{ display: "inline-flex", gap: 8, marginTop: 12 }}>
           <Badge variant="brand" mono>{staff.id}</Badge>
@@ -383,6 +385,7 @@ function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries }: any) {
 
 function UnifiedStaffApp() {
   const ml = useMobileLive();
+  const { orders, updateOrder, addCustomOrder } = useOrders();
   const [tab, setTab] = useState("home");
   const [subView, setSubView] = useState<string | null>(null);
   const [flow, setFlow] = useState<any>(null); // { type: "dlv" | "rtn" | "walkin", order?: any }
@@ -416,8 +419,9 @@ function UnifiedStaffApp() {
     id: "STF-991"
   };
 
-  const completeReturn = (productsList: any[]) => {
+  const completeReturn = (productsList: any[], walkinOrder?: any) => {
     const valid = productsList.filter(p => p.counted > 0);
+    // 入庫 + 在庫調整（既存処理）
     if (ml.addStockMove) {
       valid.forEach(p => ml.addStockMove("入庫", { item: p.name, qty: p.counted, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" }));
       if (ml.adjustStock && ml.findProductByName) {
@@ -427,6 +431,65 @@ function UnifiedStaffApp() {
         });
       }
     }
+
+    // 顧客の一部返却（orderId 付き）の場合は、検品結果で注文を確定する。
+    if (walkinOrder && walkinOrder.orderId) {
+      const targetOrder = (orders || []).find(
+        (o: any) =>
+          o.id === walkinOrder.orderId ||
+          o.firestoreId === walkinOrder.orderId ||
+          (walkinOrder.orderNumber && o.orderNumber === walkinOrder.orderNumber)
+      );
+
+      if (targetOrder) {
+        const today = new Date();
+        const actualReturnDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+        // 検品実数（counted）を返却数量として確定
+        const returnQuantities: Record<string, number> = {};
+        productsList.forEach((p: any) => {
+          returnQuantities[p.id] = p.counted || 0;
+        });
+
+        // 不足・破損を itemIssues として記録
+        const itemIssues: any[] = [];
+        productsList.forEach((p: any) => {
+          const shortage = (p.expected || 0) - (p.counted || 0);
+          if (shortage > 0) {
+            itemIssues.push({ itemId: p.id, type: "missing", quantity: shortage, notes: "倉庫検品で不足を確認" });
+          }
+          (p.report || []).forEach((r: any) => {
+            itemIssues.push({
+              itemId: p.id,
+              type: r.reason === "破損" ? "broken" : "missing",
+              quantity: r.qty || 1,
+              notes: r.note || r.reason || "倉庫検品報告",
+              photo: (r.photos && r.photos[0]) || undefined,
+            });
+          });
+        });
+
+        try {
+          finalizePartialReturn(
+            targetOrder,
+            returnQuantities,
+            actualReturnDate,
+            { updateOrder, addCustomOrder },
+            { itemIssues, remainingStatus: "一部返却", inspectedByWarehouse: true }
+          );
+        } catch (e) {
+          console.error("[completeReturn] 注文の確定に失敗しました。", e);
+        }
+      }
+
+      // 検品済みの walk-in 受付を削除
+      try {
+        OrderBus.remove("walkinReturns", walkinOrder.id);
+      } catch (e) {
+        console.warn("[completeReturn] walkinReturns 削除に失敗しました。", e);
+      }
+    }
+
     setFlow(null);
     setTab("stock");
   };
@@ -511,7 +574,7 @@ function UnifiedStaffApp() {
               <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand-accent)", letterSpacing: ".08em", fontFamily: "var(--font-mono)" }}>
                 2026.06.08 (月)
               </span>
-              <h1 style={{ fontSize: 24, fontWeight: 900, color: "#FFFFFF", marginTop: 2, letterSpacing: "-0.01em" }}>
+              <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--fg)", marginTop: 2, letterSpacing: "-0.01em" }}>
                 現場運行・倉庫管理
               </h1>
             </div>
@@ -522,8 +585,10 @@ function UnifiedStaffApp() {
 
           {/* Premium User Information & Progress Card */}
           <Card pad={18} style={{ 
-            background: "linear-gradient(135deg, rgba(102,120,244,0.18), rgba(24,34,210,0.06))",
-            border: "1px solid var(--border-2)",
+            background: "linear-gradient(135deg, rgba(58,77,232,0.16) 0%, rgba(24,34,210,0.04) 100%)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: "18px",
+            backdropFilter: "blur(20px)",
             marginBottom: 20
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
@@ -538,7 +603,7 @@ function UnifiedStaffApp() {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 19, fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.01em" }}>{staff.name} さん</span>
+                  <span style={{ fontSize: 19, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em" }}>{staff.name} さん</span>
                   <Badge variant="brand" mono>STF-991</Badge>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 3, fontWeight: 600 }}>{staff.team} ・ {staff.role}</div>
@@ -558,21 +623,55 @@ function UnifiedStaffApp() {
           </Card>
         </div>
 
-        {/* Top-Bordered Stats Grid */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {/* Spacious 2-Column Stats Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
           <StatTile label="配送予定" value={pendingDlvCount} unit="件" icon="truck" variant="brand" onClick={() => setTab("delivery_recovery")} />
           <StatTile label="回収予定" value={pendingRtnCount} unit="件" icon="package" variant="success" onClick={() => setTab("delivery_recovery")} />
-          <StatTile label="点検・警告" value={overdueVeh + overdueMnt} unit="件" icon="alert" variant="danger" onClick={() => setTab("inspect")} />
         </div>
 
         {/* Alert Notifications Section */}
-        {(overdueVeh > 0 || overdueMnt > 0) && (
-          <div style={{ marginBottom: 18 }}>
-            <SectionLabel>要対応アラート</SectionLabel>
-            {overdueVeh > 0 && <AlertRow icon="car" variant="danger" title="車検が期限切れです" sub={`対象 ${overdueVeh}台 ・ 至急点検を実施してください`} onClick={() => setTab("inspect")} />}
-            {overdueMnt > 0 && <AlertRow icon="wrench" variant="danger" title="定期メンテナンス超過" sub={`対象 ${overdueMnt}件 ・ 機器の整備をお願いします`} onClick={() => setTab("inspect")} />}
-          </div>
-        )}
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel>要対応アラート</SectionLabel>
+          {overdueVeh > 0 || overdueMnt > 0 ? (
+            <>
+              {overdueVeh > 0 && (
+                <AlertRow 
+                  icon="car" 
+                  variant="danger" 
+                  title="車検が期限切れです" 
+                  sub={`対象 ${overdueVeh}台 ・ 至急点検を実施してください`} 
+                  onClick={() => setTab("inspect")} 
+                />
+              )}
+              {overdueMnt > 0 && (
+                <AlertRow 
+                  icon="wrench" 
+                  variant="danger" 
+                  title="定期メンテナンス超過" 
+                  sub={`対象 ${overdueMnt}件 ・ 機器の整備をお願いします`} 
+                  onClick={() => setTab("inspect")} 
+                />
+              )}
+            </>
+          ) : (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "14px 16px",
+              borderRadius: 16,
+              background: "rgba(31,157,87,0.06)",
+              border: "1px solid rgba(31,157,87,0.15)",
+              color: "var(--success-bright)",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+            }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(31,157,87,0.12)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                <Icon name="checkCircle" size={16} color="var(--success-bright)" />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--font-jp)" }}>現在、未対応の点検・警告はありません</span>
+            </div>
+          )}
+        </div>
 
         {/* Premium Walk-in Returns CTA Card */}
         <SectionLabel>持込対応</SectionLabel>
@@ -585,16 +684,17 @@ function UnifiedStaffApp() {
             gap: 14,
             padding: "16px 18px",
             borderRadius: 18,
-            background: "linear-gradient(135deg, var(--brand), var(--brand-strong))",
-            border: "1px solid rgba(255,255,255,0.1)",
+            background: "linear-gradient(135deg, var(--brand) 0%, #1a2bc4 100%)",
+            border: "1px solid rgba(255,255,255,0.08)",
             cursor: "pointer",
-            marginBottom: 22,
-            boxShadow: "0 8px 24px rgba(58,77,232,0.3)",
+            marginBottom: 24,
+            boxShadow: "0 8px 30px rgba(58,77,232,0.22)",
             position: "relative",
-            overflow: "hidden"
+            overflow: "hidden",
+            transition: "all 0.2s ease"
           }}
         >
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(45deg, transparent, rgba(255,255,255,0.06) 40%, transparent 60%)" }} />
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(45deg, transparent, rgba(255,255,255,0.08) 40%, transparent 60%)" }} />
           <div style={{ 
             width: 44, height: 44, borderRadius: 12, 
             background: "rgba(255,255,255,0.15)", color: "#fff", 
@@ -603,8 +703,8 @@ function UnifiedStaffApp() {
             <Icon name="clipboardCheck" size={22} />
           </div>
           <div style={{ flex: 1, textAlign: "left" }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>お客様持込返却 検品</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 2 }}>直接ベースに来庫されたお客様の返却対応</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#FFFFFF" }}>お客様持込返却 検品</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 2, fontWeight: 500 }}>直接ベースに来庫されたお客様の返却対応</div>
           </div>
           <div style={{ 
             background: "#FFFFFF", color: "var(--brand-strong)", 
@@ -619,13 +719,13 @@ function UnifiedStaffApp() {
 
         {/* Structured Warehouse Quick Tools Grid */}
         <SectionLabel>倉庫管理・クイック操作</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, paddingBottom: 20 }}>
           {[
-            ["boxIn", "入庫登録", "stock"],
-            ["boxOut", "出庫登録", "stock"],
-            ["layers", "倉庫棚卸し", "stocktake"],
-            ["car", "車両点検", "inspect"]
-          ].map(([ic, lb, t]) => (
+            ["boxIn", "入庫登録", "stock", "資材の受入登録"],
+            ["boxOut", "出庫登録", "stock", "商品の配送準備"],
+            ["layers", "倉庫棚卸し", "stocktake", "実在庫の確認"],
+            ["car", "車両点検", "inspect", "整備状況の確認"]
+          ].map(([ic, lb, t, desc]) => (
             <button
               key={lb}
               onClick={() => {
@@ -637,25 +737,27 @@ function UnifiedStaffApp() {
               }}
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "16px 14px",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                padding: "16px 16px 14px",
                 borderRadius: 16,
                 background: "var(--surface)",
                 border: "1px solid var(--border-2)",
                 cursor: "pointer",
-                boxShadow: "var(--shadow-card)",
-                transition: "border-color 0.2s ease, transform 0.15s ease"
+                boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                textAlign: "left"
               }}
             >
               <div style={{ 
                 width: 38, height: 38, borderRadius: 10, 
                 background: "var(--brand-tint)", color: "var(--brand-accent)", 
-                display: "grid", placeItems: "center" 
+                display: "grid", placeItems: "center", marginBottom: 12
               }}>
                 <Icon name={ic as any} size={18} />
               </div>
-              <span style={{ fontSize: 14.5, fontWeight: 800, color: "#FFFFFF", textAlign: "left", letterSpacing: "-0.01em" }}>{lb}</span>
+              <span style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)", marginBottom: 4, letterSpacing: "-0.01em" }}>{lb}</span>
+              <span style={{ fontSize: 11.5, color: "var(--fg-muted)", fontWeight: 500, lineHeight: 1.3 }}>{desc}</span>
             </button>
           ))}
         </div>

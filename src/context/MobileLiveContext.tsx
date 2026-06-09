@@ -189,10 +189,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       if (rows.length) setMaint(rows);
     });
 
-    // Walkin Returns subscription & seeding
-    OrderBus.seedIfEmpty("walkinReturns", WALKIN_RETURNS);
+    // 持込返却は実データのみ（顧客の一部返却で作成された walkinReturns）。モックは seed しない。
+    // 追加・削除の両方を反映するため常に setWalkin する。
     const unsubWalkin = OrderBus.subscribe("walkinReturns", (rows) => {
-      if (rows.length) setWalkin(rows);
+      setWalkin(rows);
     });
 
     // Stock moves subscription
@@ -211,25 +211,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   // Derive Deliveries
+  // 配送タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   const liveDeliveries = [
-    ...DELIVERIES.map(d => ({ 
-      ...d, 
-      isMock: true,
-      rawOrder: {
-        id: d.id,
-        orderNumber: d.id,
-        status: "準備中",
-        companyName: d.company,
-        siteName: d.site,
-        deliveryLocation: d.addr,
-        deliveryDate: d.window,
-        personName: d.contact,
-        items: d.items.map((i: any) => ({ name: i.name, quantity: i.qty, type: 'rent', calculatedPrice: 0, image: i.image })),
-        subtotal: 0,
-        tax: 0,
-        total: 0
-      }
-    })),
     ...rawOrders
       .filter(o => o.status && o.status !== "完了" && o.status !== "キャンセル" && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
       .map(o => ({
@@ -252,25 +235,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   ];
 
   // Derive Recoveries
+  // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   const liveRecoveries = [
-    ...RECOVERIES.map(r => ({ 
-      ...r, 
-      isMock: true,
-      rawOrder: {
-        id: r.id,
-        orderNumber: r.id,
-        status: "回収予定",
-        companyName: r.company,
-        siteName: r.site,
-        deliveryLocation: r.addr,
-        rentalEndDate: r.window,
-        personName: r.contact,
-        items: r.products.map((i: any) => ({ id: i.id, name: i.name, quantity: i.expected, type: 'rent', calculatedPrice: 0, image: i.image })),
-        subtotal: 0,
-        tax: 0,
-        total: 0
-      }
-    })),
     ...rawOrders
       .filter(o => {
         if (!o.rentalEndDate) return false;

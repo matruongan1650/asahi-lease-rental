@@ -13,6 +13,15 @@ import {
   writeBatch,
   type DocumentData
 } from "firebase/firestore";
+import OrderBus from "./orderBus";
+
+/**
+ * ローカル運用スイッチ。
+ * false の場合、注文 (orders) は Firestore クラウドに接続せず、
+ * すべてローカルの OrderBus（localStorage）だけで動作する。
+ * クラウド同期に戻したいときは true にしてください。
+ */
+const FIREBASE_ENABLED = false;
 
 const firebaseConfig = {
   apiKey: "AIzaSyBNm50HiPv9-qOdAZlpr50rxfz7aKtZMyw",
@@ -74,6 +83,12 @@ function removeUndefined(obj: any): any {
 // ==========================================
 
 export async function pushOrder(order: Record<string, unknown>): Promise<string> {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: クラウドへは書き込まない。
+    // 注文の OrderBus への登録は呼び出し側 (OrderContext) が行うため、
+    // ここでは ID を返すだけにして二重登録を防ぐ。
+    return (order?.id as string) || "";
+  }
   console.log("[Firebase] pushOrder called with order:", order);
   try {
     const sanitizedOrder = removeUndefined(order);
@@ -91,6 +106,11 @@ export async function pushOrder(order: Record<string, unknown>): Promise<string>
 }
 
 export async function patchOrder(firestoreId: string, updates: Record<string, unknown>): Promise<void> {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: OrderBus 上の注文を更新する。
+    OrderBus.patch("orders", firestoreId, updates);
+    return;
+  }
   console.log(`[Firebase] patchOrder called for ID: ${firestoreId} with updates:`, updates);
   try {
     const sanitizedUpdates = removeUndefined(updates);
@@ -105,6 +125,11 @@ export async function patchOrder(firestoreId: string, updates: Record<string, un
 }
 
 export function subscribeOrders(callback: (orders: Array<Record<string, unknown>>) => void): () => void {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: Firestore ではなく OrderBus の "orders" を購読する。
+    // 即時に現在のデータでコールバックされ、変更時にも通知される。
+    return OrderBus.subscribe("orders", callback as any);
+  }
   console.log("[Firebase] subscribeOrders called");
   const q = query(ordersCol, orderBy("createdAt", "desc"));
   return onSnapshot(q, snap => {

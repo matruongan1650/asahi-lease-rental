@@ -386,7 +386,7 @@ export function WhDashboard({ staff, go, moves, onReturn, veh, mnt, walkinCount 
             <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>持込返却 検品</div>
             <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.82)", marginTop: 2 }}>お客様持込の返却品を検品・入庫</div>
           </div>
-          <div style={{ background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 99, padding: "4px 10px", fontSize: 12.5, fontWeight: 800, fontFamily: "var(--font-mono)" }}>{walkinCount != null ? walkinCount : WALKIN_RETURNS.length}</div>
+          <div style={{ background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 99, padding: "4px 10px", fontSize: 12.5, fontWeight: 800, fontFamily: "var(--font-mono)" }}>{walkinCount != null ? walkinCount : 0}</div>
           <Icon name="chevronRight" size={20} color="#fff" />
         </button>
 

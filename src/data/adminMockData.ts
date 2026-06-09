@@ -772,7 +772,10 @@ const generateMockB2BOrders = () => {
   return list;
 };
 
-export const B2B_MOCK_ORDERS = generateMockB2BOrders();
+// ローカル運用フラグ: false の場合、モック注文を seed しない（注文を空にする）。
+// 元のサンプル注文に戻したいときは true にしてください。
+const ENABLE_MOCK_ORDERS = false;
+export const B2B_MOCK_ORDERS = ENABLE_MOCK_ORDERS ? generateMockB2BOrders() : [];
 
 // Pack all mock collections to simplify seeding
 export const COLLECTIONS_MOCK_DATA: Record<string, any[]> = {

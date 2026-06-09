@@ -33,6 +33,7 @@ export interface Order {
   warehouseSignature?: string;
   itemIssues?: { itemId: string; type: "missing" | "broken"; quantity: number; notes: string; photo?: string }[];
   invoiceBlocks?: any[];
+  inspectedByWarehouse?: boolean;
 }
 
 interface OrderContextProps {

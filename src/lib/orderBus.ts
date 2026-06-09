@@ -190,7 +190,7 @@ function _read<T extends BusRecord = BusRecord>(store: BusStore): T[] {
       console.warn(`[OrderBus] Store "${store}" contained non-array data; returning empty.`);
       return [];
     }
-    return parsed as T[];
+    return parsed.filter(Boolean) as T[];
   } catch {
     console.warn(`[OrderBus] Failed to parse store "${store}"; returning empty.`);
     return [];
@@ -198,10 +198,22 @@ function _read<T extends BusRecord = BusRecord>(store: BusStore): T[] {
 }
 
 function _write<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): void {
+  const next = JSON.stringify(data);
+  let prev: string | null = null;
   try {
-    localStorage.setItem(_key(store), JSON.stringify(data));
+    prev = localStorage.getItem(_key(store));
+  } catch {
+    // ignore read error
+  }
+  try {
+    localStorage.setItem(_key(store), next);
   } catch (e) {
     console.error(`[OrderBus] Failed to write store "${store}" to localStorage.`, e);
+    return;
+  }
+  // データに変化が無ければ通知・ブロードキャストをスキップする。
+  // （購読コールバック内で同じ配列を setAll し直すケースの無限ループを防ぐ）
+  if (prev === next) {
     return;
   }
   _notify(store, data);

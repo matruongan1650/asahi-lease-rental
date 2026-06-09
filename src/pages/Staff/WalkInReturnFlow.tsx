@@ -21,7 +21,7 @@ import { useMobileLive, pushFieldReportsLocal, STAFF, WALKIN_RETURNS } from "../
 
 export interface WalkInReturnFlowProps {
   onExit: () => void;
-  onComplete: (prods: any[]) => void;
+  onComplete: (prods: any[], order: any) => void;
 }
 
 const WIN_STEPS = ["受付", "検品", "サイン", "完了"];
@@ -48,7 +48,7 @@ function WalkinCard({ o, onClick }: any) {
 
 export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlowProps) {
   const ml = useMobileLive();
-  const walkinList = ml.walkin && ml.walkin.length ? ml.walkin : WALKIN_RETURNS;
+  const walkinList = ml.walkin || [];
   const [order, setOrder] = useState<any>(null);
   const [step, setStep] = useState(0);
   const [prods, setProds] = useState<any[]>([]);
@@ -303,7 +303,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         </Card>
       </div>
     );
-    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods)}>完了</Btn>;
+    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order)}>完了</Btn>;
   }
 
   return (

@@ -4,6 +4,7 @@ import { useFeatured } from "../context/FeaturedContext";
 import { useCart } from "../context/CartContext";
 import { useUser } from "../context/UserContext";
 import { useProducts } from "../context/ProductContext";
+import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -13,6 +14,12 @@ export default function Home() {
   const { profile } = useUser();
   // Safely use products
   const safeProducts = products || [];
+  // 保安用品カテゴリーを商品から動的に取得し、2件ずつの列にまとめる
+  const supplyCategories = getSupplyCategories(products);
+  const supplyCategoryColumns: string[][] = [];
+  for (let i = 0; i < supplyCategories.length; i += 2) {
+    supplyCategoryColumns.push(supplyCategories.slice(i, i + 2));
+  }
   const featuredProducts = safeProducts.filter(p => featuredIds.includes(p?.id));
   
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -35,7 +42,7 @@ export default function Home() {
   const handleQuantityChange = (id: string, delta: number) => {
     setQuantities(prev => {
       const current = prev[id] || 0;
-      const product = products.find(p => p.id === id);
+      const product = products.find(p => p && p.id === id);
       const stock = product ? product.stock : 999;
       const next = Math.max(0, Math.min(stock, current + delta));
       if (next === 0) {
@@ -49,7 +56,7 @@ export default function Home() {
 
   const handleSetQuantity = (id: string, amount: number) => {
     setQuantities(prev => {
-      const product = products.find(p => p.id === id);
+      const product = products.find(p => p && p.id === id);
       const stock = product ? product.stock : 999;
       const next = Math.max(0, Math.min(stock, amount));
       if (next === 0) {
@@ -77,7 +84,7 @@ export default function Home() {
   const handleAddToCart = () => {
     for (const id in quantities) {
       if (quantities[id] > 0) {
-        const product = products.find(p => p.id === id);
+        const product = products.find(p => p && p.id === id);
         if (product) {
           addToCart({
             id: product.id,
@@ -259,28 +266,13 @@ export default function Home() {
           </div>
           <div className="flex overflow-x-auto hide-scrollbar gap-2 px-5 pb-2">
             {activeTab === 'supplies' ? (
-              <>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="change_history" name="カラーコーン" />
-                  <SmallCategoryItem icon="signpost" name="工事看板" />
+              supplyCategoryColumns.map((col, idx) => (
+                <div key={idx} className="flex flex-col gap-2">
+                  {col.map((cat) => (
+                    <SmallCategoryItem key={cat} icon={getCategoryIcon(cat)} name={cat} />
+                  ))}
                 </div>
-                <div className="flex flex-col gap-2">
-                   <SmallCategoryItem icon="remove" name="コーンバー" />
-                   <SmallCategoryItem icon="fitness_center" name="ウェイト" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="fence" name="バリケード" />
-                  <SmallCategoryItem icon="health_and_safety" name="車両衝突緩衝材" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="traffic" name="工事灯" />
-                  <SmallCategoryItem icon="texture" name="歩行者用マット" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="arrow_forward" name="矢印板" />
-                  <SmallCategoryItem icon="emergency" name="回転灯" />
-                </div>
-              </>
+              ))
             ) : (
               <>
                 <div className="flex flex-col gap-2">
