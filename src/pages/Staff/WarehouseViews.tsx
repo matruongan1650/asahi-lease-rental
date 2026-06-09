@@ -23,7 +23,7 @@ import {
   makePhoto,
   Overline
 } from "../../components/staff/StaffUI";
-import { useMobileLive, pushFieldReportsLocal, STAFF, WALKIN_RETURNS, daysUntil } from "../../context/MobileLiveContext";
+import { useMobileLive, pushFieldReportsLocal, STAFF, daysUntil } from "../../context/MobileLiveContext";
 
 export const isVehicle = (p: any) => {
   if (!p) return false;

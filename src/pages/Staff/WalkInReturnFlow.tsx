@@ -17,7 +17,7 @@ import {
   REASON_ICON,
   statusVariant
 } from "../../components/staff/StaffUI";
-import { useMobileLive, pushFieldReportsLocal, STAFF, WALKIN_RETURNS } from "../../context/MobileLiveContext";
+import { useMobileLive, pushFieldReportsLocal, STAFF } from "../../context/MobileLiveContext";
 
 export interface WalkInReturnFlowProps {
   onExit: () => void;

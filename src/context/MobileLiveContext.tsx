@@ -93,29 +93,8 @@ export const STOCK_MOVES = [
   { id: "OUT-9925", type: "出庫", item: "単管バリケード",   qty: 12,  time: "09:20", ref: "DLV-20614 配送分", icon: "package" },
 ];
 
-export const WALKIN_RETURNS = [
-  {
-    id: "WIN-44021", time: "10:20 受付",
-    company: "東急建設 株式会社", contact: "資材課 中村様",
-    rentalNo: "RN-7781", note: "レンタル期間：5/2〜6/1。お客様が直接来庫。",
-    products: [
-      { id: "W-1", qr: "AS-CONE-1001", name: "レボリューションコーン赤白", expected: 30, icon: "cone" },
-      { id: "W-2", qr: "AS-BAR-2200",  name: "コーンバー黒/黄", expected: 15, icon: "minus" },
-      { id: "W-3", qr: "AS-FENCE-6001", name: "ガードフェンス", expected: 10, icon: "shield" },
-      { id: "W-4", qr: "AS-LED-5120",  name: "LED保安灯", expected: 6, icon: "sun" },
-    ],
-  },
-  {
-    id: "WIN-44025", time: "11:05 受付",
-    company: "西松建設 株式会社", contact: "工務 小林様",
-    rentalNo: "RN-7795", note: "",
-    products: [
-      { id: "V-1", qr: "AS-SIGN-4055", name: "注意看板", expected: 8, icon: "flag" },
-      { id: "V-2", qr: "AS-WEIGHT-700", name: "ウェイト 10kg", expected: 20, icon: "weight" },
-      { id: "V-3", qr: "AS-ARROW-8030", name: "矢印板", expected: 5, icon: "navigation" },
-    ],
-  },
-];
+// 持込返却（持込対応）はモックを使わず、実データのみ（顧客が直接持ち込んだ返却で作成された
+// walkinReturns）を使用する。以前のモック WALKIN_RETURNS 定数は削除済み。
 
 // Helper to count countdown days from 2026/06/02
 export function daysUntil(dateStr: string): number | null {

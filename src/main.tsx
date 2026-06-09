@@ -30,6 +30,18 @@ try {
   console.warn('[main] 車両・メンテキャッシュのクリアに失敗しました。', e);
 }
 
+// 一度だけ実行: 過去に seed された持込返却（持込対応）のモックデータを削除する。
+// 持込返却は実データ運用（顧客が直接持ち込んだ返却のみ）へ移行したため、古い seed を消す。
+// 再実行したい場合は "walkin_reset_v1" を削除。
+try {
+  if (!localStorage.getItem('walkin_reset_v1')) {
+    localStorage.removeItem('asahi.walkinReturns');
+    localStorage.setItem('walkin_reset_v1', '1');
+  }
+} catch (e) {
+  console.warn('[main] 持込返却キャッシュのクリアに失敗しました。', e);
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

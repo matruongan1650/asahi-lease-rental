@@ -97,7 +97,9 @@ export default function ReturnConfirmation() {
 
     const returningEverything = remainingItemsList.length === 0;
 
-    if (returningEverything) {
+    // 直接持ち込み（全量・一部いずれも）は倉庫の「持込返却 検品」へ回す。
+    // それ以外（業者集荷など）は従来どおり即時確定する。
+    if (method !== "direct") {
       const tempOrder = {
         ...order,
         items: returnedItemsList,
@@ -120,9 +122,9 @@ export default function ReturnConfirmation() {
         invoiceBlocks: newInvoiceBlocks
       });
     } else {
-      // 一部返却（直接持ち込み）: ここでは確定・請求分割しない。
+      // 直接持ち込み（全量・一部いずれも）: ここでは確定・請求分割しない。
       // 倉庫の「持込返却 検品」キューに登録し、注文を「検品待ち」にする。
-      // 倉庫スタッフが実数を検品・確認した時点で確定する（StaffDashboard.completeReturn）。
+      // 倉庫スタッフが実数を検品・確認した時点で確定する（StaffDashboard.completeReturn → finalizePartialReturn）。
       const contact =
         order.personName ||
         `${order.personLastName || ""} ${order.personFirstName || ""}`.trim() ||
@@ -153,11 +155,12 @@ export default function ReturnConfirmation() {
         rentalNo: order.orderNumber || "—",
         time:
           new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 受付",
-        note: "お客様による一部返却（直接持ち込み）。倉庫にて検品をお願いします。",
+        note: `お客様による${returningEverything ? "全量返却" : "一部返却"}（直接持ち込み）。倉庫にて検品をお願いします。`,
         requestedReturn: returnQuantities,
         photos: photos || [],
         products: walkinProducts,
-        source: "customer_partial_return",
+        source: "customer_direct_return",
+        returningEverything,
       } as any);
 
       // 元注文は「検品待ち」に。確定は倉庫検品完了時。
@@ -165,9 +168,9 @@ export default function ReturnConfirmation() {
     }
 
     alert(
-      returningEverything
-        ? "返却リクエストを送信しました。"
-        : "一部返却を受け付けました。倉庫での検品後に内容が確定します。"
+      method === "direct"
+        ? "返却を受け付けました。倉庫での検品後に内容が確定します。"
+        : "返却リクエストを送信しました。"
     );
     navigate("/orders");
   };
