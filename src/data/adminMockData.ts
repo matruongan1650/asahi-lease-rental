@@ -777,7 +777,9 @@ const generateMockB2BOrders = () => {
 const ENABLE_MOCK_ORDERS = false;
 export const B2B_MOCK_ORDERS = ENABLE_MOCK_ORDERS ? generateMockB2BOrders() : [];
 
-// Pack all mock collections to simplify seeding
+// Pack all mock collections to simplify seeding.
+// 注意: vehicles / maintenance は実データ運用のため seed 対象から除外している。
+// VEHICLES / MAINT 定数はデモ・テスト参照用に残しているが、自動 seed や seedAll() には使われない。
 export const COLLECTIONS_MOCK_DATA: Record<string, any[]> = {
   products: PRODUCTS,
   assets: ASSETS,
@@ -786,10 +788,8 @@ export const COLLECTIONS_MOCK_DATA: Record<string, any[]> = {
   stockIn: STOCK_IN,
   stockOut: STOCK_OUT,
   repairs: REPAIRS,
-  maintenance: MAINT,
   customers: CUSTOMERS,
   suppliers: SUPPLIERS,
   vendors: VENDORS,
   fieldReports: FIELD_REPORTS,
-  vehicles: VEHICLES,
 };

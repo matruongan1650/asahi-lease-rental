@@ -84,9 +84,7 @@ export const RECOVERIES = [
   },
 ];
 
-import { VEHICLES as _VEHICLES, MAINT as _MAINTENANCE } from "../data/adminMockData";
-export const VEHICLES = _VEHICLES;
-export const MAINTENANCE = _MAINTENANCE;
+// 車両（vehicles）・メンテナンス（maintenance）はモックを使わず、実データ（OrderBus / admin 管理）のみを使用する。
 
 export const STOCK_MOVES = [
   { id: "IN-7781",  type: "入庫", item: "レボリューションコーン赤白", qty: 120, time: "08:12", ref: "RTN-31170 回収分", icon: "cone" },
@@ -177,16 +175,14 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       if (rows.length) setProducts(rows);
     });
 
-    // Vehicles subscription & seeding
-    OrderBus.seedIfEmpty("vehicles", VEHICLES);
+    // 車両は実データのみ（admin の車庫管理で登録されたもの）。モックは seed しない。
     const unsubVehicles = OrderBus.subscribe("vehicles", (rows) => {
-      if (rows.length) setVehicles(rows);
+      setVehicles(rows);
     });
 
-    // Maintenance subscription & seeding
-    OrderBus.seedIfEmpty("maintenance", MAINTENANCE);
+    // メンテナンスは実データのみ（admin で登録されたもの）。モックは seed しない。
     const unsubMaint = OrderBus.subscribe("maintenance", (rows) => {
-      if (rows.length) setMaint(rows);
+      setMaint(rows);
     });
 
     // 持込返却は実データのみ（顧客の一部返却で作成された walkinReturns）。モックは seed しない。

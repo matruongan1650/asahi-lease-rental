@@ -23,7 +23,7 @@ import {
   makePhoto,
   Overline
 } from "../../components/staff/StaffUI";
-import { useMobileLive, pushFieldReportsLocal, STAFF, VEHICLES, MAINTENANCE, WALKIN_RETURNS, daysUntil } from "../../context/MobileLiveContext";
+import { useMobileLive, pushFieldReportsLocal, STAFF, WALKIN_RETURNS, daysUntil } from "../../context/MobileLiveContext";
 
 export const isVehicle = (p: any) => {
   if (!p) return false;
@@ -341,8 +341,8 @@ export function WhDashboard({ staff, go, moves, onReturn, veh, mnt, walkinCount 
   const ins = moves.filter(m => m.type === "入庫").reduce((a, b) => a + b.qty, 0);
   const outs = moves.filter(m => m.type === "出庫").reduce((a, b) => a + b.qty, 0);
   
-  const VL = veh && veh.length ? veh : VEHICLES;
-  const ML = mnt && mnt.length ? mnt : MAINTENANCE;
+  const VL = veh && veh.length ? veh : [];
+  const ML = mnt && mnt.length ? mnt : [];
 
   const overdueVeh = VL.filter(v => {
     const days = v.days ?? v.inspectionDaysRemaining ?? 0;
@@ -533,8 +533,8 @@ export function WhInspect() {
   const [tab, setTab] = useState("shaken");
   const ml = useMobileLive();
   const liveVeh = ml.vehicles && ml.vehicles.length > 0 ? ml.vehicles : null;
-  const [veh, setVeh] = useState<any[]>(VEHICLES);
-  const [mnt, setMnt] = useState<any[]>(MAINTENANCE);
+  const [veh, setVeh] = useState<any[]>([]);
+  const [mnt, setMnt] = useState<any[]>([]);
   const [detail, setDetail] = useState<any>(null); // {kind, item}
   const [vehPlate, setVehPlate] = useState<string | null>(null);
 
@@ -599,6 +599,9 @@ export function WhInspect() {
       <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
         {tab === "shaken" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {veh.length === 0 && (
+              <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-muted)", fontSize: 13.5, fontWeight: 600 }}>登録された車両がありません</div>
+            )}
             {veh.map(v => {
               const alertCount = vehicleAlerts(v).length;
               const days = v.days ?? v.inspectionDaysRemaining ?? 0;
@@ -630,6 +633,9 @@ export function WhInspect() {
 
         {tab === "mainte" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {mnt.length === 0 && (
+              <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-muted)", fontSize: 13.5, fontWeight: 600 }}>メンテナンス記録がありません</div>
+            )}
             {mnt.map(m => (
               <Card key={m.id} pad={14} onClick={() => setDetail({ kind: "mainte", item: m })}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>

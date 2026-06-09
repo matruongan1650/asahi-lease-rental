@@ -179,8 +179,8 @@ function DeliveryCard({ o, done, onClick }: any) {
         <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", fontWeight: 600 }}>
           <Icon name="package" size={14} color="var(--fg-subtle)" />
           <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--fg)" }}>
-            {o.items.reduce((a: number, b: any) => a + b.qty, 0)}
-          </span>点 / <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--fg)" }}>{o.items.length}</span>品目
+            {(o.items || []).reduce((a: number, b: any) => a + (b.qty || 0), 0)}
+          </span>点 / <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--fg)" }}>{(o.items || []).length}</span>品目
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3, color: "var(--brand-accent)", fontWeight: 800 }}>
           {done ? "詳細を表示" : "業務を開始"}<Icon name="chevronRight" size={15} />
@@ -223,7 +223,7 @@ function RecoveryCard({ o, done, onClick }: any) {
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", fontWeight: 600 }}>
           <Icon name="qr" size={14} color="var(--fg-subtle)" />
-          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--fg)" }}>{o.products.length}</span>品目
+          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--fg)" }}>{(o.products || []).length}</span>品目
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3, color: "var(--brand-accent)", fontWeight: 800 }}>
           {done ? "詳細を表示" : "業務を開始"}<Icon name="chevronRight" size={15} />

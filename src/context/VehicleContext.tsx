@@ -56,19 +56,14 @@ interface VehicleContextType {
 
 const VehicleContext = createContext<VehicleContextType | undefined>(undefined);
 
-import { VEHICLES as initialVehicles } from "../data/adminMockData";
-
 export function VehicleProvider({ children }: { children: ReactNode }) {
   const [vehicles, setVehicles] = useState<VehicleDetail[]>([]);
 
   useEffect(() => {
+    // 車両は実データのみ（OrderBus の vehicles ストア）。モックは seed しない。
     const unsub = OrderBus.subscribe("vehicles", (data) => {
       setVehicles(data as unknown as VehicleDetail[]);
     });
-
-    if (OrderBus.getAll("vehicles").length === 0) {
-      OrderBus.seedIfEmpty("vehicles", initialVehicles as any);
-    }
 
     return () => unsub();
   }, []);

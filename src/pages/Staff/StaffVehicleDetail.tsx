@@ -48,7 +48,7 @@ export default function StaffVehicleDetail() {
 
   const vehicle = {
     ...foundVehicle,
-    alerts: foundVehicle.alerts.length > 0 ? foundVehicle.alerts : [
+    alerts: (foundVehicle.alerts && foundVehicle.alerts.length > 0) ? foundVehicle.alerts : [
         { id: 3, type: "warning", title: "自動車税が未払いです", subtitle: "2026年度 ・ 納付期限を確認してください", icon: <AlertTriangle size={18} /> }
     ],
     basicInfo: [
@@ -80,9 +80,9 @@ export default function StaffVehicleDetail() {
         file: "自賠責_2024.pdf"
       }
     },
-    maintenanceHistory: foundVehicle.maintenanceHistory,
-    repairHistory: foundVehicle.repairHistory,
-    documents: foundVehicle.documents,
+    maintenanceHistory: foundVehicle.maintenanceHistory || [],
+    repairHistory: foundVehicle.repairHistory || [],
+    documents: foundVehicle.documents || [],
     nextInspectionDaysRemaining: foundVehicle.inspectionDaysRemaining,
     nextInspectionDate: foundVehicle.inspectionDate,
   };
