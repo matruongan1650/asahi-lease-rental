@@ -500,9 +500,10 @@ function UnifiedStaffApp() {
         <DeliveryFlow
           o={flow.order}
           onExit={() => setFlow(null)}
-          onComplete={(id) => {
+          onComplete={(id, signature, photos) => {
             setDoneDlv(d => d.includes(id) ? d : [...d, id]);
-            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id);
+            // お客様の受領サインと写真を注文に保存（納品書 PDF / 受領記録に反映される）。
+            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos);
             setFlow(null);
             setTab("delivery_recovery");
           }}
@@ -513,9 +514,10 @@ function UnifiedStaffApp() {
         <RecoveryFlow
           o={flow.order}
           onExit={() => setFlow(null)}
-          onComplete={(id) => {
+          onComplete={(id, signature, photos) => {
             setDoneRtn(d => d.includes(id) ? d : [...d, id]);
-            if (ml.completeRecovery) ml.completeRecovery(flow.order.firestoreId || id);
+            // お客様の回収サインと写真を注文に保存（回収書 PDF に反映される）。
+            if (ml.completeRecovery) ml.completeRecovery(flow.order.firestoreId || id, signature, photos);
             setFlow(null);
             setTab("delivery_recovery");
           }}
