@@ -42,6 +42,7 @@ export interface CardProps {
   style?: React.CSSProperties;
   pad?: number;
   accent?: boolean;
+  className?: string;
 }
 
 export interface SectionLabelProps {
@@ -65,6 +66,7 @@ export interface ScreenProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   scrollPad?: number;
+  style?: React.CSSProperties;
 }
 
 export interface ProgressBarProps {
@@ -214,9 +216,9 @@ export function Btn({ children, onClick, variant = "primary", icon, iconRight, f
 }
 
 /* ---------- Card ---------- */
-export function Card({ children, onClick, style, pad = 16, accent }: CardProps) {
+export function Card({ children, onClick, style, pad = 16, accent, className }: CardProps) {
   return (
-    <div onClick={onClick} style={{
+    <div onClick={onClick} className={className} style={{
       background: "var(--surface)", border: "1px solid var(--border)",
       borderRadius: 16, padding: pad, boxShadow: "var(--shadow-card)",
       cursor: onClick ? "pointer" : undefined, position: "relative", overflow: "hidden",
@@ -299,9 +301,9 @@ export function BottomNav({ tabs, active, onChange }: BottomNavProps) {
 }
 
 /* ---------- Screen wrapper ---------- */
-export function Screen({ children, footer, scrollPad = 16 }: ScreenProps) {
+export function Screen({ children, footer, scrollPad = 16, style }: ScreenProps) {
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: 0 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: 0, ...style }}>
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: `0 ${scrollPad}px ${footer ? 12 : scrollPad}px` }}>
         {children}
       </div>

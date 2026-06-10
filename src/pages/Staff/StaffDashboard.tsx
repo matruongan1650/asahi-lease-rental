@@ -9,11 +9,13 @@ import {
   BottomNav,
   Screen,
   Empty,
-  SectionLabel
+  SectionLabel,
+  IconBtn
 } from "../../components/staff/StaffUI";
 import {
   MobileLiveProvider,
-  useMobileLive
+  useMobileLive,
+  STAFF
 } from "../../context/MobileLiveContext";
 import DeliveryFlow from "./DeliveryFlow";
 import RecoveryFlow from "./RecoveryFlow";
@@ -198,6 +200,7 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
         borderLeft: outdoorMode ? "8px solid #F59E0B" : (done ? "5px solid var(--border)" : "5px solid var(--success-bright)"),
         transition: "all 0.2s ease"
       }}
+      className="active:scale-[0.97] transition-transform"
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
@@ -224,43 +227,6 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3, color: outdoorMode ? "#F59E0B" : "var(--brand-accent)", fontWeight: 800 }}>
           {done ? "詳細を表示" : "業務を開始"}<Icon name="chevronRight" size={15} />
-        </span>
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Thumb-Zone Ergonomic Recovery Card (🟡 Amber Language)
-// ---------------------------------------------------------------------------
-function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
-  return (
-    <Card 
-      onClick={onClick} 
-      style={{ 
-        marginBottom: 12, 
-        opacity: done ? 0.4 : 1, 
-        padding: "20px 16px",
-        background: outdoorMode ? "#000000" : "var(--surface)",
-        border: outdoorMode ? "3px solid #F59E0B" : "1px solid var(--border-2)",
-        borderLeft: outdoorMode ? "8px solid #F59E0B" : "6px solid #F59E0B",
-      }}
-      className="active:scale-[0.97] transition-transform"
-    >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div style={{ minWidth: 0 }}>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: outdoorMode ? 14 : 13, fontWeight: 900, color: "#F59E0B" }}>{o.id}</span>
-          <div style={{ fontSize: outdoorMode ? 20 : 18, fontWeight: 900, color: "#FFFFFF", marginTop: 4, letterSpacing: "-0.01em" }}>{o.site}</div>
-          <div style={{ fontSize: 13, color: outdoorMode ? "#FFF" : "var(--fg-muted)", marginTop: 4, fontWeight: 700 }}>{o.company}</div>
-        </div>
-        <Badge variant={done ? "success" : "warning"}>{done ? "完了" : o.window}</Badge>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: outdoorMode ? "2px solid #F59E0B" : "1px solid var(--border-2)" }}>
-        <span style={{ fontSize: outdoorMode ? 14 : 12.5, fontWeight: 800, color: outdoorMode ? "#F59E0B" : "var(--fg-muted)" }}>
-          🔄 {o.products.length} 品目回収
-        </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: "#F59E0B", fontWeight: 900, fontSize: outdoorMode ? 14 : 13.5 }}>
-          {done ? "確認" : "回収業務を開始"} <Icon name="chevronRight" size={16} />
         </span>
       </div>
     </Card>
@@ -418,7 +384,7 @@ function HistoryCard({ order, kind, date, onViewDoc }: any) {
   );
 }
 
-function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries }: any) {
+function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries, outdoorMode }: any) {
   const [showHistory, setShowHistory] = useState(false);
 
   const completedItems = [

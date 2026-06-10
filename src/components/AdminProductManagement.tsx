@@ -531,7 +531,7 @@ export default function AdminProductManagement() {
             </tbody>
           </table>
         </div>
-      )}
+      </div>
 
       {/* Product Modal */}
       {isProductModalOpen && (
