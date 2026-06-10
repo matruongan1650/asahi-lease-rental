@@ -32,6 +32,8 @@ import {
   writeBatch
 } from "firebase/firestore";
 import { db, FIREBASE_ENABLED } from "./firebaseInit";
+import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
+import { apiSync, apiUpsert, apiRemove } from "./backendSync";
 
 
 // ---------------------------------------------------------------------------
@@ -304,6 +306,99 @@ function _generateId(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Vercel backend sync (polling)  —  DATA_BACKEND === "api"
+//   /api/sync で差分(rev)をポーリングし、全クライアントへ反映する。
+//   書き込みは push/patch/remove/setAll から /api/store へ write-through。
+//   _applyingRemote の間はリモート反映中なので書き戻さない（ループ防止）。
+// ---------------------------------------------------------------------------
+
+let _applyingRemote = false;
+let _vercelPollerStarted = false;
+let _firstPoll = false;
+let _lastRev = 0;
+const _REV_KEY = "asahi._rev";
+const _SYNCED_KEY = "asahi._synced_v1";
+
+function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; deleted: boolean; data: BusRecord | null }>): void {
+  const cur = _read(store);
+  const map = new Map<string, BusRecord>(cur.map((r) => [String(r.id), r]));
+  for (const ch of changes) {
+    if (ch.deleted) map.delete(String(ch.id));
+    else if (ch.data) map.set(String(ch.id), ch.data);
+  }
+  const merged = Array.from(map.values());
+  merged.sort((a: any, b: any) => {
+    if (typeof a.seq === "number" && typeof b.seq === "number") return b.seq - a.seq;
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (ta && tb) return tb - ta;
+    return 0;
+  });
+  _write(store, merged);
+}
+
+async function _vercelTick(): Promise<void> {
+  try {
+    const res = await apiSync(_lastRev);
+    if (res && Array.isArray(res.changes)) {
+      const byStore: Record<string, Array<{ id: string; deleted: boolean; data: BusRecord | null }>> = {};
+      const serverIds: Record<string, Set<string>> = {};
+      for (const ch of res.changes) {
+        (byStore[ch.store] ||= []).push({ id: ch.id, deleted: ch.deleted, data: ch.data as BusRecord | null });
+        (serverIds[ch.store] ||= new Set()).add(String(ch.id));
+      }
+      _applyingRemote = true;
+      try {
+        for (const store of Object.keys(byStore)) {
+          _applyRemoteChanges(store as BusStore, byStore[store]);
+        }
+      } finally {
+        _applyingRemote = false;
+      }
+
+      // 初回同期: サーバーに無いローカル限定レコードをアップロードして「以前のローカルデータ」を保持。
+      if (_firstPoll) {
+        _firstPoll = false;
+        for (const store of BUS_STORES) {
+          if (store === "orders") continue; // orders は push/patch で個別反映
+          const local = _read(store);
+          const ids = serverIds[store] || new Set<string>();
+          for (const r of local) {
+            if (r && r.id !== undefined && r.id !== null && !ids.has(String(r.id))) {
+              apiUpsert(store, r as any).catch(() => {});
+            }
+          }
+        }
+        try { localStorage.setItem(_SYNCED_KEY, "1"); } catch { /* ignore */ }
+      }
+    }
+    if (res && typeof res.rev === "number" && res.rev >= _lastRev) {
+      _lastRev = res.rev;
+      try { localStorage.setItem(_REV_KEY, String(_lastRev)); } catch { /* ignore */ }
+    }
+  } catch {
+    // サーバー未起動 / オフライン → ローカルのみで継続（次回再試行）。
+  } finally {
+    setTimeout(() => { void _vercelTick(); }, SYNC_POLL_MS);
+  }
+}
+
+function _startVercelPoller(): void {
+  if (_vercelPollerStarted || DATA_BACKEND !== "api") return;
+  _vercelPollerStarted = true;
+  let established = false;
+  try { established = localStorage.getItem(_SYNCED_KEY) === "1"; } catch { /* ignore */ }
+  if (established) {
+    try { _lastRev = Number(localStorage.getItem(_REV_KEY) || "0") || 0; } catch { _lastRev = 0; }
+    _firstPoll = false;
+  } else {
+    _lastRev = 0; // 初回はフル同期（since=0）でサーバー全件を取得しローカルとマージ
+    _firstPoll = true;
+  }
+  void _vercelTick();
+}
+
+// ---------------------------------------------------------------------------
 // OrderBus singleton
 // ---------------------------------------------------------------------------
 
@@ -316,6 +411,9 @@ export const OrderBus: IOrderBus = {
     const wrappedCallback = callback as BusListener;
     _listeners[store].push(wrappedCallback);
 
+    // Vercel バックエンド使用時はポーリング同期を開始（全ストア共通、1回だけ）。
+    _startVercelPoller();
+
     // Immediately fire with current data
     try {
       callback(_read<T>(store));
@@ -323,18 +421,52 @@ export const OrderBus: IOrderBus = {
       console.warn(`[OrderBus] subscribe initial fire error for "${store}":`, e);
     }
 
-    if (FIREBASE_ENABLED) {
+    // "orders" は firebase.ts (subscribeOrders) が Firestore を直接購読するため、
+    // OrderBus 側で二重に onSnapshot を張らない（重複・齟齬を防ぐ）。
+    if (FIREBASE_ENABLED && store !== "orders") {
       if (!_firestoreUnsubs[store]) {
         console.log(`[OrderBus] Starting Firestore subscription for collection "${store}"`);
         const colRef = collection(db, store);
+        let _firstSnap = true;
         const unsubSnap = onSnapshot(colRef, (snap) => {
-          const items = snap.docs.map(doc => {
+          let items = snap.docs.map(doc => {
             const docData = doc.data();
             return {
               id: doc.id,
               ...docData
             };
-          });
+          }) as BusRecord[];
+
+          // 初回スナップショット: 既存のローカルデータを保持する。
+          // Firestore に存在しないローカル限定レコードをクラウドへアップロードしてマージし、
+          // remote による上書きでローカルデータが消えないようにする。
+          if (_firstSnap) {
+            _firstSnap = false;
+            try {
+              const localData = _read(store);
+              const remoteIds = new Set(items.map((i) => String(i.id)));
+              const localOnly = localData.filter(
+                (l) => l && (l.id !== undefined && l.id !== null) && !remoteIds.has(String(l.id))
+              );
+              if (localOnly.length > 0) {
+                items = [...items, ...localOnly];
+                const batch = writeBatch(db);
+                localOnly.forEach((l) => {
+                  batch.set(doc(db, store, String(l.id)), removeUndefined(l));
+                });
+                batch
+                  .commit()
+                  .then(() =>
+                    console.log(`[OrderBus] preserved ${localOnly.length} local record(s) → uploaded to "${store}"`)
+                  )
+                  .catch((err) =>
+                    console.error(`[OrderBus] failed to upload local records to "${store}":`, err)
+                  );
+              }
+            } catch (e) {
+              console.warn(`[OrderBus] first-snapshot local merge failed for "${store}":`, e);
+            }
+          }
 
           // Sort items consistently
           items.sort((a: any, b: any) => {
@@ -369,13 +501,11 @@ export const OrderBus: IOrderBus = {
     // Return unsubscribe function
     return () => {
       _listeners[store] = (_listeners[store] || []).filter((fn) => fn !== wrappedCallback);
-      
-      // Clean up Firestore listener if no local listeners remain
-      if (FIREBASE_ENABLED && _listeners[store].length === 0 && _firestoreUnsubs[store]) {
-        console.log(`[OrderBus] Stopping Firestore subscription for collection "${store}"`);
-        _firestoreUnsubs[store]();
-        delete _firestoreUnsubs[store];
-      }
+
+      // Firestore の onSnapshot は意図的に張りっぱなしにする（アプリ生存中は 1 ストア 1 リスナー）。
+      // コンポーネントの再マウント（React StrictMode の二重マウント等）ごとに listener を
+      // 貼り直すと、その都度コレクション全件が再読込され Firestore の読み取りクォータを
+      // 大量に消費する（RESOURCE_EXHAUSTED / 429 の原因）。そのため listener は破棄しない。
     };
   },
 
@@ -398,11 +528,19 @@ export const OrderBus: IOrderBus = {
     data.unshift(record);
     _write(store, data);
 
-    if (FIREBASE_ENABLED) {
+    // "orders" の新規作成は firebase.ts の pushOrder（addDoc）が担当するため、
+    // ここで setDoc すると同じ注文が二重に Firestore へ登録される。スキップする。
+    if (FIREBASE_ENABLED && store !== "orders") {
       const docRef = doc(db, store, record.id);
       setDoc(docRef, removeUndefined(record)).catch(err => {
         console.error(`[OrderBus] push failed for "${store}/${record.id}":`, err);
       });
+    }
+
+    if (DATA_BACKEND === "api" && !_applyingRemote) {
+      apiUpsert(store, record as any).catch((e) =>
+        console.warn(`[OrderBus] backend push failed "${store}/${record.id}":`, e)
+      );
     }
 
     return record.id;
@@ -432,6 +570,13 @@ export const OrderBus: IOrderBus = {
           console.error(`[OrderBus] patch failed for "${store}/${targetDocId}":`, err);
         });
       }
+
+      if (DATA_BACKEND === "api" && !_applyingRemote) {
+        // マージ後のレコード全体を upsert（バックエンドは id ベースの upsert）。
+        apiUpsert(store, data[idx] as any).catch((e) =>
+          console.warn(`[OrderBus] backend patch failed "${store}/${targetId}":`, e)
+        );
+      }
     } else {
       console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
     }
@@ -454,6 +599,12 @@ export const OrderBus: IOrderBus = {
           console.error(`[OrderBus] remove failed for "${store}/${targetDocId}":`, err);
         });
       }
+
+      if (DATA_BACKEND === "api" && !_applyingRemote) {
+        apiRemove(store, String(targetId)).catch((e) =>
+          console.warn(`[OrderBus] backend remove failed "${store}/${targetId}":`, e)
+        );
+      }
     } else {
       console.warn(`[OrderBus] remove: record with id "${id}" not found in store "${store}".`);
     }
@@ -464,7 +615,9 @@ export const OrderBus: IOrderBus = {
     const next = JSON.stringify(items);
     _write(store, items);
 
-    if (FIREBASE_ENABLED && prev !== next) {
+    // "orders" の setAll は AdminDataContext が Firestore→ローカルへミラーする用途。
+    // ここで Firestore へ書き戻すと、auto-id と業務 id の不一致で既存 doc を破壊するためスキップ。
+    if (FIREBASE_ENABLED && store !== "orders" && prev !== next) {
       const syncSetAll = async () => {
         try {
           const colRef = collection(db, store);
@@ -490,6 +643,41 @@ export const OrderBus: IOrderBus = {
         }
       };
       syncSetAll();
+    }
+
+    // Vercel バックエンド: orders は push/patch で個別反映するため除外（setAll は AdminDataContext のミラー）。
+    // ★ 重要: setAll は「全置換」ではなく差分のみ送る。
+    // 全置換にすると、他クライアントが追加したばかりのレコードを
+    // （こちらのリストに無いという理由で）削除してしまう（マルチクライアントで破壊的）。
+    // そのため「このクライアントが前回から実際に変更/削除した分」だけを反映する。
+    if (DATA_BACKEND === "api" && store !== "orders" && !_applyingRemote && prev !== next) {
+      try {
+        const prevArr: BusRecord[] = prev ? JSON.parse(prev) : [];
+        const prevJsonById = new Map<string, string>(
+          prevArr.filter((r) => r && r.id != null).map((r) => [String(r.id), JSON.stringify(r)])
+        );
+        const nextIds = new Set(items.filter((r) => r && r.id != null).map((r) => String(r.id)));
+        // 追加・変更されたレコードのみ upsert
+        for (const r of items) {
+          if (!r || r.id == null) continue;
+          const k = String(r.id);
+          if (prevJsonById.get(k) !== JSON.stringify(r)) {
+            apiUpsert(store, r as any).catch((e) =>
+              console.warn(`[OrderBus] backend setAll-upsert failed "${store}/${k}":`, e)
+            );
+          }
+        }
+        // このクライアントが削除した id のみ remove（サーバー側の未知レコードは消さない）
+        for (const r of prevArr) {
+          if (r && r.id != null && !nextIds.has(String(r.id))) {
+            apiRemove(store, String(r.id)).catch((e) =>
+              console.warn(`[OrderBus] backend setAll-remove failed "${store}/${r.id}":`, e)
+            );
+          }
+        }
+      } catch (e) {
+        console.warn(`[OrderBus] backend setAll diff failed "${store}":`, e);
+      }
     }
   },
 

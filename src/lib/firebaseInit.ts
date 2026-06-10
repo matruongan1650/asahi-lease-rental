@@ -1,11 +1,13 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { DATA_BACKEND } from "./dataBackend";
 
 /**
- * Global switch for Firebase cloud synchronization.
- * Set to true to link all portals (Admin, Staff, Customer) in real-time.
+ * Firebase を使うかどうかは dataBackend.ts の DATA_BACKEND で一元管理する。
+ * DATA_BACKEND === "firebase" のときだけ Firestore に接続する。
+ * （現在は "vercel" バックエンドを使用するため false）
  */
-export const FIREBASE_ENABLED = true;
+export const FIREBASE_ENABLED = DATA_BACKEND === "firebase";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBNm50HiPv9-qOdAZlpr50rxfz7aKtZMyw",
