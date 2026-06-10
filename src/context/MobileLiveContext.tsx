@@ -267,7 +267,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
     if (targetOrder && targetOrder.items) {
       targetOrder.items.forEach((item: any) => {
-        const prod = products.find(p => p.name === item.name);
+        const prod = products.find(p => p && p.name === item.name);
         const qty = item.quantity || 1;
         if (prod) {
           adjustStock(prod.id, -qty);
@@ -295,7 +295,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (targetOrder && targetOrder.items) {
       targetOrder.items.forEach((item: any) => {
         if (item.type === "rent") {
-          const prod = products.find(p => p.name === item.name);
+          const prod = products.find(p => p && p.name === item.name);
           const qty = item.quantity || 1;
           if (prod) {
             adjustStock(prod.id, qty);
@@ -318,18 +318,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const findProductByName = (name: string) => {
-    return products.find(p => p.name === name);
+    return products.find(p => p && p.name === name);
   };
 
   const adjustStock = (firestoreId: string, delta: number) => {
     const prods = OrderBus.getAll<any>("products");
-    const p = prods.find(x => x.id === firestoreId || x.firestoreId === firestoreId);
+    const p = prods.find(x => x && (x.id === firestoreId || x.firestoreId === firestoreId));
     if (p) OrderBus.patch("products", p.id, { stock: (p.stock || 0) + delta });
   };
 
   const setStock = (firestoreId: string, value: number) => {
     const prods = OrderBus.getAll<any>("products");
-    const p = prods.find(x => x.id === firestoreId || x.firestoreId === firestoreId);
+    const p = prods.find(x => x && (x.id === firestoreId || x.firestoreId === firestoreId));
     if (p) OrderBus.patch("products", p.id, { stock: value });
   };
 

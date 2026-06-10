@@ -21,6 +21,18 @@
  */
 
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  writeBatch
+} from "firebase/firestore";
+import { db, FIREBASE_ENABLED } from "./firebaseInit";
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,6 +187,23 @@ try {
   console.warn("[OrderBus] BroadcastChannel unavailable — cross-tab sync disabled.", e);
 }
 
+const _firestoreUnsubs: Record<string, () => void> = {};
+
+function removeUndefined(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(v => removeUndefined(v)).filter(v => v !== undefined);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([_, v]) => v !== undefined)
+        .map(([k, v]) => [k, removeUndefined(v)])
+    );
+  }
+  return obj;
+}
+
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -294,9 +323,59 @@ export const OrderBus: IOrderBus = {
       console.warn(`[OrderBus] subscribe initial fire error for "${store}":`, e);
     }
 
+    if (FIREBASE_ENABLED) {
+      if (!_firestoreUnsubs[store]) {
+        console.log(`[OrderBus] Starting Firestore subscription for collection "${store}"`);
+        const colRef = collection(db, store);
+        const unsubSnap = onSnapshot(colRef, (snap) => {
+          const items = snap.docs.map(doc => {
+            const docData = doc.data();
+            return {
+              id: doc.id,
+              ...docData
+            };
+          });
+
+          // Sort items consistently
+          items.sort((a: any, b: any) => {
+            if (a.seq !== undefined && b.seq !== undefined) {
+              return b.seq - a.seq;
+            }
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            if (timeA && timeB) {
+              return timeB - timeA;
+            }
+            return 0;
+          });
+
+          // Update local storage cache safely (avoid loop updates by bypassing OrderBus.setAll)
+          try {
+            localStorage.setItem(_key(store), JSON.stringify(items));
+          } catch (e) {
+            console.warn(`[OrderBus] Failed to cache Firestore data for "${store}" in localStorage:`, e);
+          }
+
+          // Notify all listeners
+          _notify(store, items);
+        }, (err) => {
+          console.error(`[OrderBus] Firestore subscription error for "${store}":`, err);
+        });
+
+        _firestoreUnsubs[store] = unsubSnap;
+      }
+    }
+
     // Return unsubscribe function
     return () => {
       _listeners[store] = (_listeners[store] || []).filter((fn) => fn !== wrappedCallback);
+      
+      // Clean up Firestore listener if no local listeners remain
+      if (FIREBASE_ENABLED && _listeners[store].length === 0 && _firestoreUnsubs[store]) {
+        console.log(`[OrderBus] Stopping Firestore subscription for collection "${store}"`);
+        _firestoreUnsubs[store]();
+        delete _firestoreUnsubs[store];
+      }
     };
   },
 
@@ -318,6 +397,14 @@ export const OrderBus: IOrderBus = {
     // Prepend (newest first)
     data.unshift(record);
     _write(store, data);
+
+    if (FIREBASE_ENABLED) {
+      const docRef = doc(db, store, record.id);
+      setDoc(docRef, removeUndefined(record)).catch(err => {
+        console.error(`[OrderBus] push failed for "${store}/${record.id}":`, err);
+      });
+    }
+
     return record.id;
   },
 
@@ -325,12 +412,26 @@ export const OrderBus: IOrderBus = {
     const data = _read(store);
     const idx = data.findIndex((d) => d.id === id || d.firestoreId === id);
     if (idx >= 0) {
+      const targetId = data[idx].id;
+      const firestoreId = data[idx].firestoreId;
+      const targetDocId = (firestoreId || targetId) as string;
+
       data[idx] = {
         ...data[idx],
         ...updates,
         updatedAt: new Date().toISOString(),
       };
       _write(store, data);
+
+      if (FIREBASE_ENABLED) {
+        const docRef = doc(db, store, targetDocId);
+        updateDoc(docRef, removeUndefined({
+          ...updates,
+          updatedAt: new Date().toISOString()
+        })).catch(err => {
+          console.error(`[OrderBus] patch failed for "${store}/${targetDocId}":`, err);
+        });
+      }
     } else {
       console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
     }
@@ -338,21 +439,76 @@ export const OrderBus: IOrderBus = {
 
   remove(store: BusStore, id: string): void {
     const data = _read(store);
-    const filtered = data.filter((d) => d.id !== id && d.firestoreId !== id);
-    if (filtered.length === data.length) {
+    const item = data.find((d) => d.id === id || d.firestoreId === id);
+    if (item) {
+      const targetId = item.id;
+      const firestoreId = item.firestoreId;
+      const targetDocId = (firestoreId || targetId) as string;
+
+      const filtered = data.filter((d) => d.id !== id && d.firestoreId !== id);
+      _write(store, filtered);
+
+      if (FIREBASE_ENABLED) {
+        const docRef = doc(db, store, targetDocId);
+        deleteDoc(docRef).catch(err => {
+          console.error(`[OrderBus] remove failed for "${store}/${targetDocId}":`, err);
+        });
+      }
+    } else {
       console.warn(`[OrderBus] remove: record with id "${id}" not found in store "${store}".`);
     }
-    _write(store, filtered);
   },
 
   setAll<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): void {
+    const prev = JSON.stringify(_read(store));
+    const next = JSON.stringify(items);
     _write(store, items);
+
+    if (FIREBASE_ENABLED && prev !== next) {
+      const syncSetAll = async () => {
+        try {
+          const colRef = collection(db, store);
+          const snap = await getDocs(colRef);
+          const existingDocIds = snap.docs.map(d => d.id);
+          const newIds = new Set(items.map(item => item.id));
+
+          const batch = writeBatch(db);
+          // Delete docs not in the new list
+          existingDocIds.forEach(docId => {
+            if (!newIds.has(docId)) {
+              batch.delete(doc(db, store, docId));
+            }
+          });
+          // Set/update docs in the new list
+          items.forEach(item => {
+            batch.set(doc(db, store, item.id), removeUndefined(item));
+          });
+          await batch.commit();
+          console.log(`[OrderBus] setAll synchronized ${items.length} items to "${store}"`);
+        } catch (err) {
+          console.error(`[OrderBus] setAll Firestore sync failed for "${store}":`, err);
+        }
+      };
+      syncSetAll();
+    }
   },
 
   seedIfEmpty<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): number {
     const existing = _read(store);
     if (existing.length === 0 && items && items.length > 0) {
       _write(store, items);
+
+      if (FIREBASE_ENABLED) {
+        const batch = writeBatch(db);
+        items.forEach(item => {
+          batch.set(doc(db, store, item.id), removeUndefined(item));
+        });
+        batch.commit()
+          .then(() => console.log(`[OrderBus] seedIfEmpty seeded ${items.length} documents to "${store}"`))
+          .catch(err => {
+            console.error(`[OrderBus] seedIfEmpty failed to commit batch for "${store}":`, err);
+          });
+      }
       return items.length;
     }
     return 0;

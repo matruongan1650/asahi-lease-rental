@@ -1,6 +1,4 @@
-import { initializeApp, getApps } from "firebase/app";
 import {
-  getFirestore,
   collection,
   doc,
   addDoc,
@@ -13,27 +11,11 @@ import {
   writeBatch,
   type DocumentData
 } from "firebase/firestore";
+import { db, FIREBASE_ENABLED } from "./firebaseInit";
 import OrderBus from "./orderBus";
 
-/**
- * ローカル運用スイッチ。
- * false の場合、注文 (orders) は Firestore クラウドに接続せず、
- * すべてローカルの OrderBus（localStorage）だけで動作する。
- * クラウド同期に戻したいときは true にしてください。
- */
-const FIREBASE_ENABLED = false;
+export { db, FIREBASE_ENABLED };
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBNm50HiPv9-qOdAZlpr50rxfz7aKtZMyw",
-  authDomain: "asahi-4362c.firebaseapp.com",
-  projectId: "asahi-4362c",
-  storageBucket: "asahi-4362c.firebasestorage.app",
-  messagingSenderId: "606315999570",
-  appId: "1:606315999570:web:bfc80697ea26da90464a8b",
-};
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const db = getFirestore(app);
 
 // Keep existing collections & compatibility
 export const ordersCol = collection(db, "orders");

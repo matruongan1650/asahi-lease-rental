@@ -377,7 +377,7 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>{body}</div>
       <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>{footer}</div>
 
-      <DamageReportSheet open={!!sheet} product={prods.find(p => p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
+      <DamageReportSheet open={!!sheet} product={prods.find(p => p && p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
 
       {viewingDoc && o.rawOrder && (
         <DocumentViewer order={o.rawOrder} type="回収書" onClose={() => setViewingDoc(false)} />

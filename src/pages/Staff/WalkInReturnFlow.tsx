@@ -354,7 +354,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
       <div style={{ padding: "4px 16px 14px" }}><Stepper steps={WIN_STEPS} current={step} /></div>
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>{body}</div>
       <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>{footer}</div>
-      <DamageReportSheet open={!!sheet} product={prods.find(p => p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
+      <DamageReportSheet open={!!sheet} product={prods.find(p => p && p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
     </div>
   );
 }
