@@ -17,17 +17,16 @@ try {
   console.warn('[main] 注文キャッシュのクリアに失敗しました。', e);
 }
 
-// 一度だけ実行: 過去に seed された車両・メンテナンスのモックデータを削除する。
-// 車庫(vehicles)・メンテ(maintenance)は実データ運用へ移行したため、古い seed を消して
-// admin が登録した実データのみを表示する。再実行したい場合は "vehicles_maint_reset_v1" を削除。
+// 一度だけ実行: 過去に seed されたメンテナンスのモックデータを削除する。
+// メンテ(maintenance)は実データ運用。車両(保安車両)は admin/顧客 双方で表示する必要があるため
+// クリア対象から除外し、VehicleContext で再 seed する。再実行したい場合は "vehicles_maint_reset_v1" を削除。
 try {
   if (!localStorage.getItem('vehicles_maint_reset_v1')) {
-    localStorage.removeItem('asahi.vehicles');
     localStorage.removeItem('asahi.maintenance');
     localStorage.setItem('vehicles_maint_reset_v1', '1');
   }
 } catch (e) {
-  console.warn('[main] 車両・メンテキャッシュのクリアに失敗しました。', e);
+  console.warn('[main] メンテキャッシュのクリアに失敗しました。', e);
 }
 
 // 一度だけ実行: 過去に seed された持込返却（持込対応）のモックデータを削除する。
