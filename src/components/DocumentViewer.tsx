@@ -20,12 +20,35 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     setIsGenerating(true);
     try {
       const element = documentRef.current;
-      const canvas = await html2canvas(element, { 
+
+      // 重要: 署名などの data-URL 画像が完全にデコードされてから html2canvas に渡す。
+      // そうしないと clone 時に画像が未デコードのまま空白でキャプチャされ、PDF に署名が出ない。
+      const imgs = Array.from(element.querySelectorAll("img"));
+      await Promise.all(
+        imgs.map(async (img) => {
+          try {
+            if (typeof (img as HTMLImageElement).decode === "function") {
+              await (img as HTMLImageElement).decode();
+            } else if (!(img.complete && img.naturalWidth > 0)) {
+              await new Promise<void>((resolve) => {
+                img.addEventListener("load", () => resolve(), { once: true });
+                img.addEventListener("error", () => resolve(), { once: true });
+              });
+            }
+          } catch {
+            /* デコード失敗（無効な画像など）は無視して続行 */
+          }
+        })
+      );
+
+      const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
-        logging: false
+        allowTaint: true,
+        backgroundColor: "#ffffff",
+        logging: false,
       });
-      
+
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
       const pdf = new jsPDF("p", "mm", "a4");
       const pdfWidth = pdf.internal.pageSize.getWidth();
