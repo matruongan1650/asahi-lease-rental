@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# DB 認証情報（サーバー上に直接作成）
+public/api/config.php

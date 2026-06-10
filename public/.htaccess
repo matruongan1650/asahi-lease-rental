@@ -1,0 +1,22 @@
+# XServer (Apache) — API ルーティング + SPA フォールバック
+# ※ ドメイン直下 (public_html 直下) に配置する想定。サブディレクトリ配置時は RewriteBase を調整。
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # 拡張子なしの API パスを PHP にルーティング（クエリ文字列は保持）
+  RewriteRule ^api/store/?$  api/store.php  [L,QSA]
+  RewriteRule ^api/sync/?$   api/sync.php   [L,QSA]
+  RewriteRule ^api/health/?$ api/health.php [L,QSA]
+
+  # /api/ 配下と実在ファイル/ディレクトリ以外は index.html へ（React Router 用）
+  RewriteCond %{REQUEST_URI} !^/api/
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# config.php への直接アクセスを拒否（保険。PHP は実行され中身は出力されないが念のため）
+<Files "config.php">
+  Require all denied
+</Files>
