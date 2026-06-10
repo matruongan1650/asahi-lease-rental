@@ -78,14 +78,14 @@ async function savePdf(pdf: jsPDF, filename: string) {
 }
 
 /**
- * Render mỗi section (1 element = 1 担当者) lên PDF. Section nào cao hơn 297mm
- * tự cắt thành nhiều trang. Section thứ 2 trở đi luôn bắt đầu ở trang mới.
+ * 各セクション（1つの要素 = 1人の担当者）をPDFにレンダリングします。高さが297mmを超えるセクションは
+ * 自動的に複数ページに分割されます。2つ目以降のセクションは、常に新しいページから開始されます。
  */
 export async function renderSectionsToPdf(sections: HTMLElement[], filename: string) {
   if (sections.length === 0) throw new Error("出力対象がありません。");
 
-  // Đợi Noto Sans JP (Google Fonts) load xong trước khi rasterize,
-  // tránh trường hợp html2canvas snapshot bằng fallback font khiến layout lệch / tràn trang.
+  // ラスタライズする前にNoto Sans JP (Google Fonts) の読み込み完了を待ちます。
+  // フォールバックフォントでのhtml2canvasスナップショットによるレイアウト崩れやページ溢れを防ぐためです。
   if (typeof document !== "undefined" && (document as any).fonts?.ready) {
     try { await (document as any).fonts.ready; } catch { /* ignore */ }
   }
@@ -101,7 +101,7 @@ export async function renderSectionsToPdf(sections: HTMLElement[], filename: str
 }
 
 /**
- * Mount tạm các node trong DOM (offscreen) để html2canvas có thể đo và capture.
+ * html2canvasが測定およびキャプチャできるように、一時的にノードをDOM（オフスクリーン）にマウントします。
  */
 export function mountOffscreen(nodes: HTMLElement[]): () => void {
   const host = document.createElement("div");

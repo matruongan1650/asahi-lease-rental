@@ -12,15 +12,15 @@ export default function StaffJobList() {
   let filteredOrders: Order[] = [];
 
   if (role === "delivery") {
-    title = "Đơn cần giao";
+    title = "配達指示";
     // Orders confirmed by admin ready for delivery, or currently delivering
     filteredOrders = orders.filter(o => o.status === "確認済" || o.status === "配達中");
   } else if (role === "collection") {
-    title = "Đơn cần thu hồi";
+    title = "回収指示";
     // Orders delivered and needing collection
     filteredOrders = orders.filter(o => o.status === "配達完了" || o.status === "回収中");
   } else if (role === "warehouse") {
-    title = "Nhận hàng tại kho";
+    title = "倉庫返却対応";
     // Similar to collection but maybe showing all delivered or searching
     filteredOrders = orders.filter(o => o.status === "配達完了" || o.status === "回収中");
   }
@@ -34,7 +34,7 @@ export default function StaffJobList() {
           </button>
           <div className="flex flex-col">
             <h1 className="text-[17px] font-extrabold tracking-tight text-slate-800 leading-tight">{title}</h1>
-            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{filteredOrders.length} Đơn hàng</span>
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{filteredOrders.length} 件</span>
           </div>
         </div>
       </div>
@@ -45,8 +45,8 @@ export default function StaffJobList() {
             <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100">
               <Inbox size={32} className="text-slate-300" />
             </div>
-            <p className="font-extrabold text-slate-700">Khay việc trống</p>
-            <p className="text-xs font-medium text-slate-500 mt-1">Không có đơn hàng nào.</p>
+            <p className="font-extrabold text-slate-700">タスクがありません</p>
+            <p className="text-xs font-medium text-slate-500 mt-1">対象の注文はありません。</p>
           </div>
         ) : (
           filteredOrders.map(order => (
@@ -76,7 +76,7 @@ export default function StaffJobList() {
               <div className="space-y-2.5 relative z-10">
                 <p className="text-xs text-slate-600 flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                   <MapPin size={16} className="text-blue-400 shrink-0 mt-0.5" />
-                  <span className="font-medium leading-relaxed line-clamp-2">{order.deliveryLocation || "Khách tự trả"}</span>
+                  <span className="font-medium leading-relaxed line-clamp-2">{order.deliveryLocation || "店舗受取"}</span>
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
@@ -85,15 +85,15 @@ export default function StaffJobList() {
                   </p>
                   <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
                     <Package size={14} className="text-slate-400" />
-                    <span>{order.items.length} Mã hàng</span>
+                    <span>{order.items.length} 品目</span>
                   </p>
                 </div>
               </div>
               
               <div className="mt-4 pt-3 flex items-center justify-between border-t border-slate-50 relative z-10">
-                 <span className="text-[11px] font-extrabold text-blue-500 uppercase tracking-widest">
-                   {role === "delivery" ? "Xem chi tiết Giao" : "Xem chi tiết Thu"}
-                 </span>
+                  <span className="text-[11px] font-extrabold text-blue-500 uppercase tracking-widest">
+                    {role === "delivery" ? "配達詳細を表示" : "回収詳細を表示"}
+                  </span>
                  <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
                    <ChevronRight size={16} />
                  </div>

@@ -37,7 +37,7 @@ export default function AdminUserManagement() {
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm("Thực sự muốn xoá tài khoản này?")) {
+    if (window.confirm("このアカウントを削除してもよろしいですか？")) {
       deleteUser(id);
     }
   };
@@ -81,13 +81,13 @@ export default function AdminUserManagement() {
           onClick={() => setActiveSubTab("our_company")}
           className={`px-4 py-2 text-sm font-bold rounded-md transition-colors ${activeSubTab === "our_company" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
         >
-          Nhân viên công ty (Nội bộ)
+          社内スタッフ
         </button>
         <button
           onClick={() => setActiveSubTab("client_company")}
           className={`px-4 py-2 text-sm font-bold rounded-md transition-colors ${activeSubTab === "client_company" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
         >
-          Công ty khách (Đối tác)
+          取引先企業 (パートナー)
         </button>
       </div>
 
@@ -95,15 +95,15 @@ export default function AdminUserManagement() {
         <div className="p-4 border-b border-slate-200 flex justify-between items-center">
           <h3 className="font-bold text-slate-800">
             {activeSubTab === "our_company"
-              ? "Quản lý nhân viên nội bộ"
-              : "Quản lý nhân sự công ty khách"}{" "}
+              ? "社内スタッフ管理"
+              : "取引先ユーザー管理"}{" "}
             ({displayUsers.length})
           </h3>
           <button
             onClick={handleAdd}
             className="text-sm bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-bold transition-colors"
           >
-            + Thêm tài khoản
+            + アカウント追加
           </button>
         </div>
 
@@ -115,16 +115,16 @@ export default function AdminUserManagement() {
                   ID
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b">
-                  Tên & Email
+                  氏名 & メール
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b">
-                  Công ty
+                  会社・所属
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b">
-                  Vai trò
+                  役割・権限
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b text-center">
-                  Tùy chỉnh
+                  操作
                 </th>
               </tr>
             </thead>
@@ -148,19 +148,19 @@ export default function AdminUserManagement() {
                   <td className="p-3 text-sm font-medium text-slate-700">
                     {u.role === "admin" ? (
                       <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-bold">
-                        Quản trị viên
+                        管理者
                       </span>
                     ) : u.role === "staff" ? (
                       <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">
-                        Nhân viên
+                        一般スタッフ
                       </span>
                     ) : u.role === "customer" ? (
                       <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-xs font-bold">
-                        Tài khoản chính
+                        代表者
                       </span>
                     ) : (
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-bold">
-                        Nhân viên khách
+                        注文担当者
                       </span>
                     )}
                   </td>
@@ -187,7 +187,7 @@ export default function AdminUserManagement() {
               {displayUsers.length === 0 && (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-slate-500">
-                    Không có dữ liệu.
+                    データが存在しません。
                   </td>
                 </tr>
               )}
@@ -200,13 +200,13 @@ export default function AdminUserManagement() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-slate-800 mb-4">
-              {editingUser.id ? "Chỉnh sửa tài khoản" : "Tạo tài khoản mới"}
+              {editingUser.id ? "アカウント情報を編集" : "新規アカウント作成"}
             </h3>
             <form onSubmit={saveUser} className="space-y-4">
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-bold text-slate-700 mb-1">
-                    Họ (Last Name)
+                    姓 (Last Name)
                   </label>
                   <input
                     required
@@ -217,7 +217,7 @@ export default function AdminUserManagement() {
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-bold text-slate-700 mb-1">
-                    Tên (First Name)
+                    名 (First Name)
                   </label>
                   <input
                     required
@@ -230,7 +230,7 @@ export default function AdminUserManagement() {
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">
-                  Công ty
+                  会社名
                 </label>
                 <input
                   required
@@ -243,21 +243,21 @@ export default function AdminUserManagement() {
               {activeSubTab === "our_company" ? (
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">
-                    Vai trò
+                    役割・権限
                   </label>
                   <select
                     name="role"
                     defaultValue={editingUser.role}
                     className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
                   >
-                    <option value="staff">Nhân viên (Giao nhận/Kho)</option>
-                    <option value="admin">Quản trị viên (Admin)</option>
+                    <option value="staff">一般スタッフ (配送/倉庫)</option>
+                    <option value="admin">管理者 (Admin)</option>
                   </select>
                 </div>
               ) : (
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">
-                    Vai trò trong công ty đối tác
+                    パートナー企業での役割
                   </label>
                   <select
                     name="role"
@@ -268,15 +268,15 @@ export default function AdminUserManagement() {
                     }
                     className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
                   >
-                    <option value="customer">Tài khoản chính (Chủ quản)</option>
-                    <option value="customer_staff">Nhân viên đặt hàng</option>
+                    <option value="customer">企業代表者 (管理権限)</option>
+                    <option value="customer_staff">一般注文担当者</option>
                   </select>
                 </div>
               )}
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">
-                  Email đăng nhập
+                  メールアドレス
                 </label>
                 <input
                   required
@@ -288,7 +288,7 @@ export default function AdminUserManagement() {
               </div>
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">
-                  Số điện thoại
+                  電話番号
                 </label>
                 <input
                   required
@@ -305,13 +305,13 @@ export default function AdminUserManagement() {
                   onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg"
                 >
-                  Hủy
+                  キャンセル
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 rounded-lg shadow-sm"
                 >
-                  Lưu tài khoản
+                  保存する
                 </button>
               </div>
             </form>

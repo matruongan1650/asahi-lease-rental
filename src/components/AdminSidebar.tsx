@@ -69,7 +69,7 @@ export default function AdminSidebar({
     {
       title: "マスタ",
       items: [
-        { id: "users", label: "Nhân sự & Đối tác", icon: "manage_accounts" },
+        { id: "users", label: "ユーザー・パートナー", icon: "manage_accounts" },
         { id: "customers", label: "顧客", icon: "group" },
         { id: "suppliers", label: "仕入先", icon: "storefront" },
         { id: "repairers", label: "修理業者", icon: "handyman" },

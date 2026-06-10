@@ -30,7 +30,7 @@ export default function StaffJobDetail() {
   }, [order]);
 
   if (!order) {
-    return <div className="p-4 text-center mt-10 text-slate-500">Đơn hàng không tồn tại.</div>;
+    return <div className="p-4 text-center mt-10 text-slate-500">注文が存在しません。</div>;
   }
 
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,7 +117,7 @@ export default function StaffJobDetail() {
         <div className="flex flex-col items-center">
           <h1 className="text-sm font-extrabold tracking-tight font-mono text-slate-800">{order.orderNumber}</h1>
           <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full mt-0.5">
-            {role === 'delivery' ? 'Giao hàng (配達)' : 'Thu hồi (回収)'}
+            {role === 'delivery' ? '配達' : '回収'}
           </span>
         </div>
         <div className="w-10"></div> {/* Spacer for center alignment */}
@@ -137,21 +137,21 @@ export default function StaffJobDetail() {
             onClick={() => setStep("check")} 
             className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "check" ? "text-blue-600" : "text-slate-500"}`}
           >
-            <span>Kiểm tra</span>
+            <span>検品</span>
           </button>
           {(role === "collection" || role === "warehouse") && (
             <button 
               onClick={() => setStep("issue")} 
               className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "issue" ? "text-orange-600" : "text-slate-500"}`}
             >
-              <span>Vấn đề</span>
+              <span>問題報告</span>
             </button>
           )}
           <button 
             onClick={() => setStep("sign")} 
             className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "sign" ? "text-emerald-600" : "text-slate-500"}`}
           >
-            <span>Ký nhận</span>
+            <span>受領サイン</span>
           </button>
         </div>
 
@@ -161,7 +161,7 @@ export default function StaffJobDetail() {
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full blur-2xl opacity-60 -translate-y-1/2 translate-x-1/2"></div>
                 <h2 className="text-[10px] font-bold text-blue-500 mb-3 uppercase tracking-widest flex items-center gap-1.5 relative z-10">
-                  <User size={12} strokeWidth={3} /> Khách hàng
+                  <User size={12} strokeWidth={3} /> 顧客情報
                 </h2>
                 <div className="relative z-10">
                   <p className="font-extrabold text-lg text-slate-800">{order.personName}</p>
@@ -170,7 +170,7 @@ export default function StaffJobDetail() {
                   <div className="bg-slate-50 rounded-2xl p-3.5 mt-4 border border-slate-100 flex items-start gap-2.5">
                     <MapPin size={18} className="text-blue-400 mt-0.5 shrink-0" />
                     <p className="text-sm font-medium text-slate-700 leading-relaxed">
-                      {order.deliveryLocation || "Khách nhận/trả tại kho (店舗受取)"}
+                      {order.deliveryLocation || "店舗受取"}
                     </p>
                   </div>
                 </div>
@@ -178,7 +178,7 @@ export default function StaffJobDetail() {
 
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
                 <h2 className="text-[10px] font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-1.5">
-                  <Package size={12} strokeWidth={3} /> Danh sách Hàng hóa
+                  <Package size={12} strokeWidth={3} /> 品目リスト
                 </h2>
                 <ul className="space-y-4">
                   {order.items.map((item, idx) => (
@@ -186,7 +186,7 @@ export default function StaffJobDetail() {
                       <div className="pr-3 flex-1">
                         <p className="font-bold text-sm text-slate-800 leading-snug">{item.name}</p>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1.5 bg-slate-100 inline-block px-1.5 py-0.5 rounded">
-                          {item.type === "rent" ? "Thuê" : "Bán"}
+                          {item.type === "rent" ? "レンタル" : "販売"}
                         </p>
                       </div>
                       <div className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-700 rounded-xl font-bold border border-slate-100">
@@ -205,7 +205,7 @@ export default function StaffJobDetail() {
                     }}
                     className="w-full bg-blue-50 text-blue-600 border border-blue-200 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-100 active:scale-[0.98] transition-all"
                   >
-                    Bắt đầu giao hàng ngay
+                    配達を開始する
                   </button>
                 )}
                 <button 
@@ -213,7 +213,7 @@ export default function StaffJobDetail() {
                   disabled={role === "delivery" && order.status === "確認済"}
                   className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${role === "delivery" && order.status === "確認済" ? "bg-slate-100 text-slate-400" : "bg-slate-900 text-white shadow-lg shadow-slate-200 hover:bg-slate-800"}`}
                 >
-                  Xác nhận & Tiếp tục <ChevronRight size={18} />
+                  確認して進む <ChevronRight size={18} />
                 </button>
               </div>
             </motion.div>
@@ -224,9 +224,9 @@ export default function StaffJobDetail() {
               <div className="bg-gradient-to-br from-orange-50 to-amber-50 p-5 rounded-3xl border border-orange-100">
                 <div className="flex items-center gap-2 mb-2 text-orange-600">
                   <AlertTriangle size={20} />
-                  <h2 className="text-sm font-bold">Báo cáo thiếu / hỏng</h2>
+                  <h2 className="text-sm font-bold">不足・破損の報告</h2>
                 </div>
-                <p className="text-orange-800/80 text-xs font-medium mb-5 leading-relaxed">Đánh dấu các mặt hàng có vấn đề khi thu hồi (thiếu số lượng, hư hỏng, ...).</p>
+                <p className="text-orange-800/80 text-xs font-medium mb-5 leading-relaxed">回収時に不足・破損のある品目を記録します。</p>
                 
                 <div className="space-y-3">
                   {order.items.map((item, idx) => {
@@ -242,7 +242,7 @@ export default function StaffJobDetail() {
                             onClick={() => hasIssue ? handleRemoveIssue(item.id) : handleIssueChange(item.id, "type", "missing")}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${hasIssue ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                           >
-                            {hasIssue ? <><X size={14} /> Điền lại</> : "Báo lỗi"}
+                            {hasIssue ? <><X size={14} /> 修正</> : "問題あり"}
                           </button>
                         </div>
                         
@@ -252,18 +252,18 @@ export default function StaffJobDetail() {
                               <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
                                 <div className="grid grid-cols-2 gap-3">
                                   <div>
-                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">Loại vấn đề</label>
+                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">不具合種別</label>
                                     <select 
                                       value={issues[item.id].type} 
                                       onChange={e => handleIssueChange(item.id, "type", e.target.value)}
                                       className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:ring-2 focus:ring-orange-200 focus:border-orange-400 outline-none transition-all"
                                     >
-                                      <option value="missing">Mất / Thiếu</option>
-                                      <option value="broken">Hư hỏng</option>
+                                      <option value="missing">紛失・不足</option>
+                                      <option value="broken">破損</option>
                                     </select>
                                   </div>
                                   <div>
-                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">Số lượng lỗi</label>
+                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">不具合数量</label>
                                     <input 
                                       type="number" 
                                       min="1" 
@@ -275,10 +275,10 @@ export default function StaffJobDetail() {
                                   </div>
                                 </div>
                                 <div>
-                                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">Chi tiết (Ghi chú)</label>
+                                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">詳細・メモ</label>
                                   <input 
                                     type="text" 
-                                    placeholder="Mô tả tình trạng..."
+                                    placeholder="状況を入力してください..."
                                     value={issues[item.id].notes}
                                     onChange={e => handleIssueChange(item.id, "notes", e.target.value)}
                                     className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-orange-200 focus:border-orange-400 outline-none transition-all"
@@ -299,13 +299,13 @@ export default function StaffJobDetail() {
                   onClick={() => setStep("check")}
                   className="bg-white border border-slate-200 text-slate-600 py-4 rounded-2xl font-bold flex items-center justify-center gap-1 active:scale-[0.98] transition-all"
                 >
-                  <ArrowLeft size={18} /> Lùi lại
+                  <ArrowLeft size={18} /> 戻る
                 </button>
                 <button 
                   onClick={() => setStep("sign")}
                   className="bg-slate-900 text-white shadow-lg shadow-slate-200 py-4 rounded-2xl font-bold flex items-center justify-center gap-1 active:scale-[0.98] transition-all"
                 >
-                  Tiếp theo <ChevronRight size={18} />
+                  次へ <ChevronRight size={18} />
                 </button>
               </div>
             </motion.div>
@@ -318,9 +318,9 @@ export default function StaffJobDetail() {
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative">
                 <h2 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
-                    <Camera size={12} strokeWidth={3} /> Ảnh minh chứng
+                    <Camera size={12} strokeWidth={3} /> 現場写真
                   </div>
-                  <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">tùy chọn</span>
+                  <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">任意</span>
                 </h2>
                 {photoUrl ? (
                   <div className="relative group rounded-2xl overflow-hidden border border-slate-200">
@@ -335,7 +335,7 @@ export default function StaffJobDetail() {
                 ) : (
                   <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 text-slate-400 cursor-pointer active:bg-blue-50 active:border-blue-200 transition-colors">
                     <Camera size={28} className="mb-2 opacity-50" />
-                    <span className="text-xs font-bold">Chụp ảnh (Mở Camera)</span>
+                    <span className="text-xs font-bold">写真を撮影 (カメラ起動)</span>
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoCapture} />
                   </label>
                 )}
@@ -345,9 +345,9 @@ export default function StaffJobDetail() {
               <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative">
                 <h2 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
-                    <PenTool size={12} strokeWidth={3} /> Chữ ký Khách hàng
+                    <PenTool size={12} strokeWidth={3} /> お客様のご署名
                   </div>
-                  <span className="text-[9px] bg-red-50 text-red-600 font-extrabold px-2 py-0.5 rounded-full border border-red-100">Bắt buộc</span>
+                  <span className="text-[9px] bg-red-50 text-red-600 font-extrabold px-2 py-0.5 rounded-full border border-red-100">必須</span>
                 </h2>
                 <div className="border border-slate-200 rounded-2xl bg-white overflow-hidden relative shadow-inner">
                   <SignatureCanvas 
@@ -360,10 +360,10 @@ export default function StaffJobDetail() {
                     onClick={clearSignature}
                     className="absolute top-2 right-2 bg-slate-100 text-slate-500 px-2 py-1 rounded-lg text-[10px] font-extrabold active:bg-slate-200 transition-colors"
                   >
-                    Xóa chữ ký
+                    署名をクリア
                   </button>
                 </div>
-                <p className="text-[10px] text-center text-slate-400 mt-3 font-medium">Vui lòng ký vào khoảng trống trên</p>
+                <p className="text-[10px] text-center text-slate-400 mt-3 font-medium">上記の枠内にご署名ください</p>
               </div>
 
               <div className="pt-2 grid grid-cols-3 gap-3">
@@ -379,9 +379,9 @@ export default function StaffJobDetail() {
                   className="col-span-2 bg-emerald-500 text-white shadow-lg shadow-emerald-200/50 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100 relative overflow-hidden"
                 >
                   {isSubmitting ? (
-                    <span className="animate-pulse">Đang lưu...</span>
+                    <span className="animate-pulse">保存中...</span>
                   ) : (
-                    <>Hoàn thành <CheckCircle2 size={18} /></>
+                    <>完了 <CheckCircle2 size={18} /></>
                   )}
                 </button>
               </div>

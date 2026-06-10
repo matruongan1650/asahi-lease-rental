@@ -17,7 +17,7 @@ interface Props {
 export default function AdminRentalInvoiceSection({ orders, monthPeriod, companyFilter }: Props) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const busyRef = useRef(false); // chặn double-click đồng bộ (React batch chưa kịp render)
+  const busyRef = useRef(false); // 二重クリック防止（Reactのバッチレンダリング用）
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const baseGroups = useMemo(
@@ -50,7 +50,7 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
     });
 
   const wrap = async (key: string, fn: () => Promise<void>) => {
-    if (busyRef.current) return; // ngăn click thứ 2 trước khi React commit disabled
+    if (busyRef.current) return; // ボタンがdisabledになるまでの二重クリック防止
     busyRef.current = true;
     setBusy(key);
     try { await fn(); triggerToast("PDFを生成しました", "ok"); }

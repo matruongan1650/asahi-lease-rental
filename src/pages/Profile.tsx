@@ -63,9 +63,9 @@ export default function Profile() {
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-5 border-l-4 border-l-purple-500">
-          <div className="p-3 text-xs font-bold text-slate-500 bg-slate-50 border-b border-slate-100 uppercase tracking-widest">Only For Test (Nhân viên / Admin)</div>
-          <ProfileMenuLink icon="admin_panel_settings" iconColor="red" title="Trang Quản Trị" subtitle="Admin Dashboard" to="/admin" />
-          <ProfileMenuLink icon="badge" iconColor="purple" title="App Nhân Viên" subtitle="Staff Portal" to="/staff" />
+          <div className="p-3 text-xs font-bold text-slate-500 bg-slate-50 border-b border-slate-100 uppercase tracking-widest">テスト用 (スタッフ・管理者)</div>
+          <ProfileMenuLink icon="admin_panel_settings" iconColor="red" title="管理者ダッシュボード" subtitle="Admin Dashboard" to="/admin" />
+          <ProfileMenuLink icon="badge" iconColor="purple" title="スタッフポータル" subtitle="Staff Portal" to="/staff" />
         </div>
 
         <button className="w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center justify-center gap-2 mb-8 group active:scale-[0.98]">

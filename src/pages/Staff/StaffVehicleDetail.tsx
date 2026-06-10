@@ -52,28 +52,28 @@ export default function StaffVehicleDetail() {
         { id: 3, type: "warning", title: "自動車税が未払いです", subtitle: "2026年度 ・ 納付期限を確認してください", icon: <AlertTriangle size={18} /> }
     ],
     basicInfo: [
-      { label: "Biển số (車両番号)", value: foundVehicle.plate },
-      { label: "Nhà sx (メーカー)", value: foundVehicle.manufacturer },
+      { label: "ナンバープレート", value: foundVehicle.plate },
+      { label: "メーカー", value: foundVehicle.manufacturer },
       { label: "Model (車種・モデル)", value: foundVehicle.name },
-      { label: "Năm sx (年式)", value: foundVehicle.year },
-      { label: "Màu xe (車体色)", value: foundVehicle.color },
-      { label: "Số khung (車台番号)", value: foundVehicle.vin },
-      { label: "Số máy (原動機)", value: foundVehicle.engineModel },
-      { label: "Ngày mua (購入日)", value: foundVehicle.purchaseDate },
-      { label: "Giá mua (購入価格)", value: foundVehicle.purchasePrice },
-      { label: "Số km (走行距離)", value: foundVehicle.mileage },
-      { label: "Trạng thái (状態)", value: foundVehicle.status, isBadge: true },
+      { label: "年式", value: foundVehicle.year },
+      { label: "車体色", value: foundVehicle.color },
+      { label: "車台番号", value: foundVehicle.vin },
+      { label: "原動機", value: foundVehicle.engineModel },
+      { label: "購入日", value: foundVehicle.purchaseDate },
+      { label: "購入価格", value: foundVehicle.purchasePrice },
+      { label: "走行距離", value: foundVehicle.mileage },
+      { label: "状態", value: foundVehicle.status, isBadge: true },
     ],
     legalInfo: {
       inspection: {
-        title: "Đăng kiểm (自動車検査証)",
+        title: "車検証 (自動車検査証)",
         daysRemaining: foundVehicle.inspectionDaysRemaining,
         lastDate: "2024/06/05",
         expiryDate: foundVehicle.inspectionDate,
         file: `車検証_${foundVehicle.plate.replace(/[^0-9]/g, '')}.pdf`
       },
       insurance: {
-        title: "Bảo hiểm (自賠責保険)",
+        title: "自賠責保険",
         daysRemaining: foundVehicle.inspectionDaysRemaining + 12,
         policyNo: "JB-2024-558102",
         expiryDate: foundVehicle.insuranceDate,
@@ -88,10 +88,10 @@ export default function StaffVehicleDetail() {
   };
 
   const tabs = [
-    { id: "basic", label: "Cơ bản" },
-    { id: "legal", label: "Pháp lý" },
-    { id: "history", label: "Lịch sử" },
-    { id: "docs", label: "Tài liệu" },
+    { id: "basic", label: "基本情報" },
+    { id: "legal", label: "法規・保険" },
+    { id: "history", label: "履歴" },
+    { id: "docs", label: "書類・画像" },
   ];
 
   return (
@@ -121,9 +121,9 @@ export default function StaffVehicleDetail() {
           </div>
           <div className="relative z-10 w-full">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] text-blue-100 font-bold uppercase tracking-widest">Hạn Đăng Kiểm</span>
+              <span className="text-[11px] text-blue-100 font-bold uppercase tracking-widest">車検有効期限</span>
               <span className="text-[10px] bg-orange-500/20 text-orange-200 border border-orange-400/30 font-extrabold px-2 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
-                Còn {vehicle.nextInspectionDaysRemaining} ngày
+                残り {vehicle.nextInspectionDaysRemaining} 日
               </span>
             </div>
             <h2 className="text-2xl font-mono font-extrabold text-white tracking-widest">{vehicle.nextInspectionDate}</h2>
@@ -162,7 +162,7 @@ export default function StaffVehicleDetail() {
               {vehicle.alerts.length > 0 && (
                 <div>
                   <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">
-                    Cảnh báo tự động ({vehicle.alerts.length})
+                    自動アラート ({vehicle.alerts.length})
                   </h3>
                   <div className="space-y-3">
                     {vehicle.alerts.map((alert: any) => (
@@ -188,7 +188,7 @@ export default function StaffVehicleDetail() {
 
               {/* Basic Info */}
               <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">Thông tin cơ bản</h3>
+                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">基本情報</h3>
                 <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
                   <div className="space-y-4">
                     {vehicle.basicInfo.map((info, idx) => (
@@ -218,7 +218,7 @@ export default function StaffVehicleDetail() {
                     onClick={handleEditLegal}
                     className="text-xs bg-white text-blue-600 border border-blue-100 px-4 py-2.5 rounded-xl font-bold transition-all shadow-sm flex items-center gap-1.5 hover:bg-blue-50 active:scale-95"
                   >
-                    <Edit2 size={14} /> Chỉnh sửa
+                    <Edit2 size={14} /> 編集
                   </button>
                 ) : (
                   <div className="flex gap-2">
@@ -226,13 +226,13 @@ export default function StaffVehicleDetail() {
                       onClick={handleEditLegal}
                       className="text-xs bg-white text-slate-500 border border-slate-200 px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-slate-50 active:scale-95"
                     >
-                      Hủy
+                      キャンセル
                     </button>
                     <button 
                       onClick={handleSaveLegal}
                       className="text-xs bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold transition-all shadow-md shadow-blue-200 flex items-center gap-1.5 hover:bg-blue-700 active:scale-95"
                     >
-                      <CheckCircle2 size={14} /> Lưu lại
+                      <CheckCircle2 size={14} /> 保存
                     </button>
                   </div>
                 )}
@@ -240,7 +240,7 @@ export default function StaffVehicleDetail() {
 
               {/* Inspection */}
               <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">Đăng kiểm</h3>
+                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">車検情報</h3>
                 <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-5">
                     <div className="flex items-center gap-3">
@@ -251,18 +251,18 @@ export default function StaffVehicleDetail() {
                     </div>
                     {!isEditingLegal && (
                       <span className="text-[10px] bg-orange-50 text-orange-600 font-extrabold px-2.5 py-1 rounded-full border border-orange-100">
-                        Còn {vehicle.legalInfo.inspection.daysRemaining} ngày
+                        残り {vehicle.legalInfo.inspection.daysRemaining} 日
                       </span>
                     )}
                   </div>
 
                   <div className="space-y-4 mb-5 bg-slate-50 rounded-2xl p-4 border border-slate-100">
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-500 font-bold">Lần thực hiện trước</span>
+                      <span className="text-xs text-slate-500 font-bold">前回実施日</span>
                       <span className="text-[13px] text-slate-800 font-mono font-semibold">{vehicle.legalInfo.inspection.lastDate}</span>
                     </div>
                     <div className="flex justify-between items-center pt-3 border-t border-slate-200/60">
-                      <span className="text-xs text-slate-500 font-bold">Ngày hết hạn</span>
+                      <span className="text-xs text-slate-500 font-bold">有効期限</span>
                       {isEditingLegal ? (
                         <input 
                           type="date"
@@ -287,7 +287,7 @@ export default function StaffVehicleDetail() {
                   ) : (
                     <div className="flex flex-col items-center justify-center border-2 border-dashed border-blue-200 bg-blue-50/50 rounded-xl p-5 cursor-pointer transition-colors text-slate-500 hover:bg-blue-50 group">
                       <UploadCloud size={24} className="mb-2 text-blue-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-blue-700">Tải lên giấy đăng kiểm mới</span>
+                      <span className="text-xs font-bold text-blue-700">新しい車検証をアップロード</span>
                     </div>
                   )}
                 </div>
@@ -295,7 +295,7 @@ export default function StaffVehicleDetail() {
 
               {/* Insurance & Tax */}
               <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">Bảo hiểm</h3>
+                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">自賠責保険</h3>
                 <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-5">
                     <div className="flex items-center gap-3">
@@ -306,14 +306,14 @@ export default function StaffVehicleDetail() {
                     </div>
                     {!isEditingLegal && (
                       <span className="text-[10px] bg-emerald-50 text-emerald-600 font-extrabold px-2.5 py-1 rounded-full border border-emerald-100">
-                        Còn {vehicle.legalInfo.insurance.daysRemaining} ngày
+                        残り {vehicle.legalInfo.insurance.daysRemaining} 日
                       </span>
                     )}
                   </div>
 
                   <div className="space-y-4 mb-5 bg-slate-50 rounded-2xl p-4 border border-slate-100">
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-500 font-bold">Số hợp đồng</span>
+                      <span className="text-xs text-slate-500 font-bold">証書番号</span>
                       {isEditingLegal ? (
                         <input 
                           type="text"
@@ -326,7 +326,7 @@ export default function StaffVehicleDetail() {
                       )}
                     </div>
                     <div className="flex justify-between items-center pt-3 border-t border-slate-200/60">
-                      <span className="text-xs text-slate-500 font-bold">Ngày hết hạn</span>
+                      <span className="text-xs text-slate-500 font-bold">有効期限</span>
                       {isEditingLegal ? (
                         <input 
                           type="date"
@@ -351,7 +351,7 @@ export default function StaffVehicleDetail() {
                   ) : (
                      <div className="flex flex-col items-center justify-center border-2 border-dashed border-emerald-200 bg-emerald-50/50 rounded-xl p-5 cursor-pointer transition-colors text-slate-500 hover:bg-emerald-50 group">
                       <UploadCloud size={24} className="mb-2 text-emerald-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-emerald-700">Tải lên bảo hiểm mới</span>
+                      <span className="text-xs font-bold text-emerald-700">新しい保険証をアップロード</span>
                     </div>
                   )}
                 </div>
@@ -364,17 +364,17 @@ export default function StaffVehicleDetail() {
               {/* Maintenance History */}
               <div>
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Lịch sử bảo dưỡng</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.maintenanceHistory.length} mục</span>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">メンテナンス履歴</h3>
+                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.maintenanceHistory.length} 件</span>
                 </div>
                 
                 <div className="bg-white border border-slate-100 shadow-sm rounded-3xl overflow-hidden">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Ngày</th>
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Hạng mục</th>
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right whitespace-nowrap">Số Km</th>
+                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">実施日</th>
+                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">項目</th>
+                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right whitespace-nowrap">走行距離</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -393,8 +393,8 @@ export default function StaffVehicleDetail() {
               {/* Repair History */}
               <div>
                 <div className="flex justify-between items-center mb-3 mt-8">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Lịch sử Sửa chữa</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.repairHistory.length} mục</span>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">修理履歴</h3>
+                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.repairHistory.length} 件</span>
                 </div>
                 
                 <div className="space-y-4">
@@ -430,8 +430,8 @@ export default function StaffVehicleDetail() {
               {/* Attached Docs */}
               <div>
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tệp đính kèm</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.documents.length} tệp</span>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">添付書類</h3>
+                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.documents.length} 件</span>
                 </div>
                 
                 <div className="bg-white border border-slate-100 shadow-sm rounded-3xl p-2 space-y-1">
@@ -451,7 +451,7 @@ export default function StaffVehicleDetail() {
 
               {/* Photos */}
               <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest mt-6">Hình ảnh xe</h3>
+                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest mt-6">車両画像</h3>
                 <div className="bg-white border border-slate-100 shadow-sm rounded-3xl p-4">
                   <div className="grid grid-cols-2 gap-3">
                     {[1, 2, 3].map((item, idx) => (
@@ -463,7 +463,7 @@ export default function StaffVehicleDetail() {
                     
                     <div className="aspect-square bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors gap-2 group active:scale-95">
                       <UploadCloud size={28} className="group-hover:scale-110 transition-transform" />
-                      <span className="text-[11px] font-bold text-slate-500 group-hover:text-blue-600">Thêm ảnh</span>
+                      <span className="text-[11px] font-bold text-slate-500 group-hover:text-blue-600">画像を追加</span>
                     </div>
                   </div>
                 </div>

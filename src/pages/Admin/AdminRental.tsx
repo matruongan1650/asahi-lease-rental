@@ -525,7 +525,7 @@ export default function AdminRental() {
                     className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold text-center hover:bg-slate-800 transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                   >
                     <span className="material-symbols-outlined text-[16px]">edit_note</span>
-                    詳細編集・ phụ phí (ExtraCost)
+                    詳細編集・追加費用 (ExtraCost)
                   </button>
                 </div>
               </div>

@@ -19,28 +19,28 @@ export default function RoleSwitcher() {
       {isOpen && (
         <div className="absolute bottom-16 right-0 bg-white rounded-xl shadow-xl border border-slate-200 p-2 w-48 flex flex-col gap-1 overflow-hidden transform origin-bottom-right transition-all animate-in fade-in slide-in-from-bottom-4">
           <div className="px-3 py-2 text-xs font-bold text-slate-500 bg-slate-50 rounded-lg mb-1 uppercase tracking-widest text-center">
-            Chuyển Đổi Quyền
+            権限切り替え
           </div>
           <button 
             onClick={() => handleSwitch("/")} 
             className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-100 rounded-lg text-sm text-left transition-colors"
           >
             <span className="material-symbols-outlined text-blue-500">person</span>
-            <span className="font-medium text-slate-700">Khách Hàng</span>
+            <span className="font-medium text-slate-700">お客様</span>
           </button>
           <button 
             onClick={() => handleSwitch("/staff")} 
             className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-100 rounded-lg text-sm text-left transition-colors"
           >
             <span className="material-symbols-outlined text-purple-500">badge</span>
-            <span className="font-medium text-slate-700">Nhân Viên</span>
+            <span className="font-medium text-slate-700">スタッフ</span>
           </button>
           <button 
             onClick={() => handleSwitch("/admin")} 
             className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-100 rounded-lg text-sm text-left transition-colors"
           >
             <span className="material-symbols-outlined text-red-500">admin_panel_settings</span>
-            <span className="font-medium text-slate-700">Quản Trị</span>
+            <span className="font-medium text-slate-700">管理者</span>
           </button>
         </div>
       )}

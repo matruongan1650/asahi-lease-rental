@@ -111,8 +111,8 @@ const initialUsers: UserProfile[] = [
   },
   {
     id: "USR_004",
-    lastName: "Nhân viên",
-    firstName: "Giao hàng",
+    lastName: "配送",
+    firstName: "スタッフ",
     companyName: "ASAHI LEASE",
     email: "delivery@asahilease.co.jp",
     phone: "03-8765-4321",

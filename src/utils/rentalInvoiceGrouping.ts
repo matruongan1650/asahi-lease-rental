@@ -21,8 +21,8 @@ const EMPTY_COMPANY = "(会社名未設定)";
 const EMPTY_PERSON = "(担当者未設定)";
 
 /**
- * Chuẩn hoá tên tiếng Nhật: trim, đổi 全角スペース U+3000 → space, gộp khoảng trắng liên tiếp.
- * Tránh việc cùng "田中 一郎" / "田中　一郎" / "田中  一郎" bị chia thành 3 担当者 khác nhau.
+ * 日本語名を正規化します：トリム、全角スペース（U+3000）の半角スペース化、および連続するスペースの統合。
+ * 「田中 一郎」、「田中　一郎」、「田中  一郎」が別々の担当者として扱われるのを防ぎます。
  */
 function normalizeName(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -33,14 +33,14 @@ function normalizeName(raw: string | null | undefined): string {
 }
 
 interface GroupOpts {
-  /** Khi truyền monthPeriod (YYYY-MM), chỉ gom các order/担当者/công ty có ít nhất 1 invoiceBlock trong tháng đó */
+  /** monthPeriod (YYYY-MM) が指定された場合、その月に少なくとも1つの invoiceBlock を持つ注文/担当者/会社のみを収集します */
   monthPeriod?: string;
-  /** Chỉ lấy order có companyName này */
+  /** この会社名の注文のみを取得します */
   companyName?: string;
 }
 
 function safeBlocks(o: any) {
-  // getOrGenerateInvoiceBlocks dùng order.items.forEach — phòng trường hợp items === undefined
+  // getOrGenerateInvoiceBlocks は order.items.forEach を使用するため、items が undefined の場合に備えます
   if (!o || !Array.isArray(o.items)) return [];
   try { return getOrGenerateInvoiceBlocks(o); }
   catch { return []; }
@@ -122,7 +122,7 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
   return groups.sort((a, b) => a.companyName.localeCompare(b.companyName, "ja"));
 }
 
-/** Tổng hợp số liệu trong nhiều CompanyGroup (cho 内訳請求書 tổng) */
+/** 複数の CompanyGroup の数値を集計します（内訳請求書合計用） */
 export function aggregateTotals(groups: CompanyGroup[]) {
   return groups.reduce(
     (acc, g) => {
