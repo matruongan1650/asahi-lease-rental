@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useProducts } from "../context/ProductContext";
 import { useVehicles } from "../context/VehicleContext";
 import { Product } from "../types";
-import { isVehicleCategory } from "../utils/productUtils";
+import { isVehicleCategory, SUPPLY_CATEGORY_ICONS } from "../utils/productUtils";
 
 export default function AdminProductManagement() {
   const { products, addProduct, updateProduct, deleteProduct } = useProducts();
@@ -16,10 +16,13 @@ export default function AdminProductManagement() {
   const securityProducts = (products || []).filter(p => p && !isVehicleCategory(p?.category));
   const securityCategories = ["すべて", ...Array.from(new Set(securityProducts.map(p => p?.category).filter(Boolean)))];
   const vehicleCategories = ["すべて", ...Array.from(new Set((vehicles || []).map(v => v.category).filter(Boolean)))];
+  // 保安用品のカテゴリー一覧（実データ）:
+  // 標準カテゴリー（SUPPLY_CATEGORY_ICONS）＋ 実際の商品から抽出したカテゴリー。
+  // 車両カテゴリーは保安用品フォームでは除外する。
   const categoriesList = Array.from(new Set([
-    "ガス検知器", "セイフティブロック", "発電機", "カラーコーン", "その他",
-    ...(products || []).map(p => p?.category).filter(Boolean)
-  ]));
+    ...Object.keys(SUPPLY_CATEGORY_ICONS),
+    ...(products || []).map(p => p?.category).filter(Boolean) as string[],
+  ])).filter(c => c && !isVehicleCategory(c));
 
   // Filter functionality
   const filteredProducts = securityProducts.filter(p => {
@@ -543,26 +546,6 @@ export default function AdminProductManagement() {
             </div>
             <div className="overflow-y-auto flex-1 p-8">
               <form id="productForm" onSubmit={saveProduct} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">商品名 *</label>
-                  <input required defaultValue={editingProduct?.name || ""} name="name" className="w-full border rounded-xl p-3 text-sm outline-none" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">カテゴリ *</label>
-                    <select required defaultValue={editingProduct?.category || "カラーコーン"} name="category" className="w-full border rounded-xl p-3 text-sm">
-                      <option value="ガス検知器">ガス検知器</option>
-                      <option value="セイフティブロック">セイフティブロック</option>
-                      <option value="発電機">発電機</option>
-                      <option value="カラーコーン">カラーコーン</option>
-                      <option value="その他">その他</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">在庫数</label>
-                    <input type="number" required defaultValue={editingProduct?.stock || 0} name="stock" className="w-full border rounded-xl p-3 text-sm" />
-                  </div>
-                </div>
 
                 {/* 基本情報 */}
                 <div className="bg-slate-50/50 rounded-2xl border border-slate-200/60 p-6 space-y-5 shadow-sm">
