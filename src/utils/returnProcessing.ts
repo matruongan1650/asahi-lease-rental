@@ -125,6 +125,8 @@ export interface FinalizeReturnOptions {
   remainingStatus?: string;
   /** 倉庫検品によって確定したことを示す */
   inspectedByWarehouse?: boolean;
+  /** お客様の回収（返却）サイン。回収書 PDF に表示される。 */
+  collectionSignature?: string;
 }
 
 /**
@@ -141,7 +143,7 @@ export function finalizePartialReturn(
   options: FinalizeReturnOptions = {}
 ): ReturnSplit {
   const split = computeReturnSplit(order, returnQuantities, actualReturnDate);
-  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse } = options;
+  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature } = options;
 
   if (split.returningEverything) {
     const tempOrder = {
@@ -166,6 +168,7 @@ export function finalizePartialReturn(
       invoiceBlocks: newInvoiceBlocks,
       ...(itemIssues ? { itemIssues } : {}),
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
+      ...(collectionSignature ? { collectionSignature } : {}),
     });
   } else {
     const tempRemaining = {
@@ -217,6 +220,8 @@ export function finalizePartialReturn(
       ...tempCustomOrder,
       orderNumber: `${order.orderNumber}-R-${Math.floor(Math.random() * 1000)}`,
       invoiceBlocks: customInvoiceBlocks,
+      ...(collectionSignature ? { collectionSignature } : {}),
+      ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
     });
   }
 

@@ -21,7 +21,7 @@ import { useMobileLive, pushFieldReportsLocal, STAFF } from "../../context/Mobil
 
 export interface WalkInReturnFlowProps {
   onExit: () => void;
-  onComplete: (prods: any[], order: any) => void;
+  onComplete: (prods: any[], order: any, signature?: string | null) => void;
 }
 
 const WIN_STEPS = ["受付", "検品", "サイン", "完了"];
@@ -52,7 +52,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
   const [order, setOrder] = useState<any>(null);
   const [step, setStep] = useState(0);
   const [prods, setProds] = useState<any[]>([]);
-  const [signed, setSigned] = useState(false);
+  const [signed, setSigned] = useState<string | null>(null);
   const [sheet, setSheet] = useState<string | null>(null);
 
   const pick = (o: any) => {
@@ -262,7 +262,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             </div>
           )}
         </Card>
-        <SignaturePad onChange={(dataUrl) => setSigned(!!dataUrl)} />
+        <SignaturePad onChange={setSigned} />
       </>
     );
     footer = <Btn full size="lg" variant="success" icon="check" disabled={!signed} onClick={confirmSign}>サインを確定</Btn>;
@@ -303,7 +303,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         </Card>
       </div>
     );
-    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order)}>完了</Btn>;
+    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order, signed)}>完了</Btn>;
   }
 
   return (

@@ -31,6 +31,7 @@ import {
 import { useOrders } from "../../context/OrderContext";
 import OrderBus from "../../lib/orderBus";
 import { finalizePartialReturn } from "../../utils/returnProcessing";
+import DocumentViewer from "../../components/DocumentViewer";
 
 // ---------------------------------------------------------------------------
 // 1. Premium Stats and Alert helper components (Japanese Aesthetics)
@@ -239,70 +240,149 @@ function RecoveryCard({ o, done, onClick }: any) {
 
 function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn }: any) {
   const ml = useMobileLive();
+  const { orders } = useOrders();
   const [subTab, setSubTab] = useState("haisou");
+  const [viewingDoc, setViewingDoc] = useState<{ order: any; type: "納品書" | "回収書" } | null>(null);
   const deliveries = ml.liveDeliveries;
   const recoveries = ml.liveRecoveries;
+
+  // 履歴は実データ（注文）から導出する。
+  // 納品履歴: 配送完了済み（completeDelivery が staffStatus=配送完了 を設定）。
+  // 回収履歴: 回収完了済み（completeRecovery が staffStatus=回収完了 を設定）。
+  const deliveryHistory = (orders || []).filter(
+    (o: any) => o && (o.staffStatus === "配送完了" || o.signature || o.deliverySignature)
+  );
+  const recoveryHistory = (orders || []).filter(
+    (o: any) =>
+      o &&
+      (o.staffStatus === "回収完了" ||
+        o.collectionSignature ||
+        o.status === "完了" ||
+        o.status === "返却済" ||
+        o.status === "返却済み")
+  );
 
   const pendingDlvCount = deliveries.length - doneDlv.length;
   const pendingRtnCount = recoveries.length - doneRtn.length;
 
+  const TABS: [string, string, number][] = [
+    ["haisou", "配送予定", pendingDlvCount],
+    ["kaishu", "回収予定", pendingRtnCount],
+    ["nouhin_hist", "納品履歴", deliveryHistory.length],
+    ["kaishu_hist", "回収履歴", recoveryHistory.length],
+  ];
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: 0 }}>
       <TopBar title="配送・回収業務" sub="DELIVERY & RECOVERY" />
-      
+
       <div style={{ padding: "0 16px 12px" }}>
-        <div style={{ display: "flex", gap: 7, background: "var(--surface-2)", padding: 4, borderRadius: 12 }}>
-          {[
-            ["haisou", `配送予定 (${pendingDlvCount})`],
-            ["kaishu", `回収予定 (${pendingRtnCount})`]
-          ].map(([k, l]) => (
+        <div style={{ display: "flex", gap: 5, background: "var(--surface-2)", padding: 4, borderRadius: 12 }}>
+          {TABS.map(([k, l, n]) => (
             <button
               key={k}
               onClick={() => setSubTab(k)}
               style={{
                 flex: 1,
-                padding: "9px 0",
+                padding: "9px 2px",
                 borderRadius: 9,
                 border: "none",
                 background: subTab === k ? "var(--surface)" : "transparent",
                 color: subTab === k ? "var(--fg)" : "var(--fg-muted)",
                 fontWeight: 800,
-                fontSize: 13,
+                fontSize: 11.5,
                 cursor: "pointer",
                 boxShadow: subTab === k ? "var(--shadow-card)" : "none",
-                fontFamily: "var(--font-jp)"
+                fontFamily: "var(--font-jp)",
+                whiteSpace: "nowrap",
               }}
             >
-              {l}
+              {l}{n > 0 ? ` (${n})` : ""}
             </button>
           ))}
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px", minHeight: 0 }}>
-        {subTab === "haisou" ? (
-          <div>
-            {deliveries.length === 0 ? (
-              <Empty icon="truck" title="本日の配送予定はありません" />
-            ) : (
-              deliveries.map(o => (
-                <DeliveryCard key={o.id} o={o} done={doneDlv.includes(o.id)} onClick={() => setFlow({ type: "dlv", order: o })} />
-              ))
-            )}
-          </div>
-        ) : (
-          <div>
-            {recoveries.length === 0 ? (
-              <Empty icon="package" title="本日の回収予定はありません" />
-            ) : (
-              recoveries.map(o => (
-                <RecoveryCard key={o.id} o={o} done={doneRtn.includes(o.id)} onClick={() => setFlow({ type: "rtn", order: o })} />
-              ))
-            )}
-          </div>
+        {subTab === "haisou" && (
+          deliveries.length === 0 ? (
+            <Empty icon="truck" title="本日の配送予定はありません" />
+          ) : (
+            deliveries.map(o => (
+              <DeliveryCard key={o.id} o={o} done={doneDlv.includes(o.id)} onClick={() => setFlow({ type: "dlv", order: o })} />
+            ))
+          )
+        )}
+        {subTab === "kaishu" && (
+          recoveries.length === 0 ? (
+            <Empty icon="package" title="本日の回収予定はありません" />
+          ) : (
+            recoveries.map(o => (
+              <RecoveryCard key={o.id} o={o} done={doneRtn.includes(o.id)} onClick={() => setFlow({ type: "rtn", order: o })} />
+            ))
+          )
+        )}
+        {subTab === "nouhin_hist" && (
+          deliveryHistory.length === 0 ? (
+            <Empty icon="truck" title="納品履歴はありません" sub="配送を完了すると表示されます" />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {deliveryHistory.map((o: any) => (
+                <HistoryCard key={o.id} order={o} kind="納品" date={o.deliveryDate || o.date} onViewDoc={() => setViewingDoc({ order: o, type: "納品書" })} />
+              ))}
+            </div>
+          )
+        )}
+        {subTab === "kaishu_hist" && (
+          recoveryHistory.length === 0 ? (
+            <Empty icon="package" title="回収履歴はありません" sub="回収を完了すると表示されます" />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {recoveryHistory.map((o: any) => (
+                <HistoryCard key={o.id} order={o} kind="回収" date={o.actualReturnDate || o.rentalEndDate || o.date} onViewDoc={() => setViewingDoc({ order: o, type: "回収書" })} />
+              ))}
+            </div>
+          )
         )}
       </div>
+
+      {viewingDoc && (
+        <DocumentViewer order={viewingDoc.order} type={viewingDoc.type} onClose={() => setViewingDoc(null)} />
+      )}
     </div>
+  );
+}
+
+function HistoryCard({ order, kind, date, onViewDoc }: any) {
+  const company = order.companyName || order.personName || "—";
+  const site = order.siteName || order.deliveryLocation || "";
+  const num = order.orderNumber || order.id;
+  const hasSig =
+    kind === "納品"
+      ? order.signature || order.deliverySignature
+      : order.collectionSignature || order.warehouseSignature;
+  return (
+    <Card pad={14}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 42, height: 42, borderRadius: 11, background: "var(--success-tint)", color: "var(--success-bright)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <Icon name={kind === "納品" ? "truck" : "package"} size={22} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{num}{site ? " ・ " + site : ""}</div>
+        </div>
+        <Badge variant="success">{kind}済</Badge>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 11, paddingTop: 11, borderTop: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 12.5, color: "var(--fg-muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          <Icon name="clock" size={14} />{date || "—"}
+        </span>
+        {hasSig && <Badge variant="neutral" icon="signature">サイン</Badge>}
+        <button onClick={onViewDoc} style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: "var(--brand-accent)", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-jp)" }}>
+          <Icon name="fileCheck" size={15} />{kind === "納品" ? "納品書" : "回収書"}
+        </button>
+      </div>
+    </Card>
   );
 }
 
@@ -419,7 +499,7 @@ function UnifiedStaffApp() {
     id: "STF-991"
   };
 
-  const completeReturn = (productsList: any[], walkinOrder?: any) => {
+  const completeReturn = (productsList: any[], walkinOrder?: any, signature?: string | null) => {
     const valid = productsList.filter(p => p.counted > 0);
     // 入庫 + 在庫調整（既存処理）
     if (ml.addStockMove) {
@@ -475,7 +555,7 @@ function UnifiedStaffApp() {
             returnQuantities,
             actualReturnDate,
             { updateOrder, addCustomOrder },
-            { itemIssues, remainingStatus: "一部返却", inspectedByWarehouse: true }
+            { itemIssues, remainingStatus: "一部返却", inspectedByWarehouse: true, collectionSignature: signature || undefined }
           );
         } catch (e) {
           console.error("[completeReturn] 注文の確定に失敗しました。", e);
