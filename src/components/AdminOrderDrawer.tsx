@@ -22,7 +22,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
   const [costPhoto, setCostPhoto] = useState<string>("");
 
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
-  const [viewingDoc, setViewingDoc] = useState<"請求書" | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<"請求書" | "回収書" | "納品書" | null>(null);
 
   const blocks = getOrGenerateInvoiceBlocks(order);
 
@@ -130,6 +130,33 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
             >
               <span className="material-symbols-outlined text-[18px]">send</span>
               手配する
+            </button>
+          )}
+        </div>
+
+        {/* 帳票（PDF）— この注文の納品書・回収書・請求書を表示 */}
+        <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-3">
+          <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px]">description</span>帳票
+          </span>
+          <button
+            onClick={() => { setViewingBlockId(null); setViewingDoc("納品書"); }}
+            className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-bold text-[12px] flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[14px]">local_shipping</span>納品書
+          </button>
+          <button
+            onClick={() => { setViewingBlockId(null); setViewingDoc("回収書"); }}
+            className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-bold text-[12px] flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[14px]">assignment_return</span>回収書
+          </button>
+          {blocks.length > 0 && (
+            <button
+              onClick={() => { setViewingBlockId(blocks[blocks.length - 1].id); setViewingDoc("請求書"); }}
+              className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-bold text-[12px] flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">receipt_long</span>請求書
             </button>
           )}
         </div>

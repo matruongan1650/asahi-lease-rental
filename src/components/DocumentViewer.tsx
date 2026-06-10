@@ -2,7 +2,7 @@ import React, { useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { isVehicleCategory } from "../utils/productUtils";
-import { calculateMonthlyInvoice } from "../utils/billing";
+import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks } from "../utils/billing";
 
 interface DocumentViewerProps {
   order: any;
@@ -91,7 +91,14 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     return `${yyyy}/${mm}/${dd}`;
   }
 
-  const block = blockId ? order.invoiceBlocks?.find((b: any) => b.id === blockId) : null;
+  // 注文に invoiceBlocks が保存されていない場合でも生成して参照する。
+  // （保存されていないと per-month 請求書がブロックを見つけられず、注文全体の合計に
+  //  フォールバックして月別の金額がずれる）
+  const allBlocks =
+    order.invoiceBlocks && order.invoiceBlocks.length > 0
+      ? order.invoiceBlocks
+      : getOrGenerateInvoiceBlocks(order);
+  const block = blockId ? allBlocks.find((b: any) => b.id === blockId) : null;
 
   // Totals to display
   const subtotal = block ? block.subtotal : order.subtotal;
@@ -161,7 +168,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
   const message = type === "納品書" ? "下記の通り納品申し上げます。" : type === "回収書" ? "下記の通り回収いたしました。" : "下記の通りご請求申し上げます。";
   
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/60 p-4">
       <div className="bg-white rounded-xl shadow-2xl flex flex-col w-full max-w-4xl max-h-[90vh] overflow-hidden">
         
         {/* Header toolbar */}
