@@ -123,6 +123,7 @@ interface MobileLiveContextProps {
   setStock: (firestoreId: string, value: number) => void;
   maint: any[];
   walkin: any[];
+  returnInspections: any[];
   stockMoves: any[];
   recordMaintenance: (id: string, updates: any) => void;
   addStockMove: (type: string, details: { item: string; qty: number; ref?: string; icon?: string }) => void;
@@ -138,6 +139,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const [products, setProducts] = useState<any[]>([]);
   const [maint, setMaint] = useState<any[]>([]);
   const [walkin, setWalkin] = useState<any[]>([]);
+  const [returnInspections, setReturnInspections] = useState<any[]>([]);
   const [stockInRows, setStockIn] = useState<any[]>([]);
   const [stockOutRows, setStockOut] = useState<any[]>([]);
 
@@ -170,6 +172,11 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       setWalkin(rows);
     });
 
+    // 持込返却の検品記録（確認履歴）。
+    const unsubReturnInsp = OrderBus.subscribe("returnInspections", (rows) => {
+      setReturnInspections(rows);
+    });
+
     // Stock moves subscription
     const unsubStockIn = OrderBus.subscribe("stockIn", setStockIn);
     const unsubStockOut = OrderBus.subscribe("stockOut", setStockOut);
@@ -180,6 +187,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       unsubVehicles();
       unsubMaint();
       unsubWalkin();
+      unsubReturnInsp();
       unsubStockIn();
       unsubStockOut();
     };
@@ -358,7 +366,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     <MobileLiveContext.Provider value={{
       connected, liveDeliveries, liveRecoveries, completeDelivery, completeRecovery,
       vehicles, recordVehicleShaken, products, findProductByName, adjustStock, setStock,
-      maint, walkin, stockMoves, recordMaintenance, addStockMove, pushFieldReports
+      maint, walkin, returnInspections, stockMoves, recordMaintenance, addStockMove, pushFieldReports
     }}>
       {children}
     </MobileLiveContext.Provider>

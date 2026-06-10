@@ -34,7 +34,8 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     "suppliers",
     "vendors",
     "fieldReports",
-    "vehicles"
+    "vehicles",
+    "returnInspections"
   ];
 
   // 1. Subscribe to orders via Firebase
@@ -223,7 +224,10 @@ export function useAdminOrders() {
       end: o.rentalEnd?.replace(/-/g, "/") || "—",
       items: (o.items || []).length,
       amount: o.total,
-      status: mapStatus(o.staffStatus || o.status),
+      // 返却・検品系のステータスは注文ステータスを優先表示（未割当で上書きしない）。
+      status: ["返却済", "返却済み", "一部返却", "検品待ち", "完了", "キャンセル"].includes(o.status as string)
+        ? (o.status as string)
+        : mapStatus(o.staffStatus || o.status),
       invoice: "INV-R-" + (o.orderNumber || "").replace(/\D/g, "").slice(-4),
     })),
     sales: d.sales.map((o) => ({

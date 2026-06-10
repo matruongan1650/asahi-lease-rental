@@ -177,6 +177,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
     
     setOrders(prev => [newOrder, ...prev]);
+
+    // 返却分などのカスタム注文も OrderBus に反映する。
+    // これがないと admin（OrderBus 参照）に返却済みの「-R」注文が表示されず、
+    // レンタル請求書・回収履歴などで返却明細が見えなくなる。
+    OrderBus.push("orders", newOrder as any);
+
     return newOrder;
   }, []);
 

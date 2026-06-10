@@ -38,6 +38,7 @@ export type BusStore =
   | "suppliers"
   | "vendors"
   | "walkinReturns"
+  | "returnInspections"
   | "stockIn"
   | "stockOut"
   | "assets"
@@ -149,6 +150,7 @@ const BUS_STORES: readonly BusStore[] = [
   "suppliers",
   "vendors",
   "walkinReturns",
+  "returnInspections",
   "stockIn",
   "stockOut",
   "assets",

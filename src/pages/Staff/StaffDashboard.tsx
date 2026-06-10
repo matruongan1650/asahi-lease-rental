@@ -570,6 +570,43 @@ function UnifiedStaffApp() {
       }
     }
 
+    // 検品記録（持込返却の確認履歴）を保存する。
+    // admin の返却履歴・倉庫スタッフの検品履歴の双方から参照できる永続レコード。
+    try {
+      const now = new Date();
+      const recProducts = productsList.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        expected: p.expected || 0,
+        counted: p.counted || 0,
+        shortage: Math.max(0, (p.expected || 0) - (p.counted || 0)),
+        reports: p.report || [],
+      }));
+      OrderBus.push("returnInspections", {
+        id:
+          "RINS-" +
+          (walkinOrder?.orderNumber || walkinOrder?.orderId || walkinOrder?.id || "")
+            .toString()
+            .replace(/[^0-9A-Za-z]/g, "") +
+          "-" +
+          Math.floor(Math.random() * 1000),
+        orderId: walkinOrder?.orderId,
+        orderNumber: walkinOrder?.orderNumber,
+        company: walkinOrder?.company,
+        contact: walkinOrder?.contact,
+        inspectedAt: now.toLocaleString("ja-JP"),
+        inspector: (STAFF as any)?.souko?.name || "倉庫スタッフ",
+        returningEverything: !!walkinOrder?.returningEverything,
+        products: recProducts,
+        totalExpected: recProducts.reduce((a: number, p: any) => a + p.expected, 0),
+        totalCounted: recProducts.reduce((a: number, p: any) => a + p.counted, 0),
+        hasShortage: recProducts.some((p: any) => p.shortage > 0 || (p.reports && p.reports.length > 0)),
+        collectionSignature: signature || undefined,
+      } as any);
+    } catch (e) {
+      console.warn("[completeReturn] 検品記録の保存に失敗しました。", e);
+    }
+
     setFlow(null);
     setTab("stock");
   };

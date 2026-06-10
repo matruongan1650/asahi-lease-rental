@@ -15,7 +15,13 @@ import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 export default function AdminRecovery() {
   const { rentals, orders, live, patchOrder } = useAdminOrders();
   const { rows: fieldReports } = useAdminCollection("fieldReports");
+  const { rows: inspections } = useAdminCollection("returnInspections");
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+
+  // 倉庫が検品した返却の記録（持込返却の確認履歴）。新しい順に表示。
+  const inspectionRecords = [...(inspections || [])].sort(
+    (a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || "")
+  );
 
   // Filter rentals that are either renting or overdue for recovery scheduling
   const recoveryRentals = rentals.filter(
@@ -142,6 +148,54 @@ export default function AdminRecovery() {
     },
   ];
 
+  const inspectionCols = [
+    {
+      h: "注文番号",
+      cell: (r: any) => <span className="font-mono font-bold text-blue-700">{r.orderNumber || r.orderId || "—"}</span>,
+    },
+    {
+      h: "顧客",
+      wrap: true,
+      cell: (r: any) => <span className="font-bold text-slate-800">{r.company || "—"}</span>,
+    },
+    {
+      h: "検品日時",
+      cell: (r: any) => <span className="font-mono text-slate-500 text-xs">{r.inspectedAt || "—"}</span>,
+    },
+    {
+      h: "検品者",
+      cell: (r: any) => <span className="text-slate-600 text-xs">{r.inspector || "—"}</span>,
+    },
+    {
+      h: "数量(実/予)",
+      align: "right" as const,
+      cell: (r: any) => <span className="font-mono">{r.totalCounted ?? 0}/{r.totalExpected ?? 0}</span>,
+    },
+    {
+      h: "不足・破損",
+      align: "center" as const,
+      cell: (r: any) => (r.hasShortage ? <span className="font-bold text-red-600">あり</span> : <span className="text-slate-300">なし</span>),
+    },
+    {
+      h: "サイン",
+      align: "center" as const,
+      cell: (r: any) => (r.collectionSignature ? <span className="material-symbols-outlined text-emerald-600 text-[18px]">draw</span> : <span className="text-slate-300">—</span>),
+    },
+    {
+      h: "明細（実/予）",
+      wrap: true,
+      cell: (r: any) => (
+        <div className="text-[11px] text-slate-500 space-y-0.5">
+          {(r.products || []).map((p: any, i: number) => (
+            <div key={i} className={p.shortage > 0 ? "text-red-600 font-medium" : ""}>
+              {p.name} {p.counted}/{p.expected}{p.shortage > 0 ? `（不足${p.shortage}）` : ""}
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 mb-4">
@@ -182,6 +236,18 @@ export default function AdminRecovery() {
             <div className="p-6 text-center text-sm text-slate-400">返却された注文はまだありません。</div>
           ) : (
             <Table cols={returnedCols} rows={returnedOrders} />
+          )}
+        </Panel>
+
+        <Panel
+          title="倉庫 検品記録（持込返却）"
+          icon="fact_check"
+          sub="倉庫スタッフが検品・確認した持込返却の明細履歴（実数 / 予定数・不足/破損・サイン）。"
+        >
+          {inspectionRecords.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-400">検品記録はまだありません。</div>
+          ) : (
+            <Table cols={inspectionCols} rows={inspectionRecords} />
           )}
         </Panel>
       </div>
