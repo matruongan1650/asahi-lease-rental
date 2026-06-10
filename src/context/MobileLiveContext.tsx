@@ -84,9 +84,7 @@ export const RECOVERIES = [
   },
 ];
 
-import { VEHICLES as _VEHICLES, MAINT as _MAINTENANCE } from "../data/adminMockData";
-export const VEHICLES = _VEHICLES;
-export const MAINTENANCE = _MAINTENANCE;
+// 車両（vehicles）・メンテナンス（maintenance）はモックを使わず、実データ（OrderBus / admin 管理）のみを使用する。
 
 export const STOCK_MOVES = [
   { id: "IN-7781",  type: "入庫", item: "レボリューションコーン赤白", qty: 120, time: "08:12", ref: "RTN-31170 回収分", icon: "cone" },
@@ -95,29 +93,8 @@ export const STOCK_MOVES = [
   { id: "OUT-9925", type: "出庫", item: "単管バリケード",   qty: 12,  time: "09:20", ref: "DLV-20614 配送分", icon: "package" },
 ];
 
-export const WALKIN_RETURNS = [
-  {
-    id: "WIN-44021", time: "10:20 受付",
-    company: "東急建設 株式会社", contact: "資材課 中村様",
-    rentalNo: "RN-7781", note: "レンタル期間：5/2〜6/1。お客様が直接来庫。",
-    products: [
-      { id: "W-1", qr: "AS-CONE-1001", name: "レボリューションコーン赤白", expected: 30, icon: "cone" },
-      { id: "W-2", qr: "AS-BAR-2200",  name: "コーンバー黒/黄", expected: 15, icon: "minus" },
-      { id: "W-3", qr: "AS-FENCE-6001", name: "ガードフェンス", expected: 10, icon: "shield" },
-      { id: "W-4", qr: "AS-LED-5120",  name: "LED保安灯", expected: 6, icon: "sun" },
-    ],
-  },
-  {
-    id: "WIN-44025", time: "11:05 受付",
-    company: "西松建設 株式会社", contact: "工務 小林様",
-    rentalNo: "RN-7795", note: "",
-    products: [
-      { id: "V-1", qr: "AS-SIGN-4055", name: "注意看板", expected: 8, icon: "flag" },
-      { id: "V-2", qr: "AS-WEIGHT-700", name: "ウェイト 10kg", expected: 20, icon: "weight" },
-      { id: "V-3", qr: "AS-ARROW-8030", name: "矢印板", expected: 5, icon: "navigation" },
-    ],
-  },
-];
+// 持込返却（持込対応）はモックを使わず、実データのみ（顧客が直接持ち込んだ返却で作成された
+// walkinReturns）を使用する。以前のモック WALKIN_RETURNS 定数は削除済み。
 
 // Helper to count countdown days from 2026/06/02
 export function daysUntil(dateStr: string): number | null {
@@ -146,6 +123,7 @@ interface MobileLiveContextProps {
   setStock: (firestoreId: string, value: number) => void;
   maint: any[];
   walkin: any[];
+  returnInspections: any[];
   stockMoves: any[];
   recordMaintenance: (id: string, updates: any) => void;
   addStockMove: (type: string, details: { item: string; qty: number; ref?: string; icon?: string }) => void;
@@ -161,6 +139,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const [products, setProducts] = useState<any[]>([]);
   const [maint, setMaint] = useState<any[]>([]);
   const [walkin, setWalkin] = useState<any[]>([]);
+  const [returnInspections, setReturnInspections] = useState<any[]>([]);
   const [stockInRows, setStockIn] = useState<any[]>([]);
   const [stockOutRows, setStockOut] = useState<any[]>([]);
 
@@ -177,22 +156,25 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       if (rows.length) setProducts(rows);
     });
 
-    // Vehicles subscription & seeding
-    OrderBus.seedIfEmpty("vehicles", VEHICLES);
+    // 車両は実データのみ（admin の車庫管理で登録されたもの）。モックは seed しない。
     const unsubVehicles = OrderBus.subscribe("vehicles", (rows) => {
-      if (rows.length) setVehicles(rows);
+      setVehicles(rows);
     });
 
-    // Maintenance subscription & seeding
-    OrderBus.seedIfEmpty("maintenance", MAINTENANCE);
+    // メンテナンスは実データのみ（admin で登録されたもの）。モックは seed しない。
     const unsubMaint = OrderBus.subscribe("maintenance", (rows) => {
-      if (rows.length) setMaint(rows);
+      setMaint(rows);
     });
 
-    // Walkin Returns subscription & seeding
-    OrderBus.seedIfEmpty("walkinReturns", WALKIN_RETURNS);
+    // 持込返却は実データのみ（顧客の一部返却で作成された walkinReturns）。モックは seed しない。
+    // 追加・削除の両方を反映するため常に setWalkin する。
     const unsubWalkin = OrderBus.subscribe("walkinReturns", (rows) => {
-      if (rows.length) setWalkin(rows);
+      setWalkin(rows);
+    });
+
+    // 持込返却の検品記録（確認履歴）。
+    const unsubReturnInsp = OrderBus.subscribe("returnInspections", (rows) => {
+      setReturnInspections(rows);
     });
 
     // Stock moves subscription
@@ -205,31 +187,15 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       unsubVehicles();
       unsubMaint();
       unsubWalkin();
+      unsubReturnInsp();
       unsubStockIn();
       unsubStockOut();
     };
   }, []);
 
   // Derive Deliveries
+  // 配送タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   const liveDeliveries = [
-    ...DELIVERIES.map(d => ({ 
-      ...d, 
-      isMock: true,
-      rawOrder: {
-        id: d.id,
-        orderNumber: d.id,
-        status: "準備中",
-        companyName: d.company,
-        siteName: d.site,
-        deliveryLocation: d.addr,
-        deliveryDate: d.window,
-        personName: d.contact,
-        items: d.items.map((i: any) => ({ name: i.name, quantity: i.qty, type: 'rent', calculatedPrice: 0, image: i.image })),
-        subtotal: 0,
-        tax: 0,
-        total: 0
-      }
-    })),
     ...rawOrders
       .filter(o => o.status && o.status !== "完了" && o.status !== "キャンセル" && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
       .map(o => ({
@@ -252,25 +218,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   ];
 
   // Derive Recoveries
+  // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   const liveRecoveries = [
-    ...RECOVERIES.map(r => ({ 
-      ...r, 
-      isMock: true,
-      rawOrder: {
-        id: r.id,
-        orderNumber: r.id,
-        status: "回収予定",
-        companyName: r.company,
-        siteName: r.site,
-        deliveryLocation: r.addr,
-        rentalEndDate: r.window,
-        personName: r.contact,
-        items: r.products.map((i: any) => ({ id: i.id, name: i.name, quantity: i.expected, type: 'rent', calculatedPrice: 0, image: i.image })),
-        subtotal: 0,
-        tax: 0,
-        total: 0
-      }
-    })),
     ...rawOrders
       .filter(o => {
         if (!o.rentalEndDate) return false;
@@ -318,7 +267,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
     if (targetOrder && targetOrder.items) {
       targetOrder.items.forEach((item: any) => {
-        const prod = products.find(p => p.name === item.name);
+        const prod = products.find(p => p && p.name === item.name);
         const qty = item.quantity || 1;
         if (prod) {
           adjustStock(prod.id, -qty);
@@ -346,7 +295,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (targetOrder && targetOrder.items) {
       targetOrder.items.forEach((item: any) => {
         if (item.type === "rent") {
-          const prod = products.find(p => p.name === item.name);
+          const prod = products.find(p => p && p.name === item.name);
           const qty = item.quantity || 1;
           if (prod) {
             adjustStock(prod.id, qty);
@@ -369,18 +318,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const findProductByName = (name: string) => {
-    return products.find(p => p.name === name);
+    return products.find(p => p && p.name === name);
   };
 
   const adjustStock = (firestoreId: string, delta: number) => {
     const prods = OrderBus.getAll<any>("products");
-    const p = prods.find(x => x.id === firestoreId || x.firestoreId === firestoreId);
+    const p = prods.find(x => x && (x.id === firestoreId || x.firestoreId === firestoreId));
     if (p) OrderBus.patch("products", p.id, { stock: (p.stock || 0) + delta });
   };
 
   const setStock = (firestoreId: string, value: number) => {
     const prods = OrderBus.getAll<any>("products");
-    const p = prods.find(x => x.id === firestoreId || x.firestoreId === firestoreId);
+    const p = prods.find(x => x && (x.id === firestoreId || x.firestoreId === firestoreId));
     if (p) OrderBus.patch("products", p.id, { stock: value });
   };
 
@@ -417,7 +366,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     <MobileLiveContext.Provider value={{
       connected, liveDeliveries, liveRecoveries, completeDelivery, completeRecovery,
       vehicles, recordVehicleShaken, products, findProductByName, adjustStock, setStock,
-      maint, walkin, stockMoves, recordMaintenance, addStockMove, pushFieldReports
+      maint, walkin, returnInspections, stockMoves, recordMaintenance, addStockMove, pushFieldReports
     }}>
       {children}
     </MobileLiveContext.Provider>

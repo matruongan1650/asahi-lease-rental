@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useProducts } from "../context/ProductContext";
+import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
 
 export default function Categories() {
   const location = useLocation();
   const { products } = useProducts();
+  const supplyCategories = getSupplyCategories(products);
   const [activeTab, setActiveTab] = useState<"supplies" | "vehicles">(() => {
     return new URLSearchParams(location.search).get("tab") === "vehicles" ? "vehicles" : "supplies";
   });
@@ -143,20 +145,19 @@ export default function Categories() {
                 <span className="material-symbols-outlined text-orange-500">safety_check</span>
                 保安用品一覧
               </h2>
-              <span className="text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-1 rounded-full">35 カテゴリ</span>
+              <span className="text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-1 rounded-full">{supplyCategories.length} カテゴリ</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <CategoryItem icon="change_history" name="カラーコーン" />
-              <CategoryItem icon="remove" name="コーンバー" />
-              <CategoryItem icon="fence" name="バリケード" />
-              <CategoryItem icon="traffic" name="工事灯" />
-              <CategoryItem icon="arrow_forward" name="矢印板" />
-              <CategoryItem icon="signpost" name="工事看板" />
-              <CategoryItem icon="fitness_center" name="ウェイト" />
-              <CategoryItem icon="health_and_safety" name="車両衝突緩衝材" />
-              <CategoryItem icon="texture" name="歩行者用マット" />
-              <CategoryItem icon="emergency" name="回転灯" />
-            </div>
+            {supplyCategories.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {supplyCategories.map((cat) => (
+                  <CategoryItem key={cat} icon={getCategoryIcon(cat)} name={cat} />
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                カテゴリがありません
+              </div>
+            )}
           </section>
         ) : (
           <section>

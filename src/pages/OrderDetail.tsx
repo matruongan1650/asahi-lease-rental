@@ -50,6 +50,10 @@ export default function OrderDetail() {
   } else if (order.status === "配送済み" || order.status === "レンタル中" || order.status === "回収予定" || order.status === "回収中") {
     activeStep = 3;
     statusColor = "blue";
+  } else if (order.status === "検品待ち") {
+    // 一部返却の持ち込み品を倉庫が検品中
+    activeStep = 3;
+    statusColor = "amber";
   } else if (order.status === "返却済み" || order.status === "一部返却" || order.status === "完了") {
     activeStep = 4;
     statusColor = "green";

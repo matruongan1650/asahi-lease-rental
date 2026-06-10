@@ -17,11 +17,11 @@ import {
   REASON_ICON,
   statusVariant
 } from "../../components/staff/StaffUI";
-import { useMobileLive, pushFieldReportsLocal, STAFF, WALKIN_RETURNS } from "../../context/MobileLiveContext";
+import { useMobileLive, pushFieldReportsLocal, STAFF } from "../../context/MobileLiveContext";
 
 export interface WalkInReturnFlowProps {
   onExit: () => void;
-  onComplete: (prods: any[]) => void;
+  onComplete: (prods: any[], order: any, signature?: string | null) => void;
 }
 
 const WIN_STEPS = ["受付", "検品", "サイン", "完了"];
@@ -46,13 +46,45 @@ function WalkinCard({ o, onClick }: any) {
   );
 }
 
+function InspectionHistoryCard({ rec }: any) {
+  const shortages = (rec.products || []).filter((p: any) => p.shortage > 0);
+  return (
+    <Card style={{ marginBottom: 10 }} pad={13}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)" }}>{rec.company || "—"}</div>
+          <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{rec.orderNumber || rec.id}</div>
+        </div>
+        <Badge variant={rec.hasShortage ? "danger" : "success"} icon={rec.hasShortage ? "alert" : "checkCircle"}>
+          {rec.hasShortage ? "要確認" : "検品OK"}
+        </Badge>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 11, paddingTop: 11, borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, color: "var(--fg-muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          <Icon name="package" size={14} />{rec.totalCounted}/{rec.totalExpected} 点
+        </span>
+        <span style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{rec.inspectedAt}</span>
+        {rec.collectionSignature && <Badge variant="neutral" icon="signature">サイン</Badge>}
+        <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--fg-subtle)" }}>{rec.inspector}</span>
+      </div>
+      {shortages.length > 0 && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "var(--danger-bright)", display: "flex", flexDirection: "column", gap: 2 }}>
+          {shortages.map((p: any, i: number) => (
+            <div key={i}>・{p.name}: 不足 {p.shortage}（{p.counted}/{p.expected}）</div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlowProps) {
   const ml = useMobileLive();
-  const walkinList = ml.walkin && ml.walkin.length ? ml.walkin : WALKIN_RETURNS;
+  const walkinList = ml.walkin || [];
   const [order, setOrder] = useState<any>(null);
   const [step, setStep] = useState(0);
   const [prods, setProds] = useState<any[]>([]);
-  const [signed, setSigned] = useState(false);
+  const [signed, setSigned] = useState<string | null>(null);
   const [sheet, setSheet] = useState<string | null>(null);
 
   const pick = (o: any) => {
@@ -116,10 +148,20 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             <div style={{ fontSize: 13.5, color: "var(--fg)", lineHeight: 1.5, fontWeight: 600 }}>お客様が直接持ち込まれた返却品を検品します。受付伝票を選択してください。</div>
           </div>
           <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 700 }}>{walkinList.length}件</span>}>本日の受付</SectionLabel>
+          {walkinList.length === 0 && (
+            <div style={{ padding: "18px 0", textAlign: "center", color: "var(--fg-muted)", fontSize: 13, fontWeight: 600 }}>本日の受付はありません</div>
+          )}
           {walkinList.map((o: any) => <WalkinCard key={o.id} o={o} onClick={() => pick(o)} />)}
           <button style={{ width: "100%", marginTop: 4, padding: "14px", borderRadius: 14, border: "1.5px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "var(--font-jp)" }}>
             <Icon name="search" size={18} />レンタル番号で検索
           </button>
+
+          {ml.returnInspections && ml.returnInspections.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 700 }}>{ml.returnInspections.length}件</span>}>検品履歴</SectionLabel>
+              {ml.returnInspections.slice(0, 30).map((rec: any) => <InspectionHistoryCard key={rec.id} rec={rec} />)}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -262,7 +304,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             </div>
           )}
         </Card>
-        <SignaturePad onChange={(dataUrl) => setSigned(!!dataUrl)} />
+        <SignaturePad onChange={setSigned} />
       </>
     );
     footer = <Btn full size="lg" variant="success" icon="check" disabled={!signed} onClick={confirmSign}>サインを確定</Btn>;
@@ -303,7 +345,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         </Card>
       </div>
     );
-    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods)}>完了</Btn>;
+    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order, signed)}>完了</Btn>;
   }
 
   return (
@@ -312,7 +354,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
       <div style={{ padding: "4px 16px 14px" }}><Stepper steps={WIN_STEPS} current={step} /></div>
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>{body}</div>
       <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>{footer}</div>
-      <DamageReportSheet open={!!sheet} product={prods.find(p => p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
+      <DamageReportSheet open={!!sheet} product={prods.find(p => p && p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />
     </div>
   );
 }

@@ -29,14 +29,20 @@ export default function Cart() {
   const hasVehicle = items.some(i => isVehicleCategory(i.category) && i.type === 'rent');
 
   items.forEach(item => {
-    const fullProduct = products.find(p => p.id === item.id);
+    const fullProduct = products.find(p => p && p.id === item.id);
     let guaranteeFeeFlat = 0;
-    if (item.type === 'rent' && fullProduct?.isGuarantee && fullProduct.guaranteeFees) {
+    if (item.type === 'rent' && fullProduct?.isGuarantee) {
       const qty = item.quantity;
-      if (qty <= 50) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range1) || 0;
-      else if (qty <= 100) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range2) || 0;
-      else if (qty <= 150) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range3) || 0;
-      else guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range4) || 0;
+      if (fullProduct.guaranteeType === 'flat') {
+        guaranteeFeeFlat = (fullProduct.guaranteeRate || 0) * qty;
+      } else if (fullProduct.guaranteeFees) {
+        if (qty <= 50) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range1) || 0;
+        else if (qty <= 100) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range2) || 0;
+        else if (qty <= 150) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range3) || 0;
+        else if (qty <= 200) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range4) || 0;
+        else if (qty <= 250) guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range5) || Number(fullProduct.guaranteeFees.range4) || 0;
+        else guaranteeFeeFlat = Number(fullProduct.guaranteeFees.range6) || Number(fullProduct.guaranteeFees.range5) || Number(fullProduct.guaranteeFees.range4) || 0;
+      }
     }
     
     item.guaranteeFeeFlat = guaranteeFeeFlat;

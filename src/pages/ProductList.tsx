@@ -47,7 +47,7 @@ export default function ProductList() {
   const handleQuantityChange = (id: string, delta: number) => {
     setQuantities(prev => {
       const current = prev[id] || 0;
-      const product = products.find(p => p.id === id);
+      const product = products.find(p => p && p.id === id);
       const stock = product ? product.stock : 999;
       const next = Math.max(0, Math.min(stock, current + delta));
       if (next === 0) {
@@ -61,7 +61,7 @@ export default function ProductList() {
 
   const handleSetQuantity = (id: string, amount: number) => {
     setQuantities(prev => {
-      const product = products.find(p => p.id === id);
+      const product = products.find(p => p && p.id === id);
       const stock = product ? product.stock : 999;
       const next = Math.max(0, Math.min(stock, amount));
       if (next === 0) {
@@ -99,7 +99,7 @@ export default function ProductList() {
   const handleAddToCart = () => {
     for (const id in quantities) {
       if (quantities[id] > 0) {
-        const product = products.find(p => p.id === id);
+        const product = products.find(p => p && p.id === id);
         if (product) {
           addToCart({
             id: product.id,

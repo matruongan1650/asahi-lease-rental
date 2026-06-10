@@ -1,6 +1,4 @@
-import { initializeApp, getApps } from "firebase/app";
 import {
-  getFirestore,
   collection,
   doc,
   addDoc,
@@ -13,18 +11,11 @@ import {
   writeBatch,
   type DocumentData
 } from "firebase/firestore";
+import { db, FIREBASE_ENABLED } from "./firebaseInit";
+import OrderBus from "./orderBus";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBNm50HiPv9-qOdAZlpr50rxfz7aKtZMyw",
-  authDomain: "asahi-4362c.firebaseapp.com",
-  projectId: "asahi-4362c",
-  storageBucket: "asahi-4362c.firebasestorage.app",
-  messagingSenderId: "606315999570",
-  appId: "1:606315999570:web:bfc80697ea26da90464a8b",
-};
+export { db, FIREBASE_ENABLED };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const db = getFirestore(app);
 
 // Keep existing collections & compatibility
 export const ordersCol = collection(db, "orders");
@@ -74,6 +65,12 @@ function removeUndefined(obj: any): any {
 // ==========================================
 
 export async function pushOrder(order: Record<string, unknown>): Promise<string> {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: クラウドへは書き込まない。
+    // 注文の OrderBus への登録は呼び出し側 (OrderContext) が行うため、
+    // ここでは ID を返すだけにして二重登録を防ぐ。
+    return (order?.id as string) || "";
+  }
   console.log("[Firebase] pushOrder called with order:", order);
   try {
     const sanitizedOrder = removeUndefined(order);
@@ -91,6 +88,11 @@ export async function pushOrder(order: Record<string, unknown>): Promise<string>
 }
 
 export async function patchOrder(firestoreId: string, updates: Record<string, unknown>): Promise<void> {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: OrderBus 上の注文を更新する。
+    OrderBus.patch("orders", firestoreId, updates);
+    return;
+  }
   console.log(`[Firebase] patchOrder called for ID: ${firestoreId} with updates:`, updates);
   try {
     const sanitizedUpdates = removeUndefined(updates);
@@ -105,6 +107,11 @@ export async function patchOrder(firestoreId: string, updates: Record<string, un
 }
 
 export function subscribeOrders(callback: (orders: Array<Record<string, unknown>>) => void): () => void {
+  if (!FIREBASE_ENABLED) {
+    // ローカル運用: Firestore ではなく OrderBus の "orders" を購読する。
+    // 即時に現在のデータでコールバックされ、変更時にも通知される。
+    return OrderBus.subscribe("orders", callback as any);
+  }
   console.log("[Firebase] subscribeOrders called");
   const q = query(ordersCol, orderBy("createdAt", "desc"));
   return onSnapshot(q, snap => {

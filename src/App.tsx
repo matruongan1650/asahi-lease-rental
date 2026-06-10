@@ -26,6 +26,7 @@ import ReturnConfirmation from "./pages/ReturnConfirmation";
 import Profile from "./pages/Profile";
 import PersonalInfo from "./pages/PersonalInfo";
 import RoleSwitcher from "./components/RoleSwitcher";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { CartProvider } from "./context/CartContext";
 import { OrderProvider } from "./context/OrderContext";
 import { FeaturedProvider } from "./context/FeaturedContext";
@@ -37,6 +38,7 @@ import { AdminDataProvider } from "./context/AdminDataContext";
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <UserProvider>
       <ProductProvider>
         <FeaturedProvider>
@@ -77,5 +79,6 @@ export default function App() {
         </FeaturedProvider>
       </ProductProvider>
     </UserProvider>
+    </ErrorBoundary>
   );
 }

@@ -13,7 +13,7 @@ export default function ProductDetail() {
   const [quantity, setQuantity] = useState<number | string>(1);
   const [actionType, setActionType] = useState<'rent' | 'buy'>('rent');
 
-  const product = products.find(p => p.id === id) || products[0];
+  const product = products.find(p => p && p.id === id) || products.filter(Boolean)[0];
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -24,7 +24,7 @@ export default function ProductDetail() {
   const relatedProducts = (products || []).filter(p => p?.category === product?.category && p?.id !== product?.id).slice(0, 5);
   // もし同じカテゴリの商品が少ない場合は、他の商品を追加する
   if (relatedProducts.length < 5) {
-    const others = (products || []).filter(p => p?.id !== product?.id && !relatedProducts.find(r => r.id === p?.id)).slice(0, 5 - relatedProducts.length);
+    const others = (products || []).filter(p => p && p.id !== product?.id && !relatedProducts.find(r => r && r.id === p.id)).slice(0, 5 - relatedProducts.length);
     relatedProducts.push(...others);
   }
 

@@ -32,11 +32,15 @@ export interface Product {
   description?: string;
   specs?: Record<string, string>;
   isGuarantee?: boolean;
+  guaranteeType?: 'flat' | 'tiered';
+  guaranteeRate?: number;
   guaranteeFees?: {
     range1: number;
     range2: number;
     range3: number;
     range4: number;
+    range5?: number;
+    range6?: number;
   };
   warrantyFees?: WarrantyFees;
 }
@@ -84,6 +88,7 @@ export type OrderStatus =
   | 'レンタル中'   // Renting
   | '回収予定'     // Recovery scheduled
   | '回収中'       // Recovering
+  | '検品待ち'     // Awaiting warehouse inspection (walk-in partial return)
   | '返却済み'     // Returned
   | '一部返却'     // Partially returned
   | '完了'         // Completed
@@ -130,6 +135,7 @@ export interface Order {
   itemIssues?: ItemIssue[];
   notes?: string;
   invoiceBlocks?: InvoiceBlock[];
+  inspectedByWarehouse?: boolean;
 }
 
 export interface ExtraCost {

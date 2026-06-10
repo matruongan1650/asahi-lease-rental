@@ -48,8 +48,10 @@ export default function AdminRental() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
-  const [startDateFilter, setStartDateFilter] = useState(getTodayStr());
-  const [endDateFilter, setEndDateFilter] = useState(getTodayStr());
+  // 既定は「全期間」: 返却済み・一部返却など過去の注文日の取引も含めて表示する。
+  // （注文日付での絞り込みは 本日 / 今月 / 注文日（開始/終了）で行える）
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
 
   // Dynamically compute unique statuses and companies for the filter dropdowns from liveOrders.rentals
   const rentalStatuses = useMemo(() => {
@@ -83,16 +85,17 @@ export default function AdminRental() {
       if (statusFilter && r.status !== statusFilter) return false;
       // 3. Company Filter
       if (companyFilter && r.customer !== companyFilter) return false;
-      // 4. Date Range Filter
+      // 4. 注文日付で絞り込み（注文日の年月日で比較）
       if (startDateFilter || endDateFilter) {
         if (!r.date) return false;
-        const datePart = r.date.split(" • ")[0]?.replace(/\//g, "-");
-        if (datePart) {
-          if (startDateFilter && datePart < startDateFilter) return false;
-          if (endDateFilter && datePart > endDateFilter) return false;
-        } else {
-          return false;
-        }
+        // r.date 例: "2026/6/9 • 10:00"（ゼロ埋めされていない）。
+        // input[type=date] は "2026-06-09"（ゼロ埋め）なので、比較前に ISO へ正規化する。
+        const datePart = (r.date.split(" • ")[0] || "").trim();
+        const m = datePart.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+        if (!m) return false;
+        const iso = `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+        if (startDateFilter && iso < startDateFilter) return false;
+        if (endDateFilter && iso > endDateFilter) return false;
       }
       return true;
     });

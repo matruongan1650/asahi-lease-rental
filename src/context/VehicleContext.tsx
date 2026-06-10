@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import OrderBus from "../lib/orderBus";
 import { PRODUCTS } from "../data/products";
 import { isVehicleCategory } from "../utils/productUtils";
+import { VEHICLES as initialVehicles } from "../data/adminMockData";
 
 export interface VehicleAlert {
   id: number;
@@ -56,8 +57,6 @@ interface VehicleContextType {
 
 const VehicleContext = createContext<VehicleContextType | undefined>(undefined);
 
-import { VEHICLES as initialVehicles } from "../data/adminMockData";
-
 export function VehicleProvider({ children }: { children: ReactNode }) {
   const [vehicles, setVehicles] = useState<VehicleDetail[]>([]);
 
@@ -66,6 +65,8 @@ export function VehicleProvider({ children }: { children: ReactNode }) {
       setVehicles(data as unknown as VehicleDetail[]);
     });
 
+    // 車両マスタ（保安車両）を seed する。
+    // admin「商品管理 => 保安車両」と顧客側の双方で表示できるようにする。
     if (OrderBus.getAll("vehicles").length === 0) {
       OrderBus.seedIfEmpty("vehicles", initialVehicles as any);
     }

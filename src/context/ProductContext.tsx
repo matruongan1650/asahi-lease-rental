@@ -17,7 +17,8 @@ export function ProductProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem("app_products");
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : INITIAL_PRODUCTS;
       } catch (e) {
         return INITIAL_PRODUCTS;
       }
@@ -26,10 +27,24 @@ export function ProductProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem("app_products", JSON.stringify(products));
-    const obProds = OrderBus.getAll<any>("products");
-    if (JSON.stringify(obProds) !== JSON.stringify(products)) {
-      OrderBus.setAll("products", products as any);
+    try {
+      localStorage.setItem("app_products", JSON.stringify(products));
+    } catch (e) {
+      // localStorage の容量超過 (QuotaExceededError) などで失敗しても
+      // アプリ全体がクラッシュ（画面が真っ白）しないようにする。
+      // メモリ上の state は更新済みなので、当該セッション中は変更が反映される。
+      console.error(
+        "[ProductContext] 商品データの localStorage 保存に失敗しました（容量超過の可能性）。",
+        e
+      );
+    }
+    try {
+      const obProds = OrderBus.getAll<any>("products");
+      if (JSON.stringify(obProds) !== JSON.stringify(products)) {
+        OrderBus.setAll("products", products as any);
+      }
+    } catch (e) {
+      console.error("[ProductContext] OrderBus への商品データ同期に失敗しました。", e);
     }
   }, [products]);
 
@@ -52,11 +67,11 @@ export function ProductProvider({ children }: { children: ReactNode }) {
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+    setProducts(prev => (prev || []).filter(Boolean).map(p => p.id === id ? { ...p, ...updates } : p));
   };
 
   const deleteProduct = (id: string) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
+    setProducts(prev => (prev || []).filter(Boolean).filter(p => p.id !== id));
   };
 
   return (

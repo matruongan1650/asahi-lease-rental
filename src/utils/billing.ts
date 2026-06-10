@@ -186,7 +186,7 @@ export function calculateMonthlyInvoice(order: Order, monthStr: string): { subto
           name: item.name,
           quantity: item.quantity,
           days: block.days,
-          price: block.price / block.days, // price per day
+          price: block.days > 0 ? block.price / block.days : 0, // price per day (0除算ガード)
           rentalFee,
           guaranteeFee,
           total: itemTotal,
