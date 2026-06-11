@@ -141,6 +141,13 @@ export default function ReturnConfirmation() {
         category: item.category,
       }));
 
+      // 同じ注文の未処理伝票があれば削除してから登録（二重確定による幽霊伝票の防止）
+      try {
+        OrderBus.getAll<any>("walkinReturns")
+          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
+      } catch { /* ignore */ }
+
       OrderBus.push("walkinReturns", {
         id:
           "WIN-" +

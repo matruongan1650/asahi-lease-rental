@@ -195,9 +195,12 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
 
   // Derive Deliveries
   // 配送タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
+  // 返却済・検品待ち・一部返却・配送済みの注文は「これから配送する」対象ではないため除外する
+  // （-R 返却分注文などが staffStatus 未設定のまま配送予定に出る「幽霊タスク」を防ぐ）。
+  const DELIVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "一部返却", "検品待ち", "配送済み"];
   const liveDeliveries = [
     ...rawOrders
-      .filter(o => o.status && o.status !== "完了" && o.status !== "キャンセル" && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
+      .filter(o => o.status && !DELIVERY_EXCLUDED_STATUS.includes(o.status) && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
       .map(o => ({
         id: o.orderNumber || o.id || o.firestoreId,
         firestoreId: o.firestoreId || o.id,
@@ -219,11 +222,20 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
 
   // Derive Recoveries
   // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
+  // 返却済・検品待ち・完了などの注文や、未返却のレンタル品が残っていない注文は
+  // 回収対象ではないため除外（-R 返却分注文が回収予定に出る「幽霊タスク」を防ぐ）。
+  const RECOVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "検品待ち"];
   const liveRecoveries = [
     ...rawOrders
       .filter(o => {
         if (!o.rentalEndDate) return false;
+        if (o.status && RECOVERY_EXCLUDED_STATUS.includes(o.status)) return false;
         if (o.staffStatus === "回収完了") return false;
+        // 未返却のレンタル品が 1 つも無ければ回収するものが無い
+        const hasUnreturnedRent = (o.items || []).some(
+          (i: any) => i && i.type === "rent" && ((i.quantity || 0) - (i.returnedQuantity || 0)) > 0
+        );
+        if (!hasUnreturnedRent) return false;
         const end = new Date(o.rentalEndDate).getTime();
         const now = new Date().getTime();
         const daysLeft = Math.floor((end - now) / 86400000);
@@ -299,6 +311,12 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
 
     // 倉庫の最終検品キューへ登録（stage: "recheck"）
     if (targetOrder) {
+      // 同じ注文の既存伝票があれば先に削除（二重登録＝幽霊伝票の防止）
+      try {
+        OrderBus.getAll<any>("walkinReturns")
+          .filter(w => w && (w.orderId === targetOrder.id || (targetOrder.orderNumber && w.orderNumber === targetOrder.orderNumber)))
+          .forEach(w => OrderBus.remove("walkinReturns", w.id));
+      } catch { /* ignore */ }
       const now = new Date();
       OrderBus.push("walkinReturns", {
         id: "WIN-" + String(targetOrder.orderNumber || targetOrder.id).replace(/[^A-Za-z0-9]/g, "") + "-" + Math.floor(Math.random() * 900 + 100),
