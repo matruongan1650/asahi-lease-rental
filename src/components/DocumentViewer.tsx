@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { isVehicleCategory } from "../utils/productUtils";
@@ -11,15 +11,43 @@ interface DocumentViewerProps {
   onClose: () => void;
 }
 
+// A4 (210mm) の CSS ピクセル幅（96dpi 換算）。スマホでの縮小率計算に使用。
+const A4_PX_WIDTH = 794;
+
 export default function DocumentViewer({ order, type, blockId, onClose }: DocumentViewerProps) {
   const documentRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // 画面サイズに応じた表示倍率:
+  //  - スマホ（お客様・スタッフ）: A4 を画面幅にフィットさせる（横スクロール不要）
+  //  - PC（admin）: 等倍の A4 プレビュー
+  const [docScale, setDocScale] = useState(1);
+  const isMobile = docScale < 1;
+  useEffect(() => {
+    const compute = () => {
+      const vw = window.innerWidth;
+      if (vw < A4_PX_WIDTH + 64) {
+        // 左右の余白ぶんを引いて A4 がぴったり収まる倍率に
+        setDocScale(Math.max(0.3, Math.round(((vw - 16) / A4_PX_WIDTH) * 100) / 100));
+      } else {
+        setDocScale(1);
+      }
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
 
   const handleDownloadPdf = async () => {
     if (!documentRef.current) return;
     setIsGenerating(true);
     try {
       const element = documentRef.current;
+
+      // PDF は常に等倍の A4 レイアウトでキャプチャする
+      // （スマホ表示の zoom 縮小は画面表示のみ。一時的に解除して撮影後に戻す）。
+      const prevZoom = (element.style as any).zoom;
+      (element.style as any).zoom = "1";
 
       // 重要: 署名などの data-URL 画像が完全にデコードされてから html2canvas に渡す。
       // そうしないと clone 時に画像が未デコードのまま空白でキャプチャされ、PDF に署名が出ない。
@@ -41,13 +69,18 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
         })
       );
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-      });
+      let canvas: HTMLCanvasElement;
+      try {
+        canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+        });
+      } finally {
+        (element.style as any).zoom = prevZoom || "";
+      }
 
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
       const pdf = new jsPDF("p", "mm", "a4");
@@ -168,22 +201,22 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
   const message = type === "納品書" ? "下記の通り納品申し上げます。" : type === "回収書" ? "下記の通り回収いたしました。" : "下記の通りご請求申し上げます。";
   
   return (
-    <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-white rounded-xl shadow-2xl flex flex-col w-full max-w-4xl max-h-[90vh] overflow-hidden">
-        
-        {/* Header toolbar */}
-        <div className="flex justify-between items-center p-4 border-b border-slate-200">
-          <h2 className="font-bold text-lg">{type} プレビュー</h2>
+    <div className={`fixed inset-0 z-[180] flex items-center justify-center bg-black/60 ${isMobile ? "p-0" : "p-4"}`}>
+      <div className={`bg-white shadow-2xl flex flex-col w-full overflow-hidden ${isMobile ? "h-full max-h-full rounded-none" : "rounded-xl max-w-4xl max-h-[90vh]"}`}>
+
+        {/* Header toolbar（スマホはコンパクト表示） */}
+        <div className={`flex justify-between items-center border-b border-slate-200 ${isMobile ? "p-3" : "p-4"}`}>
+          <h2 className={`font-bold ${isMobile ? "text-base" : "text-lg"}`}>{type} プレビュー</h2>
           <div className="flex gap-2">
-            <button 
+            <button
               onClick={handleDownloadPdf}
               disabled={isGenerating}
-              className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-600 transition-colors disabled:opacity-50"
+              className={`flex items-center gap-1.5 bg-primary text-white rounded-lg font-bold hover:bg-blue-600 transition-colors disabled:opacity-50 ${isMobile ? "px-3 py-2 text-xs" : "px-4 py-2 text-sm gap-2"}`}
             >
               <span className="material-symbols-outlined text-sm">download</span>
-              {isGenerating ? "生成中..." : "PDFダウンロード"}
+              {isGenerating ? "生成中..." : isMobile ? "PDF" : "PDFダウンロード"}
             </button>
-            <button 
+            <button
               onClick={onClose}
               className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
             >
@@ -193,20 +226,22 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
         </div>
 
         {/* Scrollable Document Area */}
-        <div className="flex-1 overflow-auto p-4 md:p-8 bg-slate-100 flex justify-center items-start">
-          
-          {/* A4 Document Container */}
-          <div 
-            ref={documentRef} 
+        <div className={`flex-1 overflow-auto bg-slate-100 flex justify-center items-start ${isMobile ? "p-2" : "p-4 md:p-8"}`}>
+
+          {/* A4 Document Container
+              スマホでは zoom で画面幅にフィット（PDF 出力時は等倍に戻して撮影）。 */}
+          <div
+            ref={documentRef}
             className="bg-white shadow-sm"
-            style={{ 
-               width: "210mm", 
-               minHeight: "297mm", 
+            style={{
+               width: "210mm",
+               minHeight: "297mm",
                padding: "20mm 15mm",
                fontFamily: "'Noto Sans JP', sans-serif",
                color: "#333",
-               boxSizing: "border-box"
-            }}
+               boxSizing: "border-box",
+               zoom: docScale,
+            } as React.CSSProperties}
           >
             {/* Document Header */}
             <div className="flex justify-between items-start mb-10">
