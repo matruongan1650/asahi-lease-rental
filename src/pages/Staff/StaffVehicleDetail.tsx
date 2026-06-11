@@ -67,16 +67,16 @@ export default function StaffVehicleDetail() {
     legalInfo: {
       inspection: {
         title: "車検証 (自動車検査証)",
-        daysRemaining: foundVehicle.inspectionDaysRemaining,
+        daysRemaining: foundVehicle.inspectionDaysRemaining ?? 0,
         lastDate: "2024/06/05",
-        expiryDate: foundVehicle.inspectionDate,
-        file: `車検証_${foundVehicle.plate.replace(/[^0-9]/g, '')}.pdf`
+        expiryDate: foundVehicle.inspectionDate || "未登録",
+        file: `車検証_${String(foundVehicle.plate || "").replace(/[^0-9]/g, '') || "未登録"}.pdf`
       },
       insurance: {
         title: "自賠責保険",
-        daysRemaining: foundVehicle.inspectionDaysRemaining + 12,
+        daysRemaining: (foundVehicle.inspectionDaysRemaining ?? 0) + 12,
         policyNo: "JB-2024-558102",
-        expiryDate: foundVehicle.insuranceDate,
+        expiryDate: foundVehicle.insuranceDate || "未登録",
         file: "自賠責_2024.pdf"
       }
     },

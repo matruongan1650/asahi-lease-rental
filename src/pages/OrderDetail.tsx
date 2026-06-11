@@ -452,7 +452,8 @@ export default function OrderDetail() {
               <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
             </button>
             
-            {(order.status === "返却済" || order.status === "一部返却" || order.status === "完了") && (
+            {/* 複数月レンタルでは月ごとの請求書（レンタル中でも各月分を表示できる） */}
+            {(order.status === "返却済" || order.status === "一部返却" || order.status === "完了" || (blocks && blocks.length > 0)) && (
               <>
                 <button
                   onClick={() => {
@@ -475,6 +476,8 @@ export default function OrderDetail() {
                   </div>
                   <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
                 </button>
+                {/* 回収書は返却後のみ */}
+                {(order.status === "返却済" || order.status === "一部返却" || order.status === "完了") && (
                 <button
                   onClick={() => setViewingDoc("回収書")}
                   className="flex items-center justify-between p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-primary dark:hover:border-primary/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all font-medium text-sm text-slate-700 dark:text-slate-200"
@@ -487,6 +490,7 @@ export default function OrderDetail() {
                   </div>
                   <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
                 </button>
+                )}
               </>
             )}
           </div>

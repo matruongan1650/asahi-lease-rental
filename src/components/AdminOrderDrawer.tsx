@@ -151,14 +151,21 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
           >
             <span className="material-symbols-outlined text-[14px]">assignment_return</span>回収書
           </button>
-          {blocks.length > 0 && (
-            <button
-              onClick={() => { setViewingBlockId(blocks[blocks.length - 1].id); setViewingDoc("請求書"); }}
-              className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-bold text-[12px] flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[14px]">receipt_long</span>請求書
-            </button>
-          )}
+          {/* 複数月レンタルは月ごとに請求書 PDF を発行（例: 6/11〜8/1 → 6月分・7月分・8月分） */}
+          {blocks.map((b: any) => {
+            const m = (b.monthPeriod || "").split("-");
+            const label = m.length === 2 ? `請求書 ${Number(m[1])}月分` : "請求書";
+            return (
+              <button
+                key={b.id}
+                onClick={() => { setViewingBlockId(b.id); setViewingDoc("請求書"); }}
+                className="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 rounded-md font-bold text-[12px] flex items-center gap-1 transition-colors cursor-pointer"
+                title={`${b.startDate} 〜 ${b.endDate}`}
+              >
+                <span className="material-symbols-outlined text-[14px]">receipt_long</span>{label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Info Grid */}
