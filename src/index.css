@@ -243,6 +243,39 @@
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom);
   }
+  /* Safe-area top padding (status bar / notch) */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* ────────────────────────────────────────────────────────
+   モバイル Web アプリ最適化（お客様サイト）
+   ──────────────────────────────────────────────────────── */
+html {
+  /* 横向き回転時の文字自動拡大を防止 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  /* タップ時の灰色ハイライトを消してアプリらしい操作感に */
+  -webkit-tap-highlight-color: transparent;
+  /* プルでページ全体がバウンス/リロードされるのを防止 */
+  overscroll-behavior-y: none;
+  /* 長押しでの誤コピー抑制はせず、テキスト選択は許可（業務アプリのため） */
+}
+button, a, [role="button"] {
+  touch-action: manipulation; /* ダブルタップズームの 300ms 遅延を排除 */
+}
+/* iOS はフォントサイズ 16px 未満の入力欄にフォーカスすると画面を自動ズームする。
+   スマホ幅ではすべての入力欄を 16px 以上にしてズームを防ぐ。 */
+@media (max-width: 480px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+@layer utilities {
 
   /* Tabular numbers for data/tables */
   .tnum {

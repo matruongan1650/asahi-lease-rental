@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#136dec"/>
+  <!-- 保安コーン -->
+  <polygon points="256,96 352,392 160,392" fill="#ffffff"/>
+  <polygon points="256,150 322,352 190,352" fill="#f59e0b"/>
+  <rect x="120" y="392" width="272" height="36" rx="14" fill="#ffffff"/>
+  <rect x="208" y="232" width="96" height="30" fill="#ffffff"/>
+</svg>

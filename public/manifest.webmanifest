@@ -1,0 +1,20 @@
+{
+  "name": "アサヒリース レンタル・販売",
+  "short_name": "アサヒリース",
+  "description": "保安用品・保安車両のレンタル・販売ポータル",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7f8",
+  "theme_color": "#136dec",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
