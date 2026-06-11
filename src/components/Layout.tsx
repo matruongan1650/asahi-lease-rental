@@ -1,6 +1,8 @@
 import { Outlet, useLocation, Link } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { useCart } from "../context/CartContext";
+import { useUser } from "../context/UserContext";
+import CustomerLogin from "./CustomerLogin";
 
 // List of routes where the bottom navigation should NOT be visible
 const HIDE_NAV_ROUTES = [
@@ -14,10 +16,16 @@ const HIDE_NAV_ROUTES = [
 export default function Layout() {
   const location = useLocation();
   const { totalItems } = useCart();
+  const { currentUser } = useUser();
 
   const hideNav = HIDE_NAV_ROUTES.some((route) =>
     location.pathname.startsWith(route)
   );
+
+  // 認証ゲート: 未ログインならログイン画面を表示（admin が発行したアカウントでログイン）。
+  if (!currentUser) {
+    return <CustomerLogin />;
+  }
 
   return (
     <div className="relative flex h-full min-h-screen w-full flex-col overflow-x-hidden max-w-[480px] mx-auto bg-background-light dark:bg-background-dark shadow-xl text-slate-900 dark:text-white">

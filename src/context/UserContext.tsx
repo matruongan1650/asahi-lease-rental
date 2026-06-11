@@ -5,6 +5,7 @@ import React, {
   ReactNode,
   useEffect,
 } from "react";
+import OrderBus from "../lib/orderBus";
 
 export interface UserProfile {
   id: string;
@@ -31,6 +32,11 @@ interface UserContextType {
   addUser: (user: UserProfile) => void;
   updateUser: (id: string, updates: Partial<UserProfile>) => void;
   deleteUser: (id: string) => void;
+  /** ログイン中ユーザー（未ログインなら null）。お客様サイトの認証ゲートで使用。 */
+  currentUser: UserProfile | null;
+  /** メールアドレス or ユーザーID + パスワードでログイン。成功時 true。 */
+  login: (loginId: string, password: string) => boolean;
+  logout: () => void;
 }
 
 const defaultProfile: UserProfile = {
@@ -45,8 +51,10 @@ const defaultProfile: UserProfile = {
     "https://lh3.googleusercontent.com/aida-public/AB6AXuAuFpsreLwVkapqiTBN2olOSvumTfpBhRsLdbNZmwHIVxbM8B9k5GyO1hiEyi0t7u17F_5GgL1XLOokHGMnX5khiYbV3g0xlxBFg7-u99_JxwTreYt-Axk0WS3uodyirJadDvx8KAv2RUesxyuC8pDx6zYz7h4gxRduw5XbsG8MTC_AVCEysVLpT2KmJeSRvgQbaG3tqWX5tXFakk-SAqTv6AXQhHfswOujLodZsAqdlCZleOOiU2tYPRAXNcxWYq4L3ZVW1gGOdwE",
   role: "customer",
   companyType: "client_company",
+  password: "1234",
 };
 
+// 初期シードユーザー。password はデモ用の初期値（admin の ユーザー管理 で変更可能）。
 const initialUsers: UserProfile[] = [
   defaultProfile,
   {
@@ -60,6 +68,7 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "customer",
     companyType: "client_company",
+    password: "1234",
   },
   {
     id: "USR_002_1",
@@ -72,6 +81,7 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "customer_staff",
     companyType: "client_company",
+    password: "1234",
   },
   {
     id: "USR_005",
@@ -84,6 +94,7 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "customer",
     companyType: "client_company",
+    password: "1234",
   },
   {
     id: "USR_006",
@@ -96,6 +107,7 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "customer",
     companyType: "client_company",
+    password: "1234",
   },
   {
     id: "USR_003",
@@ -108,6 +120,7 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "admin",
     companyType: "our_company",
+    password: "1234",
   },
   {
     id: "USR_004",
@@ -120,43 +133,129 @@ const initialUsers: UserProfile[] = [
     avatarUrl: "",
     role: "staff",
     companyType: "our_company",
+    password: "1234",
   },
 ];
+
+const SESSION_KEY = "asahi.sessionUserId";
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const UserProvider = ({ children }: { children: ReactNode }) => {
-  const [profile, setProfile] = useState<UserProfile>(defaultProfile);
-  const [users, setUsers] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem("app_users");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return initialUsers;
-      }
+  // ユーザーマスタは OrderBus の "users" ストアが正（クラウド同期で全端末共有）。
+  const [users, setUsers] = useState<UserProfile[]>(
+    () => OrderBus.getAll("users") as unknown as UserProfile[],
+  );
+  const [sessionUserId, setSessionUserId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(SESSION_KEY);
+    } catch {
+      return null;
     }
-    return initialUsers;
   });
+  // 旧仕様互換: setProfile で直接プロフィールを差し替えるケース用のフォールバック。
+  const [fallbackProfile, setFallbackProfile] =
+    useState<UserProfile>(defaultProfile);
 
   useEffect(() => {
-    localStorage.setItem("app_users", JSON.stringify(users));
-    if (users.length > 0 && !users.find((u) => u.id === profile.id)) {
-      setProfile(users[0]);
-    }
-  }, [users]);
+    const unsub = OrderBus.subscribe("users", (data) => {
+      setUsers(data as unknown as UserProfile[]);
+    });
 
-  const addUser = (user: UserProfile) => setUsers((prev) => [user, ...prev]);
-  const updateUser = (id: string, updates: Partial<UserProfile>) =>
-    setUsers((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, ...updates } : u)),
+    // 初回マイグレーション/シード:
+    //  1) 旧ローカル保存（app_users）があれば OrderBus へ移行（admin が作った既存アカウントを保持）
+    //  2) それも無ければデモ初期ユーザー（パスワード初期値 "1234"）を seed
+    if (OrderBus.getAll("users").length === 0) {
+      let migrated: UserProfile[] | null = null;
+      try {
+        const saved = localStorage.getItem("app_users");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            migrated = parsed.filter(Boolean);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      OrderBus.seedIfEmpty(
+        "users",
+        (migrated && migrated.length > 0 ? migrated : initialUsers) as any,
+      );
+    }
+
+    return () => unsub();
+  }, []);
+
+  const currentUser =
+    (sessionUserId && users.find((u) => u && u.id === sessionUserId)) || null;
+
+  // profile: ログイン中はそのユーザー。未ログイン時は旧来のフォールバック
+  // （admin 画面など認証ゲート外からの利用を壊さないため）。
+  const profile = currentUser || fallbackProfile;
+
+  const persistSession = (id: string | null) => {
+    setSessionUserId(id);
+    try {
+      if (id) localStorage.setItem(SESSION_KEY, id);
+      else localStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const login = (loginId: string, password: string): boolean => {
+    const key = (loginId || "").trim().toLowerCase();
+    if (!key) return false;
+    const user = users.find(
+      (u) =>
+        u &&
+        ((u.email || "").trim().toLowerCase() === key ||
+          (u.id || "").trim().toLowerCase() === key),
     );
-  const deleteUser = (id: string) =>
-    setUsers((prev) => prev.filter((u) => u.id !== id));
+    if (!user) return false;
+    if ((user.password || "") !== password) return false;
+    persistSession(user.id);
+    return true;
+  };
+
+  const logout = () => persistSession(null);
+
+  // setProfile 互換: 既存ユーザーならマスタを更新しつつそのユーザーでセッションを張る
+  // （admin の「代理ログイン」や Checkout の連絡先更新が従来どおり動く）。
+  const setProfile = (p: UserProfile) => {
+    if (p?.id && users.find((u) => u && u.id === p.id)) {
+      OrderBus.patch("users", p.id, p as any);
+      persistSession(p.id);
+    } else {
+      setFallbackProfile(p);
+    }
+  };
+
+  const addUser = (user: UserProfile) => {
+    OrderBus.push("users", user as any);
+  };
+  const updateUser = (id: string, updates: Partial<UserProfile>) => {
+    OrderBus.patch("users", id, updates as any);
+  };
+  const deleteUser = (id: string) => {
+    OrderBus.remove("users", id);
+    if (sessionUserId === id) persistSession(null);
+  };
 
   return (
     <UserContext.Provider
-      value={{ profile, setProfile, users, addUser, updateUser, deleteUser }}
+      value={{
+        profile,
+        setProfile,
+        users,
+        addUser,
+        updateUser,
+        deleteUser,
+        currentUser,
+        login,
+        logout,
+      }}
     >
       {children}
     </UserContext.Provider>

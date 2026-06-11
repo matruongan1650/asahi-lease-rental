@@ -58,7 +58,8 @@ export type BusStore =
   | "assets"
   | "warehouse"
   | "stocktake"
-  | "repairs";
+  | "repairs"
+  | "users";
 
 /** Every record stored in the bus must at least have an `id` */
 export interface BusRecord {
@@ -171,6 +172,7 @@ const BUS_STORES: readonly BusStore[] = [
   "warehouse",
   "stocktake",
   "repairs",
+  "users",
 ] as const;
 
 // ---------------------------------------------------------------------------

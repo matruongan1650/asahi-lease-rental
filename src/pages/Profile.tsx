@@ -3,8 +3,14 @@ import { Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 
 export default function Profile() {
-  const { profile } = useUser();
+  const { profile, logout } = useUser();
   const [showNotifications, setShowNotifications] = useState(false);
+
+  const handleLogout = () => {
+    if (window.confirm("ログアウトしますか？")) {
+      logout();
+    }
+  };
 
   return (
     <>
@@ -46,9 +52,14 @@ export default function Profile() {
           </div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-1">{profile.companyName ? `${profile.companyName} ` : ''}{profile.lastName} {profile.firstName}</h2>
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-[10px] font-bold rounded-full border border-yellow-200 dark:border-yellow-700/50">ゴールド会員</span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">ID: 8490333</span>
+            <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-[10px] font-bold rounded-full border border-yellow-200 dark:border-yellow-700/50">
+              {profile.role === "customer" ? "企業代表者" : "注文担当者"}
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">ID: {profile.id}</span>
           </div>
+          {profile.email && (
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{profile.email}</p>
+          )}
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-5">
@@ -68,7 +79,7 @@ export default function Profile() {
           <ProfileMenuLink icon="badge" iconColor="purple" title="スタッフポータル" subtitle="Staff Portal" to="/staff" />
         </div>
 
-        <button className="w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center justify-center gap-2 mb-8 group active:scale-[0.98]">
+        <button onClick={handleLogout} className="w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center justify-center gap-2 mb-8 group active:scale-[0.98]">
           <span className="material-symbols-outlined text-red-500 group-hover:-translate-x-1 transition-transform">logout</span>
           <span className="font-bold text-red-500">ログアウト</span>
         </button>

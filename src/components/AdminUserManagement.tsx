@@ -15,6 +15,16 @@ export default function AdminUserManagement() {
       : u.companyType === "client_company" || !u.companyType,
   );
 
+  // 実在する取引先企業の一覧（ユーザーマスタから抽出）。会社選択用。
+  const clientCompanies = Array.from(
+    new Set(
+      users
+        .filter((u) => u.companyType === "client_company" || !u.companyType)
+        .map((u) => (u.companyName || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
   const handleEdit = (u: UserProfile) => {
     setEditingUser(u);
     setIsModalOpen(true);
@@ -62,6 +72,14 @@ export default function AdminUserManagement() {
       companyType: activeSubTab,
     };
 
+    // パスワード: 入力があれば設定/変更。新規作成で空欄なら自動生成して通知する。
+    const passwordInput = ((formData.get("password") as string) || "").trim();
+    if (passwordInput) {
+      userData.password = passwordInput;
+    } else if (!editingUser?.id) {
+      userData.password = Math.random().toString(36).slice(-8);
+    }
+
     if (editingUser?.id) {
       updateUser(editingUser.id, userData);
     } else {
@@ -70,6 +88,11 @@ export default function AdminUserManagement() {
         ...userData,
         avatarUrl: "",
       } as UserProfile);
+      if (!passwordInput) {
+        alert(
+          `${userData.lastName} ${userData.firstName} のログイン情報\n\nログインID: ${userData.email}\nパスワード: ${userData.password}\n\n必ず控えて本人に共有してください。`,
+        );
+      }
     }
     setIsModalOpen(false);
   };
@@ -232,12 +255,33 @@ export default function AdminUserManagement() {
                 <label className="block text-sm font-bold text-slate-700 mb-1">
                   会社名
                 </label>
-                <input
-                  required
-                  defaultValue={editingUser.companyName}
-                  name="companyName"
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm"
-                />
+                {activeSubTab === "client_company" ? (
+                  <>
+                    <input
+                      required
+                      defaultValue={editingUser.companyName}
+                      name="companyName"
+                      list="client-company-list"
+                      placeholder="既存の取引先から選択（または新規入力）"
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                    <datalist id="client-company-list">
+                      {clientCompanies.map((c) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      登録済みの取引先企業から選択できます。
+                    </p>
+                  </>
+                ) : (
+                  <input
+                    required
+                    defaultValue={editingUser.companyName}
+                    name="companyName"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                  />
+                )}
               </div>
 
               {activeSubTab === "our_company" ? (
@@ -297,6 +341,31 @@ export default function AdminUserManagement() {
                   name="phone"
                   className="w-full border border-slate-300 rounded-lg p-2 text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  パスワード{" "}
+                  <span className="font-normal text-slate-400">
+                    （お客様サイトのログイン用）
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  name="password"
+                  defaultValue=""
+                  placeholder={
+                    editingUser.id
+                      ? editingUser.password
+                        ? `設定済み（現在: ${editingUser.password}）— 変更する場合のみ入力`
+                        : "未設定 — 設定する場合は入力"
+                      : "空欄なら自動生成して表示します"
+                  }
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  ログインID はメールアドレスです。
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 mt-6">

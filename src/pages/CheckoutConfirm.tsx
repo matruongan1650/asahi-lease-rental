@@ -30,8 +30,15 @@ export default function CheckoutConfirm() {
       constructionNumber: orderData.constructionNumber,
       companyName: orderData.companyName,
       personName: orderData.personName,
+      personLastName: orderData.personLastName,
+      personFirstName: orderData.personFirstName,
       rentalStartDate: orderData.rentalStartDate,
-      rentalEndDate: orderData.rentalEndDate
+      rentalEndDate: orderData.rentalEndDate,
+      // 発注アカウント情報（admin / 帳票で参照）
+      userId: orderData.userId,
+      userEmail: orderData.userEmail,
+      userPhone: orderData.userPhone,
+      notes: orderData.notes,
     });
     
     // In many apps, placing an order clears the cart

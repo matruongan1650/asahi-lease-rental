@@ -605,10 +605,19 @@ export default function Checkout() {
               disabled={!isFormValid}
               onClick={() => {
                 setProfile({ ...profile, companyName, firstName: personFirstName, lastName: personLastName, address: deliveryLocation });
-                navigate("/checkout-confirm", { 
-                  state: { 
-                    orderData: { items: updatedItems, total, subtotal, tax, deliveryLocation, deliveryDate, siteName, constructionNumber, companyName, personName: `${personLastName} ${personFirstName}`.trim(), rentalStartDate, rentalEndDate, notes }
-                  } 
+                navigate("/checkout-confirm", {
+                  state: {
+                    orderData: {
+                      items: updatedItems, total, subtotal, tax, deliveryLocation, deliveryDate, siteName, constructionNumber, companyName,
+                      personName: `${personLastName} ${personFirstName}`.trim(),
+                      personLastName, personFirstName,
+                      rentalStartDate, rentalEndDate, notes,
+                      // ログイン中アカウントの情報を注文に紐付ける（admin 側で発注者を特定できる）
+                      userId: profile.id,
+                      userEmail: profile.email,
+                      userPhone: profile.phone,
+                    }
+                  }
                 });
               }}
               className={`flex-[2.5] flex items-center justify-center gap-2 rounded-lg px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-primary/30 active:scale-[0.98] transition-all ${!isFormValid ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none" : "bg-primary hover:bg-blue-600"}`}

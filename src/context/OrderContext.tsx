@@ -18,6 +18,13 @@ export interface Order {
   constructionNumber?: string;
   companyName?: string;
   personName?: string;
+  personLastName?: string;
+  personFirstName?: string;
+  /** 発注したログインアカウント（admin で発注者を特定するため） */
+  userId?: string;
+  userEmail?: string;
+  userPhone?: string;
+  notes?: string;
   rentalStartDate?: string;
   rentalEndDate?: string;
   actualReturnDate?: string;

@@ -119,6 +119,7 @@ export default function AdminCustomerManagement() {
   const [editSubPosition, setEditSubPosition] = useState("");
   const [editSubEmail, setEditSubEmail] = useState("");
   const [editSubPhone, setEditSubPhone] = useState("");
+  const [editSubPassword, setEditSubPassword] = useState("");
 
   // Bulk Add Sub-users
   const [isBulkAddModalOpen, setIsBulkAddModalOpen] = useState(false);
@@ -452,19 +453,25 @@ export default function AdminCustomerManagement() {
     setEditSubPosition(u.position || "");
     setEditSubEmail(u.email);
     setEditSubPhone(u.phone);
+    setEditSubPassword("");
     setIsEditSubUserModalOpen(true);
   };
 
   const handleUpdateSubUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSubUser) return;
-    updateUser(selectedSubUser.id, {
+    const updates: Partial<UserProfile> = {
       lastName: editSubLastName,
       firstName: editSubFirstName,
       position: editSubPosition,
       email: editSubEmail,
       phone: editSubPhone,
-    });
+    };
+    // パスワード欄に入力があった場合のみ変更（空欄なら現状維持）
+    if (editSubPassword.trim()) {
+      updates.password = editSubPassword.trim();
+    }
+    updateUser(selectedSubUser.id, updates);
     setIsEditSubUserModalOpen(false);
     triggerToast(`担当者 ${editSubLastName} を更新しました`, "ok");
   };
@@ -1629,6 +1636,13 @@ export default function AdminCustomerManagement() {
               </Field>
               <Field label="電話番号">
                 <TextInput value={editSubPhone} onChange={e => setEditSubPhone(e.target.value)} />
+              </Field>
+              <Field label="パスワード（お客様サイトのログイン用）">
+                <TextInput
+                  value={editSubPassword}
+                  onChange={e => setEditSubPassword(e.target.value)}
+                  placeholder={selectedSubUser?.password ? `現在: ${selectedSubUser.password} — 変更する場合のみ入力` : "未設定 — 設定する場合は入力"}
+                />
               </Field>
             </form>
           </Modal>
