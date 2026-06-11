@@ -85,12 +85,41 @@ def upload_contents(ftp, local_dir: str) -> None:
             print(f"  ✓ {ftp.pwd()}/{name}")
 
 
+def cleanup_old_assets(ftp) -> None:
+    """assets/ 内でローカルに存在しないハッシュ付き旧バンドルを削除する。
+    （古い index.html をキャッシュしたブラウザが旧UIを読み続けるのを防ぐ）"""
+    local_assets = os.path.join(LOCAL, "assets")
+    if not os.path.isdir(local_assets):
+        return
+    keep = set(os.listdir(local_assets))
+    try:
+        ftp.cwd("assets")
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        remote_files = ftp.nlst()
+    except Exception:  # noqa: BLE001
+        remote_files = []
+    for name in remote_files:
+        base = name.split("/")[-1]
+        if base in (".", ".."):
+            continue
+        if base not in keep:
+            try:
+                ftp.delete(base)
+                print(f"  ✗ 旧アセット削除: assets/{base}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! 削除失敗 assets/{base}: {e}")
+    ftp.cwd("..")
+
+
 def main() -> None:
     print(f"[deploy] {LOCAL}/ → {HOST}{REMOTE}")
     ftp = connect()
     try:
         ensure_remote_dir(ftp, REMOTE)
         upload_contents(ftp, LOCAL)
+        cleanup_old_assets(ftp)
         print("[deploy] 完了 ✅")
     finally:
         try:

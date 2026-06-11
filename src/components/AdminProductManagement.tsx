@@ -21,7 +21,7 @@ export default function AdminProductManagement() {
   // 車両カテゴリーは保安用品フォームでは除外する。
   const categoriesList = Array.from(new Set([
     ...Object.keys(SUPPLY_CATEGORY_ICONS),
-    ...(products || []).map(p => p?.category).filter(Boolean) as string[],
+    ...((products || []).map(p => p?.category).filter(Boolean) as string[]).map(c => c.trim()),
   ])).filter(c => c && !isVehicleCategory(c));
 
   // Filter functionality
