@@ -7,57 +7,11 @@ import { useState, useRef } from "react";
 import { calculateRentalPrice } from "../utils/billing";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import DatePicker, { registerLocale } from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
-import { ja } from "date-fns/locale/ja";
 import { isVehicleCategory } from '../utils/productUtils';
-import React, { useEffect, forwardRef } from 'react';
+import React, { useEffect } from 'react';
 
-registerLocale("ja", ja);
-
-const CustomDateInput = forwardRef<HTMLInputElement, any>((props, ref) => {
-  return (
-    <div className="relative w-full">
-      <input 
-        {...props} 
-        ref={ref}
-        maxLength={10}
-        autoComplete="off"
-      />
-      <span className="material-symbols-outlined absolute right-3.5 top-1/2 -translate-y-1/2 text-primary/60 pointer-events-none select-none text-[20px]">
-        calendar_month
-      </span>
-    </div>
-  );
-});
-
-const formatDateToYYYYMMDD = (date: Date | null) => {
-  if (!date) return "";
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-};
-
-const parseDateFromYYYYMMDD = (dateStr: string) => {
-  if (!dateStr) return null;
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return null;
-  return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-};
-
-const handleDateChangeRaw = (e: any) => {
-  if (!e || !e.target || typeof (e.target as HTMLInputElement).value !== 'string') return;
-  const target = e.target as HTMLInputElement;
-  let val = target.value.replace(/\D/g, '');
-  if (val.length > 4 && val.length <= 6) {
-    target.value = val.slice(0, 4) + '/' + val.slice(4);
-  } else if (val.length > 6) {
-    target.value = val.slice(0, 4) + '/' + val.slice(4, 6) + '/' + val.slice(6, 8);
-  } else {
-    target.value = val;
-  }
-};
+// 日付入力は 期間延長（注文詳細）と同じネイティブの <input type="date"> を使用する。
+// 値の形式は YYYY-MM-DD（state とそのまま一致）。
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -286,32 +240,22 @@ export default function Checkout() {
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col w-full relative">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">レンタル開始日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
-              <DatePicker
-                selected={parseDateFromYYYYMMDD(rentalStartDate)}
-                onChange={(date) => {
-                  setRentalStartDate(formatDateToYYYYMMDD(date));
-                }}
-                onChangeRaw={handleDateChangeRaw}
-                locale="ja"
-                dateFormat="yyyy/MM/dd"
-                customInput={<CustomDateInput />}
-                wrapperClassName="w-full"
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 pr-11 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium placeholder:font-normal placeholder:text-slate-400"
-                placeholderText="年 / 月 / 日"
+              {/* 期間延長と同じネイティブのカレンダー（OS 標準の日付ピッカー）を使用 */}
+              <input
+                type="date"
+                value={rentalStartDate || ""}
+                onChange={(e) => setRentalStartDate(e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
             <div className="flex flex-col w-full relative">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">レンタル終了予定日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
-              <DatePicker
-                selected={parseDateFromYYYYMMDD(rentalEndDate)}
-                onChange={(date) => setRentalEndDate(formatDateToYYYYMMDD(date))}
-                onChangeRaw={handleDateChangeRaw}
-                locale="ja"
-                dateFormat="yyyy/MM/dd"
-                customInput={<CustomDateInput />}
-                wrapperClassName="w-full"
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 pr-11 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium placeholder:font-normal placeholder:text-slate-400"
-                placeholderText="年 / 月 / 日"
+              <input
+                type="date"
+                value={rentalEndDate || ""}
+                min={rentalStartDate || undefined}
+                onChange={(e) => setRentalEndDate(e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
           </div>
@@ -319,16 +263,11 @@ export default function Checkout() {
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col w-full relative">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">納品希望日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
-              <DatePicker
-                selected={parseDateFromYYYYMMDD(deliveryDate)}
-                onChange={(date) => setDeliveryDate(formatDateToYYYYMMDD(date))}
-                onChangeRaw={handleDateChangeRaw}
-                locale="ja"
-                dateFormat="yyyy/MM/dd"
-                customInput={<CustomDateInput />}
-                wrapperClassName="w-full"
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 pr-11 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium placeholder:font-normal placeholder:text-slate-400"
-                placeholderText="年 / 月 / 日"
+              <input
+                type="date"
+                value={deliveryDate || ""}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
           </div>
