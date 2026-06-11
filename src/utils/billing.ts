@@ -143,13 +143,52 @@ export function calculateTotalPayment(subtotal: number): { subtotal: number; tax
 }
 
 /**
+ * 注文のレンタル品目に monthlyBreakdown が無い場合に補完する。
+ * （admin 手動作成・旧データ・外部同期データなどは breakdown を持たないことがあり、
+ *   そのままだと請求書が ¥0 / 明細空欄になるため、注文の期間と単価から再計算する。）
+ * 元の items は変更せず、補完済みのコピーを返す。
+ */
+export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
+  const hasVehicle = (order.items || []).some(
+    (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
+  );
+  const endDate = (order as any).actualReturnDate || order.rentalEndDate;
+  return (order.items || []).map((item: any) => {
+    if (
+      item &&
+      item.type === "rent" &&
+      (!item.monthlyBreakdown || item.monthlyBreakdown.length === 0) &&
+      item.rentPrice &&
+      order.rentalStartDate &&
+      endDate
+    ) {
+      try {
+        const { totalPrice, breakdown } = calculateRentalPrice(
+          item.rentPrice,
+          order.rentalStartDate,
+          endDate,
+          hasVehicle,
+          isVehicleCategory(item.category),
+          item.rentPriceLongTerm
+        );
+        return { ...item, monthlyBreakdown: breakdown, calculatedPrice: item.calculatedPrice ?? totalPrice };
+      } catch {
+        return item;
+      }
+    }
+    return item;
+  });
+}
+
+/**
  * Computes monthly invoice details for an order for a specific calendar month.
  */
 export function calculateMonthlyInvoice(order: Order, monthStr: string): { subtotal: number; tax: number; total: number; items: any[] } {
   let subtotal = 0;
   const itemsBreakdown: any[] = [];
+  const items = ensureMonthlyBreakdowns(order);
 
-  order.items.forEach(item => {
+  items.forEach(item => {
     if (item.type === 'buy') {
       // Buy items are billed in the order month
       const orderMonth = order.date.split('•')[0]?.trim().slice(0, 7) || "";
@@ -235,8 +274,11 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
     return order.invoiceBlocks;
   }
 
+  // breakdown が無い品目は補完してから月ブロックを構築（¥0 請求書の防止）
+  const ensuredItems = ensureMonthlyBreakdowns(order);
+
   const monthsSet = new Set<string>();
-  order.items.forEach(item => {
+  ensuredItems.forEach(item => {
     if (item.type === 'rent' && item.monthlyBreakdown) {
       item.monthlyBreakdown.forEach(b => {
         if (b.monthStr) {
@@ -249,7 +291,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
   const orderDateClean = order.date?.split("•")[0]?.trim() || "";
   const orderMonth = orderDateClean.replace(/\//g, "-").slice(0, 7); // e.g. "2026-06"
 
-  const hasBuy = order.items.some(i => i.type === 'buy');
+  const hasBuy = ensuredItems.some(i => i.type === 'buy');
   if (hasBuy || monthsSet.size === 0) {
     if (orderMonth && orderMonth.length === 7) {
       monthsSet.add(orderMonth);
@@ -311,7 +353,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
     let chargeableDays = 0;
     let tierApplied: 'Price_A' | 'Price_B' = 'Price_A';
 
-    order.items.forEach(item => {
+    ensuredItems.forEach(item => {
       if (item.type === 'rent') {
         const breakdown = item.monthlyBreakdown?.find(b => b.monthStr === monthStr);
         if (breakdown) {
