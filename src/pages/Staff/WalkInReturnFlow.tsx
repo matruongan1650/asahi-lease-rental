@@ -21,12 +21,13 @@ import { useMobileLive, pushFieldReportsLocal, STAFF } from "../../context/Mobil
 
 export interface WalkInReturnFlowProps {
   onExit: () => void;
-  onComplete: (prods: any[], order: any, signature?: string | null) => void;
+  onComplete: (prods: any[], order: any, signature?: string | null, extra?: any) => void;
 }
 
 const WIN_STEPS = ["受付", "検品", "サイン", "完了"];
 
 function WalkinCard({ o, onClick }: any) {
+  const isRecheck = o.stage === "recheck";
   return (
     <Card onClick={onClick} style={{ marginBottom: 12 }} accent>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -35,7 +36,12 @@ function WalkinCard({ o, onClick }: any) {
           <div style={{ fontSize: 16.5, fontWeight: 800, color: "var(--fg)", lineHeight: 1.25 }}>{o.company}</div>
           <div style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 3 }}>{o.contact} ・ {o.rentalNo}</div>
         </div>
-        <Badge variant="warning" icon="clock">{o.time}</Badge>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
+          <Badge variant={isRecheck ? "brand" : "warning"} icon={isRecheck ? "boxIn" : "clock"}>
+            {isRecheck ? "最終検品" : "一次受付"}
+          </Badge>
+          <Badge variant="neutral">{o.time}</Badge>
+        </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", color: "var(--fg-muted)", fontSize: 13 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><Icon name="qr" size={15} />{o.products.length}品目</span>
@@ -87,9 +93,45 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
   const [signed, setSigned] = useState<string | null>(null);
   const [sheet, setSheet] = useState<string | null>(null);
 
+  // 保安車両の返却記録（最終検品時のみ）: 走行距離・状態・燃料
+  const [vehKm, setVehKm] = useState("");
+  const [vehCondition, setVehCondition] = useState("");
+  const [fuelFull, setFuelFull] = useState(true);
+  const [fuelCost, setFuelCost] = useState("");
+  const [fuelReceipt, setFuelReceipt] = useState<string | null>(null);
+
+  const isRecheck = order?.stage === "recheck";
+  const priorSignature = order?.receptionSignature || order?.fieldSignature || null;
+  const hasVehicleItems = (order?.products || []).some((p: any) =>
+    (p.category || "").includes("車") || ["軽トラック", "軽バン", "2tノーマル", "2tロング", "2t Wキャブノーマル"].some(c => (p.category || p.name || "").includes(c))
+  );
+
+  const buildExtra = () => {
+    if (!isRecheck) return undefined;
+    const extra: any = {};
+    if (hasVehicleItems && (vehKm || vehCondition || !fuelFull)) {
+      extra.vehicleCheckin = {
+        km: vehKm,
+        condition: vehCondition,
+        fuelFull,
+        recordedAt: new Date().toLocaleString("ja-JP"),
+      };
+    }
+    if (hasVehicleItems && !fuelFull && Number(fuelCost) > 0) {
+      extra.fuelCharge = {
+        amount: Number(fuelCost),
+        note: "燃料補給費（満タン返却不足分）",
+        receiptPhoto: fuelReceipt || undefined,
+      };
+    }
+    return Object.keys(extra).length ? extra : undefined;
+  };
+
   const pick = (o: any) => {
     setOrder(o);
-    setProds(o.products.map((p: any) => ({ ...p, scanned: false, counted: p.expected, report: [] })));
+    setProds(o.products.map((p: any) => ({ ...p, scanned: false, counted: p.expected, report: p.report || [] })));
+    setSigned(null);
+    setVehKm(""); setVehCondition(""); setFuelFull(true); setFuelCost(""); setFuelReceipt(null);
     setStep(0);
   };
 
@@ -290,8 +332,12 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
   if (step === 2) {
     body = (
       <>
-        <SectionLabel>返却確認サイン</SectionLabel>
-        <p style={{ fontSize: 13.5, color: "var(--fg-muted)", margin: "0 2px 14px", lineHeight: 1.55 }}>お客様（{order.contact}）に検品結果をご確認いただき、ご署名をお願いします。</p>
+        <SectionLabel>{isRecheck ? "最終検品の確定" : "返却確認サイン"}</SectionLabel>
+        <p style={{ fontSize: 13.5, color: "var(--fg-muted)", margin: "0 2px 14px", lineHeight: 1.55 }}>
+          {isRecheck
+            ? "倉庫の最終検品結果を確定します。確定すると注文が完了し、請求書が発行可能になります。"
+            : `お客様（${order.contact}）に検品結果をご確認いただき、ご署名をお願いします。`}
+        </p>
         <Card style={{ marginBottom: 14 }} pad={14}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
             <span style={{ color: "var(--fg-muted)", fontWeight: 600 }}>検品点数</span>
@@ -304,10 +350,66 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             </div>
           )}
         </Card>
-        <SignaturePad onChange={setSigned} />
+
+        {/* 保安車両の返却記録（最終検品時のみ） */}
+        {isRecheck && hasVehicleItems && (
+          <Card style={{ marginBottom: 14 }} pad={14}>
+            <SectionLabel>保安車両 返却チェック</SectionLabel>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>返却時 走行距離（km）</div>
+                <input value={vehKm} onChange={e => setVehKm(e.target.value)} inputMode="numeric" placeholder="例: 35420"
+                  style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14.5, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>車両の状態（キズ・汚れ等）</div>
+                <input value={vehCondition} onChange={e => setVehCondition(e.target.value)} placeholder="例: 異常なし / 左ドアに擦りキズ"
+                  style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14, fontFamily: "var(--font-jp)", outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", padding: "4px 2px" }}>
+                <input type="checkbox" checked={fuelFull} onChange={e => setFuelFull(e.target.checked)} style={{ width: 19, height: 19 }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--fg)" }}>燃料は満タンで返却された</span>
+              </label>
+              {!fuelFull && (
+                <div style={{ borderRadius: 14, border: "1px solid var(--danger)", background: "var(--danger-tint)", padding: 12 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--danger-bright)", marginBottom: 8 }}>
+                    満タンではありません — お客様へ連絡のうえ給油し、給油レシートを請求書に添付します。
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>給油金額（円・税抜）</div>
+                  <input value={fuelCost} onChange={e => setFuelCost(e.target.value)} inputMode="numeric" placeholder="例: 4200"
+                    style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14.5, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box", marginBottom: 9 }} />
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>給油レシート写真</div>
+                  <input type="file" accept="image/*" onChange={e => {
+                    const f = e.target.files && e.target.files[0];
+                    if (!f) return;
+                    const r = new FileReader();
+                    r.onload = () => setFuelReceipt(String(r.result || ""));
+                    r.readAsDataURL(f);
+                  }} style={{ fontSize: 13 }} />
+                  {fuelReceipt && <img src={fuelReceipt} alt="給油レシート" style={{ marginTop: 8, width: 90, borderRadius: 10, border: "1px solid var(--border-2)" }} />}
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {isRecheck && priorSignature ? (
+          <Card pad={14}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 8 }}>お客様サイン（{order.source === "field_recovery" ? "現場回収時" : "一次受付時"}に取得済み）</div>
+            <img src={priorSignature} alt="サイン" style={{ width: "100%", maxHeight: 120, objectFit: "contain", background: "#fff", borderRadius: 12, border: "1px solid var(--border-2)" }} />
+          </Card>
+        ) : (
+          <SignaturePad onChange={setSigned} />
+        )}
       </>
     );
-    footer = <Btn full size="lg" variant="success" icon="check" disabled={!signed} onClick={confirmSign}>サインを確定</Btn>;
+    footer = (
+      <Btn full size="lg" variant="success" icon="check"
+        disabled={(!signed && !(isRecheck && priorSignature)) || (isRecheck && hasVehicleItems && !fuelFull && !(Number(fuelCost) > 0))}
+        onClick={confirmSign}>
+        {isRecheck ? "最終検品を確定" : "サインを確定"}
+      </Btn>
+    );
   }
 
   if (step === 3) {
@@ -316,7 +418,8 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         <div style={{ width: 92, height: 92, borderRadius: 99, background: "var(--success-tint)", border: "2px solid var(--success-bright)", display: "grid", placeItems: "center", margin: "0 auto 20px", animation: "pop .4s cubic-bezier(.2,0,0,1)" }}>
           <Icon name="check" size={48} color="var(--success-bright)" stroke={2.6} />
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: "var(--fg)" }}>検品完了・入庫済み</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: "var(--fg)" }}>{isRecheck ? "最終検品完了・入庫済み" : "一次検品完了"}</div>
+        {!isRecheck && <div style={{ fontSize: 13, color: "var(--warning-bright)", fontWeight: 700, marginTop: 4 }}>この後、倉庫で最終検品を行って確定します</div>}
         <div style={{ fontSize: 14, color: "var(--fg-muted)", marginTop: 6 }}>{order.id} ・ {order.company}</div>
         <Card style={{ marginTop: 22, textAlign: "left" }} pad={6}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px" }}>
@@ -345,13 +448,15 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         </Card>
       </div>
     );
-    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order, signed)}>完了</Btn>;
+    footer = <Btn full size="lg" icon="check" onClick={() => onComplete(prods, order, signed, buildExtra())}>完了</Btn>;
   }
+
+  const stepLabels = isRecheck ? ["確認", "再検品", "確定", "完了"] : WIN_STEPS;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: 0 }}>
-      <TopBar title={step === 3 ? "完了" : order.company} sub={order.id} onBack={step === 3 ? undefined : (step === 0 ? () => setOrder(null) : onExit)} />
-      <div style={{ padding: "4px 16px 14px" }}><Stepper steps={WIN_STEPS} current={step} /></div>
+      <TopBar title={step === 3 ? "完了" : order.company} sub={(isRecheck ? "最終検品 ・ " : "一次受付 ・ ") + order.id} onBack={step === 3 ? undefined : (step === 0 ? () => setOrder(null) : onExit)} />
+      <div style={{ padding: "4px 16px 14px" }}><Stepper steps={stepLabels} current={step} /></div>
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>{body}</div>
       <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>{footer}</div>
       <DamageReportSheet open={!!sheet} product={prods.find(p => p && p.id === sheet)} onClose={() => setSheet(null)} onSave={saveReport} />

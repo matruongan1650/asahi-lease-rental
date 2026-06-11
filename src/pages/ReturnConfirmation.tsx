@@ -160,6 +160,8 @@ export default function ReturnConfirmation() {
         photos: photos || [],
         products: walkinProducts,
         source: "customer_direct_return",
+        // 2段階検品: まず受付スタッフが一次検品（reception）→ 倉庫が最終検品（recheck）→ 確定
+        stage: "reception",
         returningEverything,
       } as any);
 

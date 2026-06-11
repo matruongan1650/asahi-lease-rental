@@ -127,6 +127,10 @@ export interface FinalizeReturnOptions {
   inspectedByWarehouse?: boolean;
   /** お客様の回収（返却）サイン。回収書 PDF に表示される。 */
   collectionSignature?: string;
+  /** 確定する注文（全量返却時は元注文、一部返却時は -R 注文）へ追加保存するフィールド。
+   *  保安車両の返却記録（vehicleCheckin）や燃料補給費（fuelCharge）など。
+   *  fuelCharge は請求書ブロック生成時に extraCosts として計上される。 */
+  extraFields?: Record<string, any>;
 }
 
 /**
@@ -143,11 +147,12 @@ export function finalizePartialReturn(
   options: FinalizeReturnOptions = {}
 ): ReturnSplit {
   const split = computeReturnSplit(order, returnQuantities, actualReturnDate);
-  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature } = options;
+  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature, extraFields = {} } = options;
 
   if (split.returningEverything) {
     const tempOrder = {
       ...order,
+      ...extraFields,
       items: split.returnedItemsList,
       subtotal: split.returned.subtotal,
       tax: split.returned.tax,
@@ -166,6 +171,7 @@ export function finalizePartialReturn(
       status: "返却済",
       actualReturnDate,
       invoiceBlocks: newInvoiceBlocks,
+      ...extraFields,
       ...(itemIssues ? { itemIssues } : {}),
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
       ...(collectionSignature ? { collectionSignature } : {}),
@@ -193,8 +199,16 @@ export function finalizePartialReturn(
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
     });
 
+    // 保証料は「継続レンタル側」の請求にのみ計上する（当初の注文数量ベースの金額を維持）。
+    // 返却分（-R 注文）にも guaranteeFeeFlat を引き継ぐと初月請求で二重計上になるため 0 にする。
+    const returnedItemsNoGuarantee = split.returnedItemsList.map((i: any) => ({
+      ...i,
+      guaranteeFeeFlat: 0,
+    }));
+
     const tempCustomOrder: any = {
-      items: split.returnedItemsList,
+      ...extraFields,
+      items: returnedItemsNoGuarantee,
       total: split.returned.total,
       subtotal: split.returned.subtotal,
       tax: split.returned.tax,

@@ -113,7 +113,7 @@ interface MobileLiveContextProps {
   connected: boolean;
   liveDeliveries: any[];
   liveRecoveries: any[];
-  completeDelivery: (id: string, signature?: string | null, photos?: any[]) => void;
+  completeDelivery: (id: string, signature?: string | null, photos?: any[], extra?: any) => void;
   completeRecovery: (id: string, signature?: string | null, photos?: any[]) => void;
   vehicles: any[];
   recordVehicleShaken: (plate: string, updates: any) => void;
@@ -255,10 +255,12 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     return cat.includes("車両") || cat.includes("トラック") || cat.includes("バン") || name.includes("エルフ") || name.includes("デュトロ") || name.includes("ハイエース") || name.includes("キャンター");
   };
 
-  const completeDelivery = (id: string, signature?: string | null, photos?: any[]) => {
+  const completeDelivery = (id: string, signature?: string | null, photos?: any[], extra?: any) => {
     const updates: any = { staffStatus: "配送完了", status: "配送済み" };
     if (signature) updates.signature = signature;
     if (photos && photos.length > 0) updates.deliveryPhotos = photos;
+    // 保安車両: 貸出時の走行距離・車両状態の記録（満タンで貸出）
+    if (extra && extra.vehicleCheckout) updates.vehicleCheckout = extra.vehicleCheckout;
     OrderBus.patch("orders", id, updates);
     patchOrder(id, updates).catch(err => console.warn("Failed to sync to firebase:", err));
 
@@ -283,31 +285,47 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const completeRecovery = (id: string, signature?: string | null, photos?: any[]) => {
-    const updates: any = { staffStatus: "回収完了", status: "完了" };
+    // 現場回収の完了 = 注文の終了ではない。
+    // 持ち帰った品は倉庫で「最終検品（再検品）」を行ってから確定・請求書発行する。
+    // そのため在庫計上もここでは行わず、最終検品完了時（completeReturn）に行う。
+    const ordersList = OrderBus.getAll<any>("orders");
+    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
+
+    const updates: any = { staffStatus: "回収完了", status: "検品待ち" };
     if (signature) updates.collectionSignature = signature;
     if (photos && photos.length > 0) updates.collectionPhotos = photos;
     OrderBus.patch("orders", id, updates);
     patchOrder(id, updates).catch(err => console.warn("Failed to sync to firebase:", err));
 
-    // Increment stock and add stock in move
-    const ordersList = OrderBus.getAll<any>("orders");
-    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
-    if (targetOrder && targetOrder.items) {
-      targetOrder.items.forEach((item: any) => {
-        if (item.type === "rent") {
-          const prod = products.find(p => p && p.name === item.name);
-          const qty = item.quantity || 1;
-          if (prod) {
-            adjustStock(prod.id, qty);
-            addStockMove("入庫", {
-              item: item.name,
-              qty: qty,
-              ref: `回収 ${targetOrder.orderNumber || targetOrder.id || ""}`,
-              icon: isVehicle(prod) ? "car" : "package"
-            });
-          }
-        }
-      });
+    // 倉庫の最終検品キューへ登録（stage: "recheck"）
+    if (targetOrder) {
+      const now = new Date();
+      OrderBus.push("walkinReturns", {
+        id: "WIN-" + String(targetOrder.orderNumber || targetOrder.id).replace(/[^A-Za-z0-9]/g, "") + "-" + Math.floor(Math.random() * 900 + 100),
+        orderId: targetOrder.id,
+        orderNumber: targetOrder.orderNumber,
+        firestoreId: targetOrder.firestoreId,
+        company: targetOrder.companyName || "",
+        contact: targetOrder.personName || "",
+        rentalNo: targetOrder.orderNumber,
+        time: now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 持帰り",
+        note: "現場回収分の倉庫最終検品",
+        source: "field_recovery",
+        stage: "recheck",
+        fieldSignature: signature || null,
+        returningEverything: true,
+        products: (targetOrder.items || [])
+          .filter((i: any) => i.type === "rent")
+          .map((i: any, idx: number) => ({
+            id: "P-" + idx,
+            qr: "AS-" + (i.id || idx),
+            name: i.name,
+            expected: (i.quantity || 1) - (i.returnedQuantity || 0),
+            icon: "package",
+            image: i.image,
+            category: i.category,
+          })),
+      } as any);
     }
   };
 

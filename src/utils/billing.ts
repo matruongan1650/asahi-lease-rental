@@ -356,5 +356,22 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
     return recalculateInvoiceBlock(block);
   });
 
+  // 保安車両の燃料補給費（満タン返却に満たなかった場合）を最終ブロックに計上する。
+  // 給油レシートは order.fuelCharge.receiptPhoto に保存され、請求書 PDF に添付される。
+  const fuel = (order as any).fuelCharge;
+  if (fuel && Number(fuel.amount) > 0 && blocks.length > 0) {
+    const last = blocks[blocks.length - 1];
+    last.extraCosts = last.extraCosts || [];
+    if (!last.extraCosts.some((e: any) => e.id === "fuel-refill")) {
+      last.extraCosts.push({
+        id: "fuel-refill",
+        note: fuel.note || "燃料補給費（満タン返却不足分）",
+        amount: Math.round(Number(fuel.amount)),
+        isTaxable: true,
+      } as any);
+      recalculateInvoiceBlock(last);
+    }
+  }
+
   return blocks;
 }

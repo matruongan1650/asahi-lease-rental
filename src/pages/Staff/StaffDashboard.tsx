@@ -459,8 +459,38 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
 
   const staff = { name: "鈴木 健", role: "運行・倉庫総合管理責任者", team: "東京中央ベース", id: "STF-991" };
 
-  const completeReturn = (productsList: any[], walkinOrder?: any, signature?: string | null) => {
+  const completeReturn = (productsList: any[], walkinOrder?: any, signature?: string | null, extra?: any) => {
     const valid = productsList.filter(p => p.counted > 0);
+
+    // ── 2段階検品 ──────────────────────────────────────────
+    // stage "reception"（お客様持込の一次受付検品）: ここでは確定しない。
+    // 受付結果（数量・サイン）を保存して「最終検品（recheck）」キューへ回す。
+    // 在庫計上・注文確定・請求書発行は最終検品の完了時のみ行う。
+    if (walkinOrder && walkinOrder.stage !== "recheck") {
+      try {
+        OrderBus.patch("walkinReturns", walkinOrder.id, {
+          stage: "recheck",
+          receptionAt: new Date().toLocaleString("ja-JP"),
+          receptionSignature: signature || null,
+          fieldSignature: signature || walkinOrder.fieldSignature || null,
+          products: productsList.map((p: any) => ({
+            ...p,
+            // 受付で数えた実数を最終検品の expected にする
+            expected: p.counted ?? p.expected ?? 0,
+            counted: 0,
+            report: p.report || [],
+          })),
+          note: (walkinOrder.note ? walkinOrder.note + " / " : "") + "一次受付検品済み — 倉庫最終検品待ち",
+        } as any);
+      } catch (e) {
+        console.warn("[completeReturn] 一次検品の保存に失敗しました。", e);
+      }
+      setFlow(null);
+      setTab("stock");
+      return;
+    }
+
+    // ── 最終検品（recheck）: 確定処理 ─────────────────────
     // 入庫 + 在庫調整（既存処理）
     if (ml.addStockMove) {
       valid.forEach(p => ml.addStockMove("入庫", { item: p.name, qty: p.counted, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" }));
@@ -510,12 +540,19 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
         });
 
         try {
+          // サインは最終検品時のものが無ければ、一次受付／現場回収時のサインを使う
+          const effectiveSignature = signature || walkinOrder.receptionSignature || walkinOrder.fieldSignature || undefined;
+          // 保安車両の返却記録・燃料補給費（請求書 extraCosts に計上）
+          const extraFields: Record<string, any> = {};
+          if (extra?.vehicleCheckin) extraFields.vehicleCheckin = extra.vehicleCheckin;
+          if (extra?.fuelCharge && Number(extra.fuelCharge.amount) > 0) extraFields.fuelCharge = extra.fuelCharge;
+
           finalizePartialReturn(
             targetOrder,
             returnQuantities,
             actualReturnDate,
             { updateOrder, addCustomOrder },
-            { itemIssues, remainingStatus: "一部返却", inspectedByWarehouse: true, collectionSignature: signature || undefined }
+            { itemIssues, remainingStatus: "一部返却", inspectedByWarehouse: true, collectionSignature: effectiveSignature, extraFields }
           );
         } catch (e) {
           console.error("[completeReturn] 注文の確定に失敗しました。", e);
@@ -577,10 +614,10 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
         <DeliveryFlow
           o={flow.order}
           onExit={() => setFlow(null)}
-          onComplete={(id, signature, photos) => {
+          onComplete={(id, signature, photos, extra) => {
             setDoneDlv(d => d.includes(id) ? d : [...d, id]);
-            // お客様の受領サインと写真を注文に保存（納品書 PDF / 受領記録に反映される）。
-            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos);
+            // お客様の受領サインと写真、保安車両の貸出記録を注文に保存。
+            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos, extra);
             setFlow(null);
             setTab("delivery_recovery");
           }}

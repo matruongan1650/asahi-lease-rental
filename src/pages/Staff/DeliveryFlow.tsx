@@ -33,7 +33,7 @@ export interface DeliveryFlowProps {
     note?: string;
     rawOrder?: any;
   };
-  onComplete: (id: string, signature?: string | null, photos?: any[]) => void;
+  onComplete: (id: string, signature?: string | null, photos?: any[], extra?: any) => void;
   onExit: () => void;
 }
 
@@ -44,6 +44,24 @@ export default function DeliveryFlow({ o, onComplete, onExit }: DeliveryFlowProp
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [signed, setSigned] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState(false);
+
+  // 保安車両の貸出記録（走行距離・状態）。注文に車両品目がある場合のみ入力。
+  const [vehKm, setVehKm] = useState("");
+  const [vehCondition, setVehCondition] = useState("");
+  const hasVehicleItems = ((o.rawOrder?.items || o.items || []) as any[]).some((i: any) =>
+    ["軽トラック", "軽バン", "2tノーマル", "2tロング", "2t Wキャブノーマル", "車両"].some(c => ((i.category || i.name || "") + "").includes(c))
+  );
+  const buildExtra = () => {
+    if (!hasVehicleItems || (!vehKm && !vehCondition)) return undefined;
+    return {
+      vehicleCheckout: {
+        km: vehKm,
+        condition: vehCondition,
+        fuelFull: true,
+        recordedAt: new Date().toLocaleString("ja-JP"),
+      },
+    };
+  };
 
   const addPhoto = () => {
     setPhotos(p => [...p, makePhoto(p.length)]);
@@ -212,10 +230,33 @@ export default function DeliveryFlow({ o, onComplete, onExit }: DeliveryFlowProp
         <Card style={{ marginBottom: 14 }}>
           <ItemRow icon="package" name="お届け品目" sub={`${o.items.length}品目`} qty={o.items.reduce((a, b) => a + b.qty, 0)} />
         </Card>
+
+        {/* 保安車両の貸出記録: 走行距離・車両状態（燃料は満タンで貸出） */}
+        {hasVehicleItems && (
+          <Card style={{ marginBottom: 14 }} pad={14}>
+            <SectionLabel>保安車両 貸出チェック</SectionLabel>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>貸出時 走行距離（km）</div>
+                <input value={vehKm} onChange={e => setVehKm(e.target.value)} inputMode="numeric" placeholder="例: 35180"
+                  style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14.5, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>車両の状態（キズ・汚れ等）</div>
+                <input value={vehCondition} onChange={e => setVehCondition(e.target.value)} placeholder="例: 異常なし"
+                  style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14, fontFamily: "var(--font-jp)", outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                <Icon name="info" size={15} />燃料は満タンで貸出します（満タン返却をご案内ください）
+              </div>
+            </div>
+          </Card>
+        )}
+
         <SignaturePad onChange={setSigned} />
       </>
     );
-    footer = <Btn full size="lg" variant="success" icon="check" disabled={!signed} onClick={next}>サインを確定</Btn>;
+    footer = <Btn full size="lg" variant="success" icon="check" disabled={!signed || (hasVehicleItems && !vehKm)} onClick={next}>サインを確定</Btn>;
   }
 
   if (step === 4) {
@@ -253,7 +294,7 @@ export default function DeliveryFlow({ o, onComplete, onExit }: DeliveryFlowProp
         </Card>
       </div>
     );
-    footer = <Btn full size="lg" onClick={() => onComplete(o.firestoreId || o.id, signed, photos)}>次の配送へ</Btn>;
+    footer = <Btn full size="lg" onClick={() => onComplete(o.firestoreId || o.id, signed, photos, buildExtra())}>次の配送へ</Btn>;
   }
 
   return (
