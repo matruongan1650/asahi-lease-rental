@@ -182,28 +182,30 @@ export function statusVariant(s: string) {
   return "neutral";
 }
 
-/* ---------- Button ---------- */
+/* ---------- Button ----------
+   Flip7 デザイン: ピル型（999px）。primary はゴールドCTA＋グロー、
+   success はティール、danger はコーラル。押下時 scale(0.95)。 */
 export function Btn({ children, onClick, variant = "primary", icon, iconRight, full, size = "md", disabled, style }: BtnProps) {
-  const pad = size === "lg" ? "16px 20px" : size === "sm" ? "9px 14px" : "13px 18px";
+  const pad = size === "lg" ? "16px 22px" : size === "sm" ? "9px 16px" : "13px 20px";
   const fs = size === "lg" ? 17 : size === "sm" ? 14 : 15.5;
   const base: React.CSSProperties = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9,
-    padding: pad, fontSize: fs, fontWeight: 800, borderRadius: 14, cursor: disabled ? "not-allowed" : "pointer",
+    padding: pad, fontSize: fs, fontWeight: 800, borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer",
     width: full ? "100%" : undefined, border: "1px solid transparent", fontFamily: "var(--font-jp)",
-    letterSpacing: "0.01em", transition: "transform .08s, filter .12s", opacity: disabled ? 0.45 : 1,
+    letterSpacing: "0.02em", transition: "transform .12s cubic-bezier(.34,1.56,.64,1), filter .12s", opacity: disabled ? 0.45 : 1,
   };
   const variants = {
-    primary:   { background: "linear-gradient(180deg, var(--brand), var(--brand-strong))", color: "var(--on-brand)", boxShadow: "0 6px 18px var(--brand-tint)" },
-    secondary: { background: "var(--surface-2)", color: "var(--fg)", border: "1px solid var(--border-strong)" },
+    primary:   { background: "linear-gradient(180deg, #FFE47A, var(--accent) 45%, var(--accent-strong))", color: "var(--on-accent)", boxShadow: disabled ? "none" : "var(--shadow-accent-glow)" },
+    secondary: { background: "var(--surface)", color: "var(--brand-strong)", border: "1.5px solid var(--border-2)", boxShadow: "var(--shadow-card)" },
     ghost:     { background: "transparent", color: "var(--brand-accent)" },
-    danger:    { background: "var(--danger-tint)", color: "var(--danger-bright)", border: "1px solid transparent" },
-    success:   { background: "linear-gradient(180deg, var(--success-bright), var(--success))", color: "#062012" },
+    danger:    { background: "linear-gradient(180deg, var(--danger), #D45233)", color: "#FFF8E7", boxShadow: disabled ? "none" : "var(--shadow-coral-glow)" },
+    success:   { background: "linear-gradient(180deg, var(--brand), var(--brand-strong))", color: "var(--on-brand)", boxShadow: disabled ? "none" : "var(--shadow-teal-glow)" },
   };
   return (
     <button
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      onMouseDown={e => !disabled && (e.currentTarget.style.transform = "scale(0.98)")}
+      onMouseDown={e => !disabled && (e.currentTarget.style.transform = "scale(0.95)")}
       onMouseUp={e => (e.currentTarget.style.transform = "scale(1)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
       style={{ ...base, ...variants[variant], ...style }}
@@ -215,28 +217,35 @@ export function Btn({ children, onClick, variant = "primary", icon, iconRight, f
   );
 }
 
-/* ---------- Card ---------- */
+/* ---------- Card ----------
+   Flip7 デザイン: 白背景・角丸24px・ティールグロー影・左6pxのアクセントバー。 */
 export function Card({ children, onClick, style, pad = 16, accent, className }: CardProps) {
   return (
     <div onClick={onClick} className={className} style={{
       background: "var(--surface)", border: "1px solid var(--border)",
-      borderRadius: 16, padding: pad, boxShadow: "var(--shadow-card)",
+      borderRadius: 24, padding: pad, boxShadow: "var(--shadow-card)",
       cursor: onClick ? "pointer" : undefined, position: "relative", overflow: "hidden",
       ...style,
     }}>
-      {accent && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: "var(--brand)" }} />}
+      {accent && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6, background: "linear-gradient(180deg, var(--brand), var(--brand-strong))" }} />}
       {children}
     </div>
   );
 }
 
-/* ---------- Section label ---------- */
+/* ---------- Section label ----------
+   Flip7 デザイン: 遊び心のある破線アンダーライン付きセクション見出し。 */
 export function SectionLabel({ children, right, style }: SectionLabelProps) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "2px 2px 10px", ...style }}>
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      margin: "2px 2px 12px", paddingBottom: 7,
+      borderBottom: "3px dashed var(--border-2)",
+      ...style,
+    }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-        <span style={{ width: 4, height: 16, borderRadius: 2, background: "var(--brand)" }} />
-        <span style={{ fontSize: 15, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em" }}>{children}</span>
+        <span style={{ width: 6, height: 18, borderRadius: 3, background: "linear-gradient(180deg, var(--accent), var(--accent-strong))" }} />
+        <span style={{ fontSize: 15, fontWeight: 800, color: "var(--fg)", letterSpacing: "0.02em" }}>{children}</span>
       </div>
       {right}
     </div>
@@ -274,25 +283,33 @@ export function Stepper({ steps, current }: StepperProps) {
   );
 }
 
-/* ---------- Bottom nav ---------- */
+/* ---------- Bottom nav ----------
+   Flip7 デザイン: アクティブタブはゴールドのピルハイライト。 */
 export function BottomNav({ tabs, active, onChange }: BottomNavProps) {
   return (
     <div style={{
-      display: "flex", borderTop: "1px solid var(--border)", background: "var(--bg)",
-      padding: "8px 6px 6px", flexShrink: 0,
+      display: "flex", borderTop: "1px solid var(--border)", background: "var(--surface)",
+      padding: "8px 6px 6px", flexShrink: 0, boxShadow: "var(--shadow-pop)",
     }}>
       {tabs.map(t => {
         const on = t.key === active;
         return (
           <button key={t.key} onClick={() => onChange(t.key)} style={{
             flex: 1, background: "none", border: "none", cursor: "pointer",
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "4px 0",
-            color: on ? "var(--brand-accent)" : "var(--fg-subtle)", position: "relative",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "3px 0",
+            color: on ? "var(--brand-strong)" : "var(--fg-subtle)", position: "relative",
           }}>
-            {on && <span style={{ position: "absolute", top: -8, width: 28, height: 3, borderRadius: 3, background: "var(--brand-accent)" }} />}
-            <Icon name={t.icon} size={23} stroke={on ? 2.4 : 2} />
+            <span style={{
+              display: "grid", placeItems: "center", width: 46, height: 28, borderRadius: 999,
+              background: on ? "linear-gradient(180deg, #FFE47A, var(--accent))" : "transparent",
+              color: on ? "var(--on-accent)" : "inherit",
+              boxShadow: on ? "var(--shadow-accent-glow)" : "none",
+              transition: "background .15s, box-shadow .15s",
+            }}>
+              <Icon name={t.icon} size={21} stroke={on ? 2.4 : 2} />
+            </span>
             <span style={{ fontSize: 11, fontWeight: on ? 800 : 600, fontFamily: "var(--font-jp)" }}>{t.label}</span>
-            {t.badge ? <span style={{ position: "absolute", top: -2, right: "50%", marginRight: -20, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 99, background: "var(--danger-bright)", color: "#fff", fontSize: 10, fontWeight: 800, display: "grid", placeItems: "center", fontFamily: "var(--font-mono)" }}>{t.badge}</span> : null}
+            {t.badge ? <span style={{ position: "absolute", top: -2, right: "50%", marginRight: -22, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 99, background: "var(--danger)", color: "#fff", fontSize: 10, fontWeight: 800, display: "grid", placeItems: "center", fontFamily: "var(--font-mono)", border: "2px solid var(--surface)" }}>{t.badge}</span> : null}
           </button>
         );
       })}
@@ -356,7 +373,7 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
   return (
     <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 60, display: "flex", flexDirection: "column", justifyContent: "flex-end", background: "var(--scrim)", animation: "fadeIn .16s ease" }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "var(--surface)", borderTopLeftRadius: 22, borderTopRightRadius: 22,
+        background: "var(--surface)", borderTopLeftRadius: 32, borderTopRightRadius: 32,
         borderTop: "1px solid var(--border)", padding: "12px 18px calc(20px + env(safe-area-inset-bottom))",
         maxHeight: "82%", overflowY: "auto", boxShadow: "var(--shadow-pop)", animation: "sheetUp .22s cubic-bezier(.2,0,0,1)",
       }}>
@@ -514,24 +531,27 @@ export function Empty({ icon, title, sub }: EmptyProps) {
   );
 }
 
-/* ---------- Stepper Controls ---------- */
+/* ---------- Stepper Controls ----------
+   Flip7 デザイン: カウンターは角丸スクエア。マイナス＝コーラル、プラス＝ティール。 */
+function stepBtnStyle(dis: boolean, kind: "minus" | "plus", size: number): React.CSSProperties {
+  const coral = kind === "minus";
+  return {
+    width: size,
+    height: size,
+    borderRadius: 12,
+    border: `1.5px solid ${dis ? "var(--border)" : coral ? "var(--danger)" : "var(--brand)"}`,
+    background: dis ? "var(--surface-2)" : coral ? "var(--danger-tint)" : "var(--brand-tint)",
+    color: dis ? "var(--fg-disabled)" : coral ? "var(--danger-bright)" : "var(--brand-strong)",
+    display: "grid",
+    placeItems: "center",
+    cursor: dis ? "default" : "pointer",
+    transition: "transform .1s",
+  };
+}
+
 export function QtyStepper({ value, max, onChange }: { value: number; max: number; onChange: (v: number) => void }) {
-  const btn = (dir: number, ic: string, dis: boolean) => (
-    <button
-      disabled={dis}
-      onClick={() => onChange(Math.max(0, value + dir))}
-      style={{
-        width: 32,
-        height: 32,
-        borderRadius: 9,
-        border: "1px solid var(--border-strong)",
-        background: "var(--surface-2)",
-        color: dis ? "var(--fg-disabled)" : "var(--fg)",
-        display: "grid",
-        placeItems: "center",
-        cursor: dis ? "default" : "pointer"
-      }}
-    >
+  const btn = (dir: number, ic: "minus" | "plus", dis: boolean) => (
+    <button disabled={dis} onClick={() => onChange(Math.max(0, value + dir))} style={stepBtnStyle(dis, ic, 32)}>
       <Icon name={ic} size={16} stroke={2.6} />
     </button>
   );
@@ -545,22 +565,8 @@ export function QtyStepper({ value, max, onChange }: { value: number; max: numbe
 }
 
 export function NumStepper({ value, onChange, min = 1, max = 999, danger }: { value: number; onChange: (v: number) => void; min?: number; max?: number; danger?: boolean }) {
-  const btn = (dir: number, ic: string, dis: boolean) => (
-    <button
-      disabled={dis}
-      onClick={() => onChange(Math.min(max, Math.max(min, value + dir)))}
-      style={{
-        width: 30,
-        height: 30,
-        borderRadius: 8,
-        border: "1px solid var(--border-strong)",
-        background: "var(--surface)",
-        color: dis ? "var(--fg-disabled)" : "var(--fg)",
-        display: "grid",
-        placeItems: "center",
-        cursor: dis ? "default" : "pointer"
-      }}
-    >
+  const btn = (dir: number, ic: "minus" | "plus", dis: boolean) => (
+    <button disabled={dis} onClick={() => onChange(Math.min(max, Math.max(min, value + dir)))} style={stepBtnStyle(dis, ic, 30)}>
       <Icon name={ic} size={15} stroke={2.8} />
     </button>
   );

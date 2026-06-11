@@ -1,12 +1,16 @@
 import { useNavigate } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
+import { useUser } from "../context/UserContext";
 
 export default function ReturnOrders() {
   const navigate = useNavigate();
   const { orders } = useOrders();
+  const { currentUser } = useUser();
 
-  // Filter orders that have rental items not fully returned
-  const returnableOrders = orders.filter(order => 
+  // 本人の注文のうち、未返却のレンタル品が残っているものだけを表示
+  // （注文履歴と同様、同じ会社でもアカウントごとに分離する）。
+  const returnableOrders = orders.filter(order =>
+    currentUser && order.userId === currentUser.id &&
     order.items.some(item => item.type === 'rent' && (item.returnedQuantity || 0) < item.quantity)
   );
 

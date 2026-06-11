@@ -128,59 +128,91 @@
 }
 
 /* ────────────────────────────────────────────────────────
-   3. Staff App — Dark Theme
+   3. Staff App — Dark Theme（Flip7 ディープティール）
    ──────────────────────────────────────────────────────── */
 [data-theme="dark"] {
-  --bg:             #080B12;
-  --surface:        #121A28;
-  --surface-2:      #182233;
-  --surface-3:      #1E2A3D;
-  --border:         #232E42;
-  --border-2:       #2C3A52;
-  --fg:             #EEF2F9;
-  --fg-muted:       #CBD5E1; /* Brightened for high contrast readability */
-  --fg-subtle:      #94A3B8; /* Brightened for high contrast readability */
-  --brand:          #6678F4;
-  --brand-accent:   #A5B4FC; /* Bright high-contrast cobalt accent */
-  --brand-tint:     rgba(102, 120, 244, 0.16);
-  --danger:         #FF6B5A;
-  --danger-bright:  #FF6B5A;
-  --danger-tint:    rgba(255, 107, 90, 0.12);
-  --success:        #34C77B;
-  --success-bright: #34C77B;
-  --success-tint:   rgba(52, 199, 123, 0.12);
-  --warning:        #F2B544;
-  --warning-bright: #F2B544;
-  --warning-tint:   rgba(242, 181, 68, 0.12);
+  --bg:             #0B1D1C;
+  --surface:        #122B29;
+  --surface-2:      #173734;
+  --surface-3:      #1D423E;
+  --border:         #245049;
+  --border-2:       #2E635B;
+  --border-strong:  #2E635B;
+  --fg:             #ECFAF8;
+  --fg-muted:       #BFE0DC;
+  --fg-subtle:      #8FBCB7;
+  --fg-disabled:    #5E8782;
+  --brand:          #3CC4BD;
+  --brand-strong:   #2BA8A2;
+  --brand-accent:   #7ADFD8;
+  --brand-tint:     rgba(60, 196, 189, 0.18);
+  --on-brand:       #06302D;
+  --accent:         #FFD23F;
+  --accent-strong:  #E6B800;
+  --accent-tint:    rgba(255, 210, 63, 0.16);
+  --on-accent:      #4A3800;
+  --danger:         #FF8A6A;
+  --danger-bright:  #FF8A6A;
+  --danger-tint:    rgba(239, 108, 74, 0.16);
+  --success:        #27AE60;
+  --success-bright: #3CCF7E;
+  --success-tint:   rgba(39, 174, 96, 0.16);
+  --warning:        #FFD23F;
+  --warning-bright: #FFD23F;
+  --warning-tint:   rgba(255, 210, 63, 0.14);
+  --info:           #5DADE2;
+  --info-tint:      rgba(93, 173, 226, 0.16);
+  --scrim:          rgba(4, 18, 17, 0.66);
+  --shadow-card:    0 4px 20px rgba(0, 0, 0, 0.28);
+  --shadow-pop:     0 -8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-accent-glow: 0 4px 20px rgba(255, 210, 63, 0.30);
+  --shadow-teal-glow:   0 4px 20px rgba(60, 196, 189, 0.30);
+  --shadow-coral-glow:  0 4px 20px rgba(239, 108, 74, 0.35);
 
   color-scheme: dark;
 }
 
 /* ────────────────────────────────────────────────────────
-   4. Staff App — Light Theme
+   4. Staff App — Light Theme（Flip7 ティール×ゴールド×コーラル）
    ──────────────────────────────────────────────────────── */
 [data-theme="light"] {
-  --bg:             #F5F6FA;
-  --surface:        #FFFFFF;
-  --surface-2:      #F0F1F5;
-  --surface-3:      #E8EAF0;
-  --border:         #DFE2EA;
-  --border-2:       #C7CCD8;
-  --fg:             #161A21;
-  --fg-muted:       #4E5667;
-  --fg-subtle:      #8A94A6;
-  --brand:          #3A4DE8;
-  --brand-accent:   #3A4DE8;
-  --brand-tint:     rgba(58, 77, 232, 0.10);
-  --danger:         #DC3A28;
-  --danger-bright:  #DC3A28;
-  --danger-tint:    rgba(220, 58, 40, 0.08);
-  --success:        #1F9D57;
-  --success-bright: #1F9D57;
-  --success-tint:   rgba(31, 157, 87, 0.08);
-  --warning:        #E5961B;
-  --warning-bright: #E5961B;
-  --warning-tint:   rgba(229, 150, 27, 0.08);
+  --bg:             #EFF8F7;   /* Surface Base */
+  --surface:        #FFFFFF;   /* Surface Card */
+  --surface-2:      #E8F6F5;   /* Primary BG tint */
+  --surface-3:      #DBEFED;
+  --border:         #D2E8E6;
+  --border-2:       #B5DAD6;
+  --border-strong:  #B5DAD6;
+  --fg:             #173B38;   /* deep teal text */
+  --fg-muted:       #46706C;
+  --fg-subtle:      #7CA39F;
+  --fg-disabled:    #A9C8C5;
+  --brand:          #2BA8A2;   /* Primary Teal */
+  --brand-strong:   #1E8C86;   /* Primary Dark */
+  --brand-accent:   #1E8C86;
+  --brand-tint:     rgba(43, 168, 162, 0.12);
+  --on-brand:       #FFFFFF;
+  --accent:         #FFD23F;   /* Accent Gold */
+  --accent-strong:  #E6B800;
+  --accent-tint:    rgba(255, 210, 63, 0.20);
+  --on-accent:      #4A3800;
+  --danger:         #EF6C4A;   /* Coral */
+  --danger-bright:  #D45233;   /* Coral Dark（light 背景での可読性） */
+  --danger-tint:    rgba(239, 108, 74, 0.10);
+  --success:        #27AE60;
+  --success-bright: #1E9A52;
+  --success-tint:   rgba(39, 174, 96, 0.10);
+  --warning:        #E6B800;   /* Accent Dark gold */
+  --warning-bright: #C29B00;
+  --warning-tint:   rgba(255, 210, 63, 0.18);
+  --info:           #5DADE2;
+  --info-tint:      rgba(93, 173, 226, 0.14);
+  --scrim:          rgba(23, 59, 56, 0.45);
+  --shadow-card:    0 4px 20px rgba(43, 168, 162, 0.10);
+  --shadow-pop:     0 -8px 32px rgba(23, 59, 56, 0.18);
+  --shadow-accent-glow: 0 4px 20px rgba(255, 210, 63, 0.40);
+  --shadow-teal-glow:   0 4px 20px rgba(43, 168, 162, 0.30);
+  --shadow-coral-glow:  0 4px 20px rgba(239, 108, 74, 0.35);
 
   color-scheme: light;
 }

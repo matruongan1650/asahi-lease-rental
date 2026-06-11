@@ -50,9 +50,9 @@ function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, 
     },
     brand: {
       fg: "var(--brand-accent)",
-      bg: "rgba(58,77,232,0.12)",
+      bg: "var(--brand-tint)",
       iconColor: "var(--brand-accent)",
-      border: "rgba(58,77,232,0.25)"
+      border: "var(--brand)"
     },
     success: {
       fg: "var(--success-bright)",
@@ -154,7 +154,7 @@ function DeliveryCard({ o, done, outdoorMode, onClick }: any) {
         padding: "20px 16px",
         background: outdoorMode ? "#000000" : "var(--surface)",
         border: outdoorMode ? "3px solid #00FF66" : "1px solid var(--border-2)",
-        borderLeft: outdoorMode ? "8px solid #00FF66" : "6px solid #2563EB",
+        borderLeft: outdoorMode ? "8px solid #00FF66" : "6px solid var(--brand)",
       }}
       className="active:scale-[0.97] transition-transform"
     >
@@ -657,10 +657,10 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
             <button
               onClick={() => setOutdoorMode(!outdoorMode)}
               style={{
-                background: outdoorMode ? "#00FF66" : "rgba(255,255,255,0.06)",
-                color: outdoorMode ? "#000000" : "#FFFFFF",
-                border: outdoorMode ? "3px solid #00FF66" : "1px solid var(--border)",
-                borderRadius: "12px",
+                background: outdoorMode ? "#00FF66" : "var(--surface)",
+                color: outdoorMode ? "#000000" : "var(--brand-strong)",
+                border: outdoorMode ? "3px solid #00FF66" : "1.5px solid var(--border-2)",
+                borderRadius: 999,
                 padding: "8px 14px",
                 fontSize: "12px",
                 fontWeight: 900,
@@ -677,10 +677,9 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
           </div>
 
           {/* Premium Overview Hub Panel */}
-          <Card pad={18} style={{ 
-            background: "linear-gradient(135deg, rgba(58,77,232,0.16) 0%, rgba(24,34,210,0.04) 100%)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: "18px",
+          <Card pad={18} style={{
+            background: "linear-gradient(135deg, var(--brand-tint) 0%, var(--surface) 100%)",
+            border: "1px solid var(--border)",
             backdropFilter: "blur(20px)",
             marginBottom: 20
           }}>
@@ -704,7 +703,7 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: outdoorMode ? 14 : 13.5, fontWeight: 900 }}>
               <span style={{ color: outdoorMode ? "#FFF" : "var(--fg-muted)" }}>本日のタスク消化率</span>
-              <span style={{ color: outdoorMode ? "#00FF66" : "#2563EB" }}>{completedTasks} / {totalTasks} 件 ({totalTasks ? Math.round((completedTasks/totalTasks)*100) : 0}%)</span>
+              <span style={{ color: outdoorMode ? "#00FF66" : "var(--brand-strong)" }}>{completedTasks} / {totalTasks} 件 ({totalTasks ? Math.round((completedTasks/totalTasks)*100) : 0}%)</span>
             </div>
             <ProgressBar value={completedTasks} max={totalTasks} color={outdoorMode ? "#00FF66" : "#10B981"} />
           </Card>
@@ -772,11 +771,11 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
             gap: 14,
             padding: "16px 18px",
             borderRadius: 18,
-            background: "linear-gradient(135deg, var(--brand) 0%, #1a2bc4 100%)",
+            background: "linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%)",
             border: "1px solid rgba(255,255,255,0.08)",
             cursor: "pointer",
             marginBottom: 24,
-            boxShadow: "0 8px 30px rgba(58,77,232,0.22)",
+            boxShadow: "var(--shadow-teal-glow)",
             position: "relative",
             overflow: "hidden",
             transition: "all 0.2s ease"
@@ -795,7 +794,7 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
             <div style={{ fontSize: 16, fontWeight: 800, color: "#FFFFFF" }}>お客様持込返却 検品</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 2, fontWeight: 500 }}>直接ベースに来庫されたお客様の返却対応</div>
           </div>
-          <div style={{ background: "#FFF", color: "#1A1C9A", borderRadius: "8px", padding: "2px 8px", fontSize: 12, fontWeight: 900, fontMemo: "true" } as any}>
+          <div style={{ background: "var(--accent)", color: "var(--on-accent)", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 900, boxShadow: "var(--shadow-accent-glow)" }}>
             {walkinCount}件
           </div>
         </button>
@@ -869,16 +868,16 @@ export default function StaffDashboard() {
         display: "grid",
         placeItems: "center",
         padding: "24px 16px",
-        background: "radial-gradient(120% 80% at 50% 0%, #11131c, #06070b 70%)",
+        background: "radial-gradient(120% 80% at 50% 0%, #1E8C86, #0B1D1C 75%)",
         fontFamily: "\"Noto Sans JP\", sans-serif"
       }}>
-        <div style={{
+        <div data-theme="light" style={{
           width: "100%",
           maxWidth: 412,
           height: 840,
           borderRadius: 40,
-          border: "12px solid #252a33",
-          boxShadow: "0 24px 48px rgba(0,0,0,0.8)",
+          border: "12px solid #14403D",
+          boxShadow: "0 24px 48px rgba(4, 24, 22, 0.7)",
           overflow: "hidden",
           background: outdoorMode ? "#000000" : "var(--bg)",
           position: "relative",
@@ -905,8 +904,8 @@ export default function StaffDashboard() {
               </div>
             </div>
           </div>
-          
-          <div data-theme="dark" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
             <UnifiedStaffApp outdoorMode={outdoorMode} setOutdoorMode={setOutdoorMode} />
           </div>
         </div>

@@ -1,14 +1,19 @@
 import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
+import { useUser } from "../context/UserContext";
 
 export default function OrderHistory() {
   const { orders } = useOrders();
+  const { currentUser } = useUser();
   const [activeTab, setActiveTab] = useState<"処理中" | "履歴">("処理中");
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredOrders = useMemo(() => {
-    let filtered = orders;
+    // 注文履歴はアカウントごとに分離（同じ会社の別ユーザーの注文は表示しない）。
+    let filtered = orders.filter(
+      (o) => currentUser && o.userId === currentUser.id,
+    );
 
     if (activeTab === "処理中") {
       filtered = filtered.filter(o => o.status !== "返却済");
@@ -18,14 +23,14 @@ export default function OrderHistory() {
 
     if (searchQuery.trim()) {
       const lower = searchQuery.toLowerCase();
-      filtered = filtered.filter(o => 
-        o.orderNumber.toLowerCase().includes(lower) || 
+      filtered = filtered.filter(o =>
+        o.orderNumber.toLowerCase().includes(lower) ||
         o.items.some(i => i.name.toLowerCase().includes(lower))
       );
     }
 
     return filtered;
-  }, [orders, activeTab, searchQuery]);
+  }, [orders, currentUser, activeTab, searchQuery]);
 
   return (
     <>
