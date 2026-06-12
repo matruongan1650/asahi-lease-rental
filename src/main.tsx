@@ -41,6 +41,25 @@ try {
   console.warn('[main] 持込返却キャッシュのクリアに失敗しました。', e);
 }
 
+// 一度だけ実行: 実データ運用への完全移行（Firebase 廃止・モック全廃）に伴い、
+// 過去に seed されたモックコレクションと注文キャッシュをローカルから削除する。
+// サーバー(MySQL)側は別途クリア済み。再実行したい場合は "mock_purge_v1" を削除。
+try {
+  if (!localStorage.getItem('mock_purge_v1')) {
+    [
+      'asahi.assets', 'asahi.warehouse', 'asahi.stocktake',
+      'asahi.stockIn', 'asahi.stockOut', 'asahi.repairs',
+      'asahi.customers', 'asahi.suppliers', 'asahi.vendors',
+      'asahi.fieldReports', 'asahi.stockMoves',
+      'asahi.orders', 'asahi.walkinReturns', 'asahi.returnInspections',
+      'order_history_v3',
+    ].forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem('mock_purge_v1', '1');
+  }
+} catch (e) {
+  console.warn('[main] モックデータの一括クリアに失敗しました。', e);
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import OrderBus, { type BusRecord, type AdminDerivedData, deriveAdminData } from "../lib/orderBus";
-import { COLLECTIONS_MOCK_DATA, B2B_MOCK_ORDERS, KPIS } from "../data/adminMockData";
-import { pushOrder as pushFirebaseOrder, patchOrder as patchFirebaseOrder, subscribeOrders } from "../lib/firebase";
+import { COLLECTIONS_MOCK_DATA, KPIS } from "../data/adminMockData";
+import { patchOrder as patchFirebaseOrder, subscribeOrders } from "../lib/firebase";
 
 interface AdminDataContextProps {
   raw: any[];
@@ -63,40 +63,16 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
 
   // 3. Compute derived admin data whenever raw orders change
   useEffect(() => {
-    if (raw.length > 0) {
+    if (connected) {
       setDerived(deriveAdminData(raw as BusRecord[]));
     }
-  }, [raw]);
+  }, [raw, connected]);
 
   const hasCheckedSeeding = useRef(false);
 
   // 4. Auto-seed missing B2B orders on startup (single run, chunked to avoid browser lockup)
   useEffect(() => {
-    if (connected && !hasCheckedSeeding.current) {
-      hasCheckedSeeding.current = true;
-      
-      const existingNumbers = raw.map(o => o.orderNumber);
-      const missingOrders = B2B_MOCK_ORDERS.filter(o => !existingNumbers.includes(o.orderNumber));
-      
-      if (missingOrders.length > 0) {
-        console.log(`[AdminDataProvider] Auto-seeding ${missingOrders.length} missing B2B orders...`);
-        const seedOrders = async () => {
-          const chunkSize = 5;
-          for (let i = 0; i < missingOrders.length; i += chunkSize) {
-            const chunk = missingOrders.slice(i, i + chunkSize);
-            await Promise.all(
-              chunk.map(ord => 
-                pushFirebaseOrder(ord as any).catch(err => 
-                  console.error("Auto-seeding error:", ord.orderNumber, err)
-                )
-              )
-            );
-          }
-          console.log("[AdminDataProvider] Auto-seeding completed.");
-        };
-        seedOrders();
-      }
-    }
+    // 削除：自動でモック注文データをFirebaseやDBに追加しないようにする。
   }, [connected]);
 
   const patchOrder = (id: string, updates: Record<string, any>) => {
@@ -120,33 +96,19 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Also seed B2B orders to Firebase if they don't exist in current raw list
-    try {
-      const existingNumbers = raw.map(o => o.orderNumber);
-      const ordersToSeed = B2B_MOCK_ORDERS.filter(o => !existingNumbers.includes(o.orderNumber));
-      if (ordersToSeed.length > 0) {
-        console.log(`[AdminDataContext] Seeding ${ordersToSeed.length} B2B orders to Firebase...`);
-        for (const ord of ordersToSeed) {
-          await pushFirebaseOrder(ord as any);
-        }
-        results.push({ name: "orders", seeded: ordersToSeed.length, skipped: false });
-      } else {
-        results.push({ name: "orders", seeded: 0, skipped: true });
-      }
-    } catch (err) {
-      console.error("[AdminDataContext] Error seeding B2B orders:", err);
-      results.push({ name: "orders", seeded: 0, skipped: false, error: String(err) });
-    }
+    // モック注文の seed は廃止（注文は実際の発注からのみ作成される）。
+    results.push({ name: "orders", seeded: 0, skipped: true });
 
     return results;
   };
 
   const getCol = (name: string) => {
     const live = cols[name];
-    if (live && live.length > 0) {
+    if (live !== undefined) {
       return { rows: live, live: true };
     }
-    return { rows: COLLECTIONS_MOCK_DATA[name] || [], live: false };
+    // モックへのフォールバックは廃止 — 実データが無ければ空表示にする。
+    return { rows: [], live: false };
   };
 
   return (
@@ -187,17 +149,17 @@ export function useAdminOrders() {
   if (!d) {
     return {
       live: false,
-      orders: [],
-      rentals: COLLECTIONS_MOCK_DATA.rentals || [],
-      sales: COLLECTIONS_MOCK_DATA.sales || [],
-      recentTx: COLLECTIONS_MOCK_DATA.recentTx || [],
+      orders: [] as any[],
+      rentals: [] as any[],
+      sales: [] as any[],
+      recentTx: [] as any[],
       kpis: {
-        totalSales: KPIS.totalSales,
-        rentalSales: KPIS.rentalSales,
-        productSales: KPIS.productSales,
-        totalSalesDelta: KPIS.totalSalesDelta,
-        rentalSalesDelta: KPIS.rentalSalesDelta,
-        productSalesDelta: KPIS.productSalesDelta,
+        totalSales: 0,
+        rentalSales: 0,
+        productSales: 0,
+        totalSalesDelta: 0,
+        rentalSalesDelta: 0,
+        productSalesDelta: 0,
       },
       patchOrder: ctx.patchOrder,
     };
@@ -228,6 +190,7 @@ export function useAdminOrders() {
       status: ["返却済", "返却済み", "一部返却", "検品待ち", "完了", "キャンセル"].includes(o.status as string)
         ? (o.status as string)
         : mapStatus(o.staffStatus || o.status),
+      returnRequestType: o.returnRequestType,
       invoice: "INV-R-" + (o.orderNumber || "").replace(/\D/g, "").slice(-4),
     })),
     sales: d.sales.map((o) => ({

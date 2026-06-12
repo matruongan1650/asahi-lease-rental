@@ -778,18 +778,10 @@ const ENABLE_MOCK_ORDERS = false;
 export const B2B_MOCK_ORDERS = ENABLE_MOCK_ORDERS ? generateMockB2BOrders() : [];
 
 // Pack all mock collections to simplify seeding.
-// 注意: vehicles / maintenance は実データ運用のため seed 対象から除外している。
-// VEHICLES / MAINT 定数はデモ・テスト参照用に残しているが、自動 seed や seedAll() には使われない。
+// 実データ運用へ完全移行: モックデータの seed は廃止。
+// products（実カタログ）のみ初期 seed 対象として残す。
+// 入出庫・修理・顧客・仕入先・現場報告などはすべて実際の操作からのみ生成される
+// （モックを seed すると /api 同期で MySQL に「幽霊データ」として上がってしまうため）。
 export const COLLECTIONS_MOCK_DATA: Record<string, any[]> = {
   products: PRODUCTS,
-  assets: ASSETS,
-  warehouse: WAREHOUSE,
-  stocktake: STOCKTAKE,
-  stockIn: STOCK_IN,
-  stockOut: STOCK_OUT,
-  repairs: REPAIRS,
-  customers: CUSTOMERS,
-  suppliers: SUPPLIERS,
-  vendors: VENDORS,
-  fieldReports: FIELD_REPORTS,
 };

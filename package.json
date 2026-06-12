@@ -7,10 +7,11 @@
     "dev": "vite --port=4000 --host=0.0.0.0 --strictPort",
     "server": "tsx server/dev.ts",
     "server:watch": "tsx watch server/dev.ts",
-    "build": "vite build",
-    "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build": "npm run lint && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run clean && npm run build && python3 deploy_xserver.py"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -22,7 +23,6 @@
     "date-fns": "^4.3.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "firebase": "^12.13.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",

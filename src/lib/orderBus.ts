@@ -21,17 +21,6 @@
  */
 
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
-import {
-  collection,
-  doc,
-  onSnapshot,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  getDocs,
-  writeBatch
-} from "firebase/firestore";
-import { db, FIREBASE_ENABLED } from "./firebaseInit";
 import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
 import { apiSync, apiUpsert, apiRemove } from "./backendSync";
 
@@ -190,23 +179,6 @@ try {
 } catch (e) {
   console.warn("[OrderBus] BroadcastChannel unavailable — cross-tab sync disabled.", e);
 }
-
-const _firestoreUnsubs: Record<string, () => void> = {};
-
-function removeUndefined(obj: any): any {
-  if (Array.isArray(obj)) {
-    return obj.map(v => removeUndefined(v)).filter(v => v !== undefined);
-  }
-  if (obj !== null && typeof obj === 'object') {
-    return Object.fromEntries(
-      Object.entries(obj)
-        .filter(([_, v]) => v !== undefined)
-        .map(([k, v]) => [k, removeUndefined(v)])
-    );
-  }
-  return obj;
-}
-
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -423,91 +395,12 @@ export const OrderBus: IOrderBus = {
       console.warn(`[OrderBus] subscribe initial fire error for "${store}":`, e);
     }
 
-    // "orders" は firebase.ts (subscribeOrders) が Firestore を直接購読するため、
-    // OrderBus 側で二重に onSnapshot を張らない（重複・齟齬を防ぐ）。
-    if (FIREBASE_ENABLED && store !== "orders") {
-      if (!_firestoreUnsubs[store]) {
-        console.log(`[OrderBus] Starting Firestore subscription for collection "${store}"`);
-        const colRef = collection(db, store);
-        let _firstSnap = true;
-        const unsubSnap = onSnapshot(colRef, (snap) => {
-          let items = snap.docs.map(doc => {
-            const docData = doc.data();
-            return {
-              id: doc.id,
-              ...docData
-            };
-          }) as BusRecord[];
-
-          // 初回スナップショット: 既存のローカルデータを保持する。
-          // Firestore に存在しないローカル限定レコードをクラウドへアップロードしてマージし、
-          // remote による上書きでローカルデータが消えないようにする。
-          if (_firstSnap) {
-            _firstSnap = false;
-            try {
-              const localData = _read(store);
-              const remoteIds = new Set(items.map((i) => String(i.id)));
-              const localOnly = localData.filter(
-                (l) => l && (l.id !== undefined && l.id !== null) && !remoteIds.has(String(l.id))
-              );
-              if (localOnly.length > 0) {
-                items = [...items, ...localOnly];
-                const batch = writeBatch(db);
-                localOnly.forEach((l) => {
-                  batch.set(doc(db, store, String(l.id)), removeUndefined(l));
-                });
-                batch
-                  .commit()
-                  .then(() =>
-                    console.log(`[OrderBus] preserved ${localOnly.length} local record(s) → uploaded to "${store}"`)
-                  )
-                  .catch((err) =>
-                    console.error(`[OrderBus] failed to upload local records to "${store}":`, err)
-                  );
-              }
-            } catch (e) {
-              console.warn(`[OrderBus] first-snapshot local merge failed for "${store}":`, e);
-            }
-          }
-
-          // Sort items consistently
-          items.sort((a: any, b: any) => {
-            if (a.seq !== undefined && b.seq !== undefined) {
-              return b.seq - a.seq;
-            }
-            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            if (timeA && timeB) {
-              return timeB - timeA;
-            }
-            return 0;
-          });
-
-          // Update local storage cache safely (avoid loop updates by bypassing OrderBus.setAll)
-          try {
-            localStorage.setItem(_key(store), JSON.stringify(items));
-          } catch (e) {
-            console.warn(`[OrderBus] Failed to cache Firestore data for "${store}" in localStorage:`, e);
-          }
-
-          // Notify all listeners
-          _notify(store, items);
-        }, (err) => {
-          console.error(`[OrderBus] Firestore subscription error for "${store}":`, err);
-        });
-
-        _firestoreUnsubs[store] = unsubSnap;
-      }
-    }
+    // クラウド同期は XServer(MySQL) の /api ポーリング（_startVercelPoller）のみ。
+    // Firebase/Firestore は廃止済み。
 
     // Return unsubscribe function
     return () => {
       _listeners[store] = (_listeners[store] || []).filter((fn) => fn !== wrappedCallback);
-
-      // Firestore の onSnapshot は意図的に張りっぱなしにする（アプリ生存中は 1 ストア 1 リスナー）。
-      // コンポーネントの再マウント（React StrictMode の二重マウント等）ごとに listener を
-      // 貼り直すと、その都度コレクション全件が再読込され Firestore の読み取りクォータを
-      // 大量に消費する（RESOURCE_EXHAUSTED / 429 の原因）。そのため listener は破棄しない。
     };
   },
 
@@ -529,15 +422,6 @@ export const OrderBus: IOrderBus = {
     // Prepend (newest first)
     data.unshift(record);
     _write(store, data);
-
-    // "orders" の新規作成は firebase.ts の pushOrder（addDoc）が担当するため、
-    // ここで setDoc すると同じ注文が二重に Firestore へ登録される。スキップする。
-    if (FIREBASE_ENABLED && store !== "orders") {
-      const docRef = doc(db, store, record.id);
-      setDoc(docRef, removeUndefined(record)).catch(err => {
-        console.error(`[OrderBus] push failed for "${store}/${record.id}":`, err);
-      });
-    }
 
     if (DATA_BACKEND === "api" && !_applyingRemote) {
       apiUpsert(store, record as any).catch((e) =>
@@ -563,16 +447,6 @@ export const OrderBus: IOrderBus = {
       };
       _write(store, data);
 
-      if (FIREBASE_ENABLED) {
-        const docRef = doc(db, store, targetDocId);
-        updateDoc(docRef, removeUndefined({
-          ...updates,
-          updatedAt: new Date().toISOString()
-        })).catch(err => {
-          console.error(`[OrderBus] patch failed for "${store}/${targetDocId}":`, err);
-        });
-      }
-
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         // マージ後のレコード全体を upsert（バックエンドは id ベースの upsert）。
         apiUpsert(store, data[idx] as any).catch((e) =>
@@ -595,13 +469,6 @@ export const OrderBus: IOrderBus = {
       const filtered = data.filter((d) => d.id !== id && d.firestoreId !== id);
       _write(store, filtered);
 
-      if (FIREBASE_ENABLED) {
-        const docRef = doc(db, store, targetDocId);
-        deleteDoc(docRef).catch(err => {
-          console.error(`[OrderBus] remove failed for "${store}/${targetDocId}":`, err);
-        });
-      }
-
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         apiRemove(store, String(targetId)).catch((e) =>
           console.warn(`[OrderBus] backend remove failed "${store}/${targetId}":`, e)
@@ -617,37 +484,7 @@ export const OrderBus: IOrderBus = {
     const next = JSON.stringify(items);
     _write(store, items);
 
-    // "orders" の setAll は AdminDataContext が Firestore→ローカルへミラーする用途。
-    // ここで Firestore へ書き戻すと、auto-id と業務 id の不一致で既存 doc を破壊するためスキップ。
-    if (FIREBASE_ENABLED && store !== "orders" && prev !== next) {
-      const syncSetAll = async () => {
-        try {
-          const colRef = collection(db, store);
-          const snap = await getDocs(colRef);
-          const existingDocIds = snap.docs.map(d => d.id);
-          const newIds = new Set(items.map(item => item.id));
-
-          const batch = writeBatch(db);
-          // Delete docs not in the new list
-          existingDocIds.forEach(docId => {
-            if (!newIds.has(docId)) {
-              batch.delete(doc(db, store, docId));
-            }
-          });
-          // Set/update docs in the new list
-          items.forEach(item => {
-            batch.set(doc(db, store, item.id), removeUndefined(item));
-          });
-          await batch.commit();
-          console.log(`[OrderBus] setAll synchronized ${items.length} items to "${store}"`);
-        } catch (err) {
-          console.error(`[OrderBus] setAll Firestore sync failed for "${store}":`, err);
-        }
-      };
-      syncSetAll();
-    }
-
-    // Vercel バックエンド: orders は push/patch で個別反映するため除外（setAll は AdminDataContext のミラー）。
+    // XServer(API) バックエンド: orders は push/patch で個別反映するため除外（setAll は AdminDataContext のミラー）。
     // ★ 重要: setAll は「全置換」ではなく差分のみ送る。
     // 全置換にすると、他クライアントが追加したばかりのレコードを
     // （こちらのリストに無いという理由で）削除してしまう（マルチクライアントで破壊的）。
@@ -687,18 +524,6 @@ export const OrderBus: IOrderBus = {
     const existing = _read(store);
     if (existing.length === 0 && items && items.length > 0) {
       _write(store, items);
-
-      if (FIREBASE_ENABLED) {
-        const batch = writeBatch(db);
-        items.forEach(item => {
-          batch.set(doc(db, store, item.id), removeUndefined(item));
-        });
-        batch.commit()
-          .then(() => console.log(`[OrderBus] seedIfEmpty seeded ${items.length} documents to "${store}"`))
-          .catch(err => {
-            console.error(`[OrderBus] seedIfEmpty failed to commit batch for "${store}":`, err);
-          });
-      }
       return items.length;
     }
     return 0;
