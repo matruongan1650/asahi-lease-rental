@@ -158,7 +158,7 @@ export default function AdminRental() {
       h: "状態",
       cell: (r: any) => (
         <Badge tone={r.status === "処理中" ? "warning" : "default"}>
-          {r.status}
+          {r.status} {r.returnRequestType === 'partial' ? '(一部)' : r.returnRequestType === 'full' ? '(全量)' : ''}
         </Badge>
       )
     },
@@ -484,7 +484,7 @@ export default function AdminRental() {
                   <div className="flex justify-between"><span className="text-slate-400 font-bold">企業名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.companyName || "個人顧客"}</span></div>
                   <div className="flex justify-between"><span className="text-slate-400 font-bold">現場名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.constructionSiteName || "—"}</span></div>
                   <div className="flex justify-between"><span className="text-slate-400 font-bold">担当者</span><span className="font-semibold text-slate-700">{activeWorkspaceOrder.employeeName || activeWorkspaceOrder.customerName}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400 font-bold">状況</span><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold font-mono text-[10px]">{activeWorkspaceOrder.status}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400 font-bold">状況</span><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold font-mono text-[10px]">{activeWorkspaceOrder.status} {activeWorkspaceOrder.returnRequestType === 'partial' ? '(一部)' : activeWorkspaceOrder.returnRequestType === 'full' ? '(全量)' : ''}</span></div>
                 </div>
 
                 {/* Real-time Document Quick Triggers */}

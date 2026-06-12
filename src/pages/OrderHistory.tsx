@@ -32,6 +32,36 @@ export default function OrderHistory() {
     return filtered;
   }, [orders, currentUser, activeTab, searchQuery]);
 
+  const getOrderDisplayProps = (order: Order) => {
+    switch (order.status) {
+      case "キャンセル":
+        return { color: "red", icon: "cancel", detail: "キャンセルされました", progress: 0 };
+      case "準備中":
+        return { color: "amber", icon: "inventory_2", detail: "商品の準備を進めています", progress: 50 };
+      case "配送中":
+      case "配送済み":
+        return { color: "blue", icon: "local_shipping", detail: "商品を配送しています", progress: 75 };
+      case "レンタル中":
+        return { color: "blue", icon: "play_circle", detail: "現在レンタル中です", progress: 75 };
+      case "回収予定":
+      case "回収中":
+        return { color: "amber", icon: "local_shipping", detail: "返却の回収を手配しています", progress: 75 };
+      case "検品待ち":
+        return { color: "amber", icon: "fact_check", detail: "倉庫での検品をお待ちください", progress: 75 };
+      case "一部返却":
+        return { color: "purple", icon: "halfway", detail: "一部のアイテムが返却されました", progress: 75 };
+      case "返却済":
+      case "返却済み":
+      case "完了":
+        return { color: "blue", icon: "check_circle", detail: "返却が完了し、最終金額が確定しました", progress: 100 };
+      case "ご注文":
+      case "処理中":
+      case "確認済み":
+      default:
+        return { color: "amber", icon: "pending", detail: "ご注文を確認しています", progress: 25 };
+    }
+  };
+
   return (
     <>
       <div className="sticky top-0 z-20 bg-white dark:bg-[#1A2633] border-b border-gray-100 dark:border-gray-800 shadow-sm">
@@ -95,22 +125,23 @@ export default function OrderHistory() {
         ) : (
           filteredOrders.map((order: Order) => {
             const firstItem = order.items[0];
+            const displayProps = getOrderDisplayProps(order);
             return (
               <OrderCard 
                 key={order.id}
                 id={order.id}
                 orderNumber={order.orderNumber}
                 date={order.date}
-                status={order.status}
-                statusColor={order.status === "返却済" ? "blue" : order.status === "一部返却" ? "purple" : "amber"}
-                statusIcon={order.status === "返却済" ? "check_circle" : order.status === "一部返却" ? "halfway" : order.status === "検品待ち" ? "fact_check" : "pending"}
+                status={order.status + (order.returnRequestType === 'partial' ? ' (一部)' : order.returnRequestType === 'full' ? ' (全量)' : '')}
+                statusColor={displayProps.color}
+                statusIcon={displayProps.icon}
                 productName={firstItem ? firstItem.name : "不明な商品"}
                 provider={order.items.length > 1 ? `他 ${order.items.length - 1} 点` : "提供: 株式会社ビルドテック"}
-                detail={order.status === "返却済" ? "返却が完了し、最終金額が確定しました" : order.status === "一部返却" ? "一部のアイテムが返却されました" : order.status === "検品待ち" ? "倉庫での検品をお待ちください" : "現在処理中です"}
+                detail={displayProps.detail}
                 price={order.total.toLocaleString()}
                 image={firstItem ? firstItem.image : ""}
                 type={firstItem?.type === 'rent' ? "レンタル" : "購入"}
-                progress={order.status === "返却済" ? 100 : order.status === "一部返却" ? 75 : order.status === "検品待ち" ? 60 : 25}
+                progress={displayProps.progress}
                 isSecondaryButton={true}
               />
             );
@@ -135,13 +166,15 @@ function OrderCard({
   const statusColors = {
     blue: "bg-blue-50 dark:bg-blue-900/30 text-primary dark:text-blue-300 border-blue-100 dark:border-blue-800/50",
     amber: "bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 border-amber-100 dark:border-amber-800/50",
-    purple: "bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 border-purple-100 dark:border-purple-800/50"
+    purple: "bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 border-purple-100 dark:border-purple-800/50",
+    red: "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 border-red-100 dark:border-red-800/50"
   };
 
   const barColors = {
     blue: "bg-primary text-primary",
     amber: "bg-amber-500 text-amber-500",
-    purple: "bg-purple-500 text-purple-500"
+    purple: "bg-purple-500 text-purple-500",
+    red: "bg-red-500 text-red-500"
   };
 
   const typeStyles = type === "レンタル" 

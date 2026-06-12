@@ -109,6 +109,7 @@ export interface Order {
   orderNumber: string;
   date: string;
   status: OrderStatus | string;
+  returnRequestType?: "full" | "partial";
   items: CartItem[];
   total: number;
   subtotal: number;

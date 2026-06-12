@@ -189,7 +189,7 @@ export default function OrderDetail() {
               statusColor === 'blue' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
               'bg-amber-100 text-amber-700 border border-amber-200'
             }`}>
-              {order.status}
+              {order.status} {order.returnRequestType === 'partial' ? '(一部)' : order.returnRequestType === 'full' ? '(全量)' : ''}
             </div>
           </div>
 

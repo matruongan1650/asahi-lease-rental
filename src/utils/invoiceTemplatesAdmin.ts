@@ -1,5 +1,6 @@
 import { CompanyGroup, RenterGroup, aggregateTotals } from "./rentalInvoiceGrouping";
 import { A4_PX_WIDTH, A4_PX_HEIGHT, renderSectionsToPdf, mountOffscreen } from "./pdfMultiPage";
+import { getOrGenerateInvoiceBlocks } from "./billing";
 
 const ISSUER = {
   name: "アサヒリース 株式会社",
@@ -98,10 +99,130 @@ function computeRenterPeriod(renter: RenterGroup): string {
   return `${starts[0]} 〜 ${ends[ends.length - 1]}`;
 }
 
+export interface PrintItem {
+  name: string;
+  detail: string;
+  quantity: number | string;
+  unitPrice: number;
+  lineTotal: number;
+  typeLabel: string;
+}
+
+export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
+  const items: PrintItem[] = [];
+  
+  if (monthPeriod) {
+    const blocks = getOrGenerateInvoiceBlocks(order);
+    const block = blocks.find((b: any) => b.monthPeriod === monthPeriod);
+    if (!block) return [];
+
+    order.items?.forEach((it: any) => {
+      if (it.type === 'buy') {
+        const orderMonth = order.date?.split('•')[0]?.trim().slice(0, 7) || "";
+        if (orderMonth === monthPeriod) {
+          items.push({
+            name: it.name || "-",
+            detail: "販売品",
+            quantity: it.quantity ?? 1,
+            unitPrice: it.buyPrice || 0,
+            lineTotal: (it.buyPrice || 0) * (it.quantity ?? 1),
+            typeLabel: "販売"
+          });
+        }
+      } else if (it.type === 'rent') {
+        const breakdown = it.monthlyBreakdown?.find((b: any) => b.monthStr === monthPeriod);
+        if (breakdown) {
+          const rentalFee = breakdown.price * (it.quantity ?? 1);
+          items.push({
+            name: it.name || "-",
+            detail: `${breakdown.days}日間`,
+            quantity: it.quantity ?? 1,
+            unitPrice: breakdown.price, // unit price for this period
+            lineTotal: rentalFee,
+            typeLabel: "賃貸"
+          });
+
+          const isFirstMonth = it.monthlyBreakdown?.[0]?.monthStr === monthPeriod;
+          if (isFirstMonth && it.guaranteeFeeFlat) {
+            items.push({
+              name: `${it.name || "-"} (基本補償料)`,
+              detail: "初回のみ",
+              quantity: it.quantity ?? 1,
+              unitPrice: it.guaranteeFeeFlat / (it.quantity ?? 1),
+              lineTotal: it.guaranteeFeeFlat,
+              typeLabel: "手数料"
+            });
+          }
+        }
+      }
+    });
+
+    if (block.extraCosts) {
+      block.extraCosts.forEach((ec: any) => {
+        items.push({
+          name: ec.note || "追加費用",
+          detail: ec.id === "fuel-refill" ? "燃料補給" : "その他",
+          quantity: 1,
+          unitPrice: ec.amount,
+          lineTotal: ec.amount,
+          typeLabel: "手数料"
+        });
+      });
+    }
+
+  } else {
+    // Overall invoice
+    order.items?.forEach((it: any) => {
+      const price = it.calculatedPrice ?? it.buyPrice ?? 0;
+      const detail = it.type === "rent"
+        ? `${it.rentalDays ?? "-"}日間` + (it.billedDays && it.rentalDays && it.billedDays > it.rentalDays ? ` (請求${it.billedDays}日)` : "")
+        : "販売品";
+        
+      items.push({
+        name: it.name || "-",
+        detail,
+        quantity: it.quantity ?? 1,
+        unitPrice: price,
+        lineTotal: price * (it.quantity ?? 1),
+        typeLabel: it.type === "rent" ? "賃貸" : "販売"
+      });
+
+      if (it.type === 'rent' && it.guaranteeFeeFlat) {
+        items.push({
+          name: `${it.name || "-"} (基本補償料)`,
+          detail: "初回のみ",
+          quantity: it.quantity ?? 1,
+          unitPrice: it.guaranteeFeeFlat / (it.quantity ?? 1),
+          lineTotal: it.guaranteeFeeFlat,
+          typeLabel: "手数料"
+        });
+      }
+    });
+
+    const blocks = getOrGenerateInvoiceBlocks(order);
+    blocks.forEach((b: any) => {
+      if (b.extraCosts) {
+        b.extraCosts.forEach((ec: any) => {
+          items.push({
+            name: ec.note || "追加費用",
+            detail: `(${b.monthPeriod}) ${ec.id === "fuel-refill" ? "燃料補給" : "その他"}`,
+            quantity: 1,
+            unitPrice: ec.amount,
+            lineTotal: ec.amount,
+            typeLabel: "手数料"
+          });
+        });
+      }
+    });
+  }
+
+  return items;
+}
+
 export interface PrintRow {
   type: "order-header" | "item-row";
   order: any;
-  item?: any;
+  item?: PrintItem;
   index?: number;
   isContinuation?: boolean;
 }
@@ -394,23 +515,19 @@ export function renderRenterInvoicePage(opts: RenterInvoicePageOpts): HTMLElemen
         </tr>
       `;
     } else {
-      const it = row.item;
+      const it = row.item!;
       const idx = row.index!;
-      const price = it.calculatedPrice ?? it.buyPrice ?? 0;
-      const detail = it.type === "rent"
-        ? `${it.rentalDays ?? "-"}日間` + (it.billedDays && it.rentalDays && it.billedDays > it.rentalDays ? ` (請求${it.billedDays}日)` : "")
-        : "販売品";
       return `
         <tr>
           <td style="${tdStyle('text-align:center;')}">${idx + 1}</td>
           <td style="${tdStyle()}">
-            <div style="font-weight:600;">${escapeHtml(it.name || "-")}</div>
-            <div style="font-size:10px;color:#64748b;">${escapeHtml(detail)}</div>
+            <div style="font-weight:600;">${escapeHtml(it.name)}</div>
+            <div style="font-size:10px;color:#64748b;">${escapeHtml(it.detail)}</div>
           </td>
-          <td style="${tdStyle('text-align:center;')}">${it.quantity ?? "-"}</td>
-          <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${Number(price).toLocaleString()}</td>
-          <td style="${tdStyle('text-align:right;font-weight:600;font-family:ui-monospace,monospace;')}">¥${Number(price * (it.quantity ?? 1)).toLocaleString()}</td>
-          <td style="${tdStyle('text-align:center;color:#64748b;')}">${it.type === "rent" ? "賃貸" : "販売"}</td>
+          <td style="${tdStyle('text-align:center;')}">${it.quantity}</td>
+          <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${Number(it.unitPrice).toLocaleString()}</td>
+          <td style="${tdStyle('text-align:right;font-weight:600;font-family:ui-monospace,monospace;')}">¥${Number(it.lineTotal).toLocaleString()}</td>
+          <td style="${tdStyle('text-align:center;color:#64748b;')}">${it.typeLabel}</td>
         </tr>
       `;
     }
@@ -560,7 +677,8 @@ export async function issueOrderInvoice(order: any) {
   };
 
   const rows: PrintRow[] = [{ type: "order-header", order }];
-  (order.items || []).forEach((it: any, idx: number) => {
+  const pItems = getPrintItems(order);
+  pItems.forEach((it, idx) => {
     rows.push({ type: "item-row", order, item: it, index: idx });
   });
 
@@ -591,7 +709,8 @@ export async function issueOrderInvoice(order: any) {
 export async function issueRenterInvoice(companyName: string, renter: RenterGroup, monthPeriod?: string) {
   const rows: PrintRow[] = renter.orders.flatMap(o => {
     const headerRow: PrintRow = { type: "order-header", order: o };
-    const itemRows: PrintRow[] = (o.items || []).map((it: any, idx: number) => ({
+    const pItems = getPrintItems(o, monthPeriod);
+    const itemRows: PrintRow[] = pItems.map((it, idx) => ({
       type: "item-row",
       order: o,
       item: it,
@@ -637,7 +756,8 @@ export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: str
   for (const r of group.renters) {
     const rows: PrintRow[] = r.orders.flatMap(o => {
       const headerRow: PrintRow = { type: "order-header", order: o };
-      const itemRows: PrintRow[] = (o.items || []).map((it: any, idx: number) => ({
+      const pItems = getPrintItems(o, monthPeriod);
+      const itemRows: PrintRow[] = pItems.map((it, idx) => ({
         type: "item-row",
         order: o,
         item: it,
@@ -709,7 +829,8 @@ export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeri
     for (const r of g.renters) {
       const rows: PrintRow[] = r.orders.flatMap(o => {
         const headerRow: PrintRow = { type: "order-header", order: o };
-        const itemRows: PrintRow[] = (o.items || []).map((it: any, idx: number) => ({
+        const pItems = getPrintItems(o, monthPeriod);
+        const itemRows: PrintRow[] = pItems.map((it, idx) => ({
           type: "item-row",
           order: o,
           item: it,

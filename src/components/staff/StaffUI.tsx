@@ -95,7 +95,8 @@ export interface SheetProps {
 
 export interface Photo {
   id: number;
-  bg: string;
+  bg?: string;
+  dataUrl?: string;
   time: string;
 }
 
@@ -488,26 +489,53 @@ export function SignaturePad({ onChange }: SignaturePadProps) {
   );
 }
 
-/* ---------- Photo capture tile ---------- */
+/* ---------- Photo capture button & tile ---------- */
 export const PHOTO_BGS = [
   "linear-gradient(135deg,#3a4a5e,#1f2a38)", "linear-gradient(135deg,#4a3f2e,#2a2218)",
   "linear-gradient(135deg,#2e4a3e,#18281f)", "linear-gradient(135deg,#3e2e4a,#241828)",
 ];
 
-export function makePhoto(i = 0): Photo {
+export function makePhoto(i = 0, dataUrl?: string): Photo {
   return {
     id: Date.now() + Math.random(),
     bg: PHOTO_BGS[i % PHOTO_BGS.length],
+    dataUrl,
     time: new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
   };
 }
 
+export function PhotoCaptureButton({ onCapture, style, children }: { onCapture: (dataUrl: string) => void, style?: React.CSSProperties, children?: React.ReactNode }) {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (ev.target?.result) {
+          onCapture(ev.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+  return (
+    <label style={{ cursor: "pointer", ...style }}>
+      <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFile} />
+      {children}
+    </label>
+  );
+}
+
 export function PhotoTile({ photo, onRemove }: PhotoTileProps) {
   return (
-    <div style={{ position: "relative", aspectRatio: "1", borderRadius: 13, overflow: "hidden", background: photo.bg, border: "1px solid var(--border)" }}>
-      <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "rgba(255,255,255,0.5)" }}>
-        <Icon name="image" size={26} />
-      </div>
+    <div style={{ position: "relative", aspectRatio: "1", borderRadius: 13, overflow: "hidden", background: photo.bg || "var(--surface-3)", border: "1px solid var(--border)" }}>
+      {photo.dataUrl ? (
+        <img src={photo.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="Captured" />
+      ) : (
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "rgba(255,255,255,0.5)" }}>
+          <Icon name="image" size={26} />
+        </div>
+      )}
       <div style={{ position: "absolute", left: 6, bottom: 6, fontSize: 10, fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.85)", background: "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 6 }}>{photo.time}</div>
       {onRemove && (
         <button onClick={onRemove} style={{ position: "absolute", top: 5, right: 5, width: 24, height: 24, borderRadius: 99, background: "rgba(0,0,0,0.55)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer" }}>
@@ -664,7 +692,7 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
   const addEntry = (reason: string) => setEntries(es => [...es, { key: Date.now() + reason, reason, qty: 1, photos: [], note: "" }]);
   const removeEntry = (key: string) => setEntries(es => es.filter(e => e.key !== key));
   const patchEntry = (key: string, updates: any) => setEntries(es => es.map(e => e.key === key ? { ...e, ...updates } : e));
-  const addPhotoToEntry = (key: string) => setEntries(es => es.map(e => e.key === key ? { ...e, photos: [...e.photos, makePhoto(e.photos.length)] } : e));
+  const addPhotoToEntry = (key: string, dataUrl: string) => setEntries(es => es.map(e => e.key === key ? { ...e, photos: [...e.photos, makePhoto(e.photos.length, dataUrl)] } : e));
   const rmPhotoFromEntry = (key: string, pid: number) => setEntries(es => es.map(e => e.key === key ? { ...e, photos: e.photos.filter((p: any) => p.id !== pid) } : e));
 
   return (
@@ -694,7 +722,9 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
               <Overline style={{ marginBottom: 8 }}>写真（{e.reason}）</Overline>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginBottom: 11 }}>
                 {e.photos.map((p: any) => <PhotoTile key={p.id} photo={p} onRemove={() => rmPhotoFromEntry(e.key, p.id)} />)}
-                <button onClick={() => addPhotoToEntry(e.key)} style={{ aspectRatio: "1", borderRadius: 11, border: "1.5px dashed var(--border-strong)", background: "var(--surface)", color: "var(--danger-bright)", display: "grid", placeItems: "center", cursor: "pointer" }}><Icon name="camera" size={20} /></button>
+                <PhotoCaptureButton onCapture={data => addPhotoToEntry(e.key, data)} style={{ aspectRatio: "1", borderRadius: 11, border: "1.5px dashed var(--border-strong)", background: "var(--surface)", color: "var(--danger-bright)", display: "grid", placeItems: "center", cursor: "pointer" }}>
+                  <Icon name="camera" size={20} />
+                </PhotoCaptureButton>
               </div>
               <input value={e.note} onChange={ev => patchEntry(e.key, { note: ev.target.value })} placeholder="メモ（任意）" style={{ width: "100%", borderRadius: 10, border: "1px solid var(--border-strong)", background: "var(--surface)", color: "var(--fg)", padding: "9px 12px", fontSize: 13.5, fontFamily: "var(--font-jp)", outline: "none" }} />
             </div>

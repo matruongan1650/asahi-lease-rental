@@ -58,18 +58,20 @@ export default function StaffJobDetail() {
     const updates: any = {};
     
     if (role === "delivery") {
-      updates.status = "配達完了"; // Delivered
+      updates.status = "配送済み"; // Delivered
+      updates.staffStatus = "配送完了";
       updates.deliveryPhoto = photoUrl;
       updates.deliverySignature = signatureData;
     } else if (role === "collection" || role === "warehouse") {
-      updates.status = "返却済"; // Returned
+      updates.status = "返却済み"; // Returned
+      updates.staffStatus = "回収完了";
       
       const issueArray = Object.entries(issues).map(([itemId, val]) => ({
         itemId, ...val
       }));
       updates.itemIssues = issueArray;
 
-      if (issueArray.length > 0 && updates.status === "返却済") {
+      if (issueArray.length > 0 && updates.status === "返却済み") {
         updates.status = "一部返却"; // Partially returned / Has issues
       }
 
@@ -198,10 +200,10 @@ export default function StaffJobDetail() {
               </div>
               
               <div className="pt-2 flex flex-col gap-3">
-                {role === "delivery" && order.status === "確認済" && (
+                {role === "delivery" && order.status === "確認済み" && (
                   <button 
                     onClick={async () => {
-                      await updateOrder(order.id, { status: "配達中" });
+                      await updateOrder(order.id, { status: "配送中" });
                     }}
                     className="w-full bg-blue-50 text-blue-600 border border-blue-200 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-100 active:scale-[0.98] transition-all"
                   >
@@ -210,8 +212,8 @@ export default function StaffJobDetail() {
                 )}
                 <button 
                   onClick={() => setStep((role === "collection" || role === "warehouse") ? "issue" : "sign")}
-                  disabled={role === "delivery" && order.status === "確認済"}
-                  className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${role === "delivery" && order.status === "確認済" ? "bg-slate-100 text-slate-400" : "bg-slate-900 text-white shadow-lg shadow-slate-200 hover:bg-slate-800"}`}
+                  disabled={role === "delivery" && order.status === "確認済み"}
+                  className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${role === "delivery" && order.status === "確認済み" ? "bg-slate-100 text-slate-400" : "bg-slate-900 text-white shadow-lg shadow-slate-200 hover:bg-slate-800"}`}
                 >
                   確認して進む <ChevronRight size={18} />
                 </button>

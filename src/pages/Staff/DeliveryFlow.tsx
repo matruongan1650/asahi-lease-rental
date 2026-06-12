@@ -14,7 +14,8 @@ import {
   PhotoTile,
   makePhoto,
   MapMock,
-  Photo
+  Photo,
+  PhotoCaptureButton
 } from "../../components/staff/StaffUI";
 import DocumentViewer from "../../components/DocumentViewer";
 
@@ -63,8 +64,8 @@ export default function DeliveryFlow({ o, onComplete, onExit }: DeliveryFlowProp
     };
   };
 
-  const addPhoto = () => {
-    setPhotos(p => [...p, makePhoto(p.length)]);
+  const addPhoto = (dataUrl: string) => {
+    setPhotos(p => [...p, makePhoto(p.length, dataUrl)]);
   };
 
   const next = () => {
@@ -208,10 +209,10 @@ export default function DeliveryFlow({ o, onComplete, onExit }: DeliveryFlowProp
       <>
         <SectionLabel>現場写真의 撮影</SectionLabel>
         <p style={{ fontSize: 13.5, color: "var(--fg-muted)", margin: "0 2px 14px", lineHeight: 1.55 }}>設置状況・搬入場所の写真を撮影してください。最低1枚の撮影が必要です。</p>
-        <button onClick={addPhoto} style={{ width: "100%", padding: "22px", borderRadius: 16, border: "1.5px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <PhotoCaptureButton onCapture={addPhoto} style={{ width: "100%", padding: "22px", borderRadius: 16, border: "1.5px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 14 }}>
           <div style={{ width: 52, height: 52, borderRadius: 99, background: "var(--brand-tint)", display: "grid", placeItems: "center" }}><Icon name="camera" size={26} /></div>
           <span style={{ fontSize: 15, fontWeight: 800 }}>写真を撮影</span>
-        </button>
+        </PhotoCaptureButton>
         {photos.length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
             {photos.map(p => <PhotoTile key={p.id} photo={p} onRemove={() => setPhotos(x => x.filter(y => y.id !== p.id))} />)}

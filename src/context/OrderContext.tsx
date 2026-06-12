@@ -8,6 +8,7 @@ export interface Order {
   orderNumber: string;
   date: string;
   status: string;
+  returnRequestType?: "full" | "partial";
   items: CartItem[];
   total: number;
   subtotal: number;

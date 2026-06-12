@@ -40,7 +40,7 @@ function WalkinCard({ o, onClick }: any) {
           <Badge variant={isRecheck ? "brand" : "warning"} icon={isRecheck ? "boxIn" : "clock"}>
             {isRecheck ? "最終検品" : "一次受付"}
           </Badge>
-          <Badge variant="neutral">{o.time}</Badge>
+          <Badge variant="neutral">{o.time} {o.returningEverything ? '(全量)' : '(一部)'}</Badge>
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", color: "var(--fg-muted)", fontSize: 13 }}>

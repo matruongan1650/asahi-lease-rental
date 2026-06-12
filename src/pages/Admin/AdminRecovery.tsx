@@ -76,7 +76,7 @@ export default function AdminRecovery() {
     },
     {
       h: "状態",
-      cell: (o: any) => <Badge>{o.status}</Badge>,
+      cell: (o: any) => <Badge>{o.status} {o.returnRequestType === 'partial' ? '(一部)' : o.returnRequestType === 'full' ? '(全量)' : ''}</Badge>,
     },
     {
       h: "操作",

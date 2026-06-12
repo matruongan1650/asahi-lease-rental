@@ -245,6 +245,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         id: (o.orderNumber || o.firestoreId || "").replace("ORD", "RTN"),
         firestoreId: o.firestoreId || o.id,
         window: o.rentalEndDate ? o.rentalEndDate.replace(/-/g, "/") : "未定",
+        returnRequestType: o.returnRequestType,
         company: o.companyName || ((o.personLastName || "") + " " + (o.personFirstName || "")).trim() || o.personName || "ゲスト",
         site: o.siteName || "現場",
         addr: o.deliveryLocation || "住所未設定",

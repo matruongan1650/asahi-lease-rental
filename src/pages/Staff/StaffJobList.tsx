@@ -14,7 +14,7 @@ export default function StaffJobList() {
   if (role === "delivery") {
     title = "配達指示";
     // Orders confirmed by admin ready for delivery, or currently delivering
-    filteredOrders = orders.filter(o => o.status === "確認済" || o.status === "配達中");
+    filteredOrders = orders.filter(o => o.status === "確認済み" || o.status === "配送中");
   } else if (role === "collection") {
     title = "回収指示";
     // Orders delivered and needing collection
@@ -63,9 +63,9 @@ export default function StaffJobList() {
                   <span className="text-xs font-bold text-slate-500 mt-0.5 max-w-[180px] truncate">{order.personName || "N/A"}</span>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-full font-extrabold tracking-widest uppercase border ${
-                  order.status === "確認済" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                  order.status === "配達中" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                  order.status === "配達完了" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                  order.status === "確認済み" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
+                  order.status === "配送中" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                  order.status === "配送済み" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
                   order.status === "回収中" ? "bg-orange-50 text-orange-700 border-orange-200" :
                   "bg-slate-50 text-slate-700 border-slate-200"
                 }`}>

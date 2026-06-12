@@ -98,28 +98,16 @@ export default function ReturnConfirmation() {
     const returningEverything = remainingItemsList.length === 0;
 
     // 直接持ち込み（全量・一部いずれも）は倉庫の「持込返却 検品」へ回す。
-    // それ以外（業者集荷など）は従来どおり即時確定する。
-    if (method !== "direct") {
-      const tempOrder = {
-        ...order,
-        items: returnedItemsList,
-        subtotal: returnedSubtotal,
-        tax: returnedTax,
-        total: returnedTotal,
-        status: "返却済",
-        actualReturnDate: actualReturnDate,
-        invoiceBlocks: undefined
-      };
-      const newInvoiceBlocks = getOrGenerateInvoiceBlocks(tempOrder);
+    // 業者集荷（pickup）の場合は、スタッフの「回収予定」タスクとして登録する。
+    const returnReqType = returningEverything ? "full" : "partial";
 
+    if (method === "pickup") {
       updateOrder(order.id, {
-        items: returnedItemsList,
-        subtotal: returnedSubtotal,
-        tax: returnedTax,
-        total: returnedTotal,
-        status: "返却済",
-        actualReturnDate: actualReturnDate,
-        invoiceBlocks: newInvoiceBlocks
+        status: "回収中",
+        staffStatus: "回収予定",
+        returnRequestType: returnReqType,
+        rentalEndDate: pickupDate || order.rentalEndDate,
+        notes: `【回収リクエスト】希望日時: ${pickupDate} ${pickupTime}\n集荷場所: ${address}\n${order.notes || order.note || ''}`
       });
     } else {
       // 直接持ち込み（全量・一部いずれも）: ここでは確定・請求分割しない。
@@ -173,7 +161,7 @@ export default function ReturnConfirmation() {
       } as any);
 
       // 元注文は「検品待ち」に。確定は倉庫検品完了時。
-      updateOrder(order.id, { status: "検品待ち" });
+      updateOrder(order.id, { status: "検品待ち", returnRequestType: returnReqType });
     }
 
     alert(

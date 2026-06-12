@@ -210,7 +210,7 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
           <div style={{ fontSize: 17, fontWeight: 800, color: outdoorMode ? "#FFFFFF" : "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.35 }}>{o.site}</div>
           <div style={{ fontSize: 13, color: outdoorMode ? "rgba(255,255,255,0.7)" : "var(--fg-muted)", marginTop: 5, fontWeight: 700 }}>{o.company}</div>
         </div>
-        <Badge variant={done ? "success" : (outdoorMode ? "warning" : "neutral")} icon={done ? "check" : "clock"}>{done ? "完了" : o.window}</Badge>
+        <Badge variant={done ? "success" : (outdoorMode ? "warning" : "neutral")} icon={done ? "check" : "clock"}>{done ? "完了" : `${o.window} ${o.returnRequestType === 'partial' ? '(一部)' : o.returnRequestType === 'full' ? '(全量)' : ''}`}</Badge>
       </div>
       <div style={{ 
         display: "flex", alignItems: "center", gap: 14, 
