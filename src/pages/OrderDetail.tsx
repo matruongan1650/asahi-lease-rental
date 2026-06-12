@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { isVehicleCategory } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
 import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../utils/billing";
+import OrderBus from "../lib/orderBus";
 
 export default function OrderDetail() {
   const navigate = useNavigate();
@@ -12,6 +13,13 @@ export default function OrderDetail() {
   const [viewingDoc, setViewingDoc] = useState<"納品書" | "請求書" | "回収書" | null>(null);
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
   const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
+
+  // 倉庫の検品記録（写真付き）— お客様にも自分の注文の検品内容を公開する
+  const [inspections, setInspections] = useState<any[]>([]);
+  useEffect(() => {
+    const unsub = OrderBus.subscribe("returnInspections", (rows: any) => setInspections(rows || []));
+    return () => unsub();
+  }, []);
   
   // Extension state
   const [isExtending, setIsExtending] = useState(false);
@@ -495,6 +503,95 @@ export default function OrderDetail() {
             )}
           </div>
         </section>
+
+        {/* 検品記録（倉庫）— 保安用品の検品結果・写真、保安車両の貸出/返却チェック */}
+        {(() => {
+          const baseNum = (order.orderNumber || "").split("-R-")[0];
+          const myInspections = (inspections || []).filter(
+            (r: any) => r && (r.orderId === order.id || r.orderNumber === order.orderNumber || (baseNum && r.orderNumber === baseNum))
+          );
+          const vco: any = (order as any).vehicleCheckout;
+          const vci: any = (order as any).vehicleCheckin;
+          const fuel: any = (order as any).fuelCharge;
+          if (myInspections.length === 0 && !vco && !vci) return null;
+          return (
+            <section className="mt-6 px-4 pb-8">
+              <h3 className="text-slate-900 dark:text-white text-base font-bold mb-3 flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[20px]">fact_check</span>
+                検品記録
+              </h3>
+
+              {myInspections.map((rec: any) => (
+                <div key={rec.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 p-4 mb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-slate-500">{rec.inspectedAt} ・ {rec.inspector}</span>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${rec.hasShortage ? "bg-red-50 text-red-600 border border-red-200" : "bg-emerald-50 text-emerald-600 border border-emerald-200"}`}>
+                      {rec.hasShortage ? "不足・破損あり" : "検品OK"}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {(rec.products || []).map((p: any, i: number) => (
+                      <div key={i} className="py-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium text-slate-800 dark:text-slate-200 min-w-0 truncate">{p.name}</span>
+                          <span className={`font-bold shrink-0 ml-2 ${p.shortage > 0 ? "text-red-500" : "text-slate-700 dark:text-slate-300"}`}>{p.counted}/{p.expected} 点</span>
+                        </div>
+                        {(p.reports || []).map((rp: any, ri: number) => (
+                          <div key={ri} className="mt-1.5">
+                            <span className="text-[11px] font-bold text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full">{rp.reason}{rp.qty ? ` ${rp.qty}点` : ""}</span>
+                            {rp.note && <span className="text-[11px] text-slate-500 ml-2">{rp.note}</span>}
+                            {(rp.photos || []).length > 0 && (
+                              <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+                                {rp.photos.map((ph: any, pi: number) => (
+                                  ph && ph.dataUrl ? (
+                                    <img key={pi} src={ph.dataUrl} alt="検品写真" className="aspect-square w-full rounded-lg object-cover border border-slate-200 dark:border-slate-700" />
+                                  ) : (
+                                    <div key={pi} className="relative aspect-square w-full rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700" style={{ background: ph?.bg || "#e2e8f0" }}>
+                                      <span className="material-symbols-outlined absolute inset-0 grid place-items-center text-white/60 text-[20px]">image</span>
+                                      {ph?.time && <span className="absolute bottom-0.5 left-1 text-[9px] text-white/90 bg-black/40 px-1 rounded">{ph.time}</span>}
+                                    </div>
+                                  )
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {(vco || vci) && (
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 p-4">
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-primary text-[18px]">local_shipping</span>保安車両 チェック記録
+                  </p>
+                  <dl className="grid grid-cols-[110px_1fr] gap-y-1.5 text-[13px]">
+                    {vco && (<>
+                      <dt className="text-slate-500">貸出時 走行距離</dt><dd className="font-medium">{vco.km ? `${vco.km} km` : "—"}</dd>
+                      <dt className="text-slate-500">貸出時 状態</dt><dd className="font-medium">{vco.condition || "異常なし"}</dd>
+                    </>)}
+                    {vci && (<>
+                      <dt className="text-slate-500">返却時 走行距離</dt><dd className="font-medium">{vci.km ? `${vci.km} km` : "—"}</dd>
+                      <dt className="text-slate-500">返却時 状態</dt><dd className="font-medium">{vci.condition || "異常なし"}</dd>
+                      <dt className="text-slate-500">燃料</dt>
+                      <dd className={`font-bold ${vci.fuelFull ? "text-emerald-600" : "text-red-500"}`}>{vci.fuelFull ? "満タン返却" : "満タン未満（補給対応）"}</dd>
+                    </>)}
+                  </dl>
+                  {fuel && Number(fuel.amount) > 0 && (
+                    <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+                      <p className="text-[12px] font-bold text-red-600 dark:text-red-400">燃料補給費: ¥{Math.round(Number(fuel.amount)).toLocaleString()}（請求書に計上）</p>
+                      {fuel.receiptPhoto && (
+                        <img src={fuel.receiptPhoto} alt="給油レシート" className="mt-2 w-28 rounded-lg border border-red-200 dark:border-red-800" />
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })()}
       </main>
 
       {/* Extension Modal */}
