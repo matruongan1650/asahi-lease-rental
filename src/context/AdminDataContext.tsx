@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import OrderBus, { type BusRecord, type AdminDerivedData, deriveAdminData } from "../lib/orderBus";
-import { COLLECTIONS_MOCK_DATA, KPIS } from "../data/adminMockData";
+import { COLLECTIONS_MOCK_DATA } from "../data/adminMockData";
 import { patchOrder as patchFirebaseOrder, subscribeOrders } from "../lib/firebase";
 
 interface AdminDataContextProps {
@@ -206,12 +206,12 @@ export function useAdminOrders() {
     })),
     recentTx: d.recentTx,
     kpis: {
-      totalSales: d.totalSales || KPIS.totalSales,
-      rentalSales: d.rentalSales || KPIS.rentalSales,
-      productSales: d.productSales || KPIS.productSales,
-      totalSalesDelta: KPIS.totalSalesDelta,
-      rentalSalesDelta: KPIS.rentalSalesDelta,
-      productSalesDelta: KPIS.productSalesDelta,
+      totalSales: d.totalSales || 0,
+      rentalSales: d.rentalSales || 0,
+      productSales: d.productSales || 0,
+      totalSalesDelta: 0,
+      rentalSalesDelta: 0,
+      productSalesDelta: 0,
     },
     patchOrder: ctx.patchOrder,
   };

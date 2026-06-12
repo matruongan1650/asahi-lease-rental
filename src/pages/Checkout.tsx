@@ -12,6 +12,9 @@ import React, { useEffect } from 'react';
 
 // 日付入力は 期間延長（注文詳細）と同じネイティブの <input type="date"> を使用する。
 // 値の形式は YYYY-MM-DD（state とそのまま一致）。
+function toDateInputValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -34,6 +37,15 @@ export default function Checkout() {
 
   const estimateRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const earliestDeliveryDate = (() => {
+    const now = new Date();
+    const min = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (now.getHours() >= 14) {
+      min.setDate(min.getDate() + 1);
+    }
+    return toDateInputValue(min);
+  })();
+  const earliestRentalStartDate = earliestDeliveryDate;
 
   const updatedItems = items.map(item => ({ ...item }));
 
@@ -92,7 +104,35 @@ export default function Checkout() {
   const tax = Math.floor(subtotal * 0.1);
   const total = subtotal + tax;
 
-  const isFormValid = siteName.trim() !== "" && constructionNumber.trim() !== "" && rentalStartDate.trim() !== "" && rentalEndDate.trim() !== "" && deliveryDate.trim() !== "" && deliveryLocation.trim() !== "";
+  const isDateRangeValid = Boolean(
+    rentalStartDate &&
+    rentalEndDate &&
+    rentalEndDate >= rentalStartDate &&
+    rentalStartDate >= earliestRentalStartDate &&
+    deliveryDate &&
+    deliveryDate >= earliestDeliveryDate &&
+    deliveryDate <= rentalStartDate
+  );
+  const isFormValid = siteName.trim() !== "" && constructionNumber.trim() !== "" && isDateRangeValid && deliveryLocation.trim() !== "";
+
+  useEffect(() => {
+    if (rentalStartDate && rentalStartDate < earliestRentalStartDate) {
+      setRentalStartDate(earliestRentalStartDate);
+      if (!rentalEndDate || rentalEndDate < earliestRentalStartDate) {
+        setRentalEndDate(earliestRentalStartDate);
+      }
+      return;
+    }
+    if (rentalStartDate && rentalEndDate && rentalEndDate < rentalStartDate) {
+      setRentalEndDate(rentalStartDate);
+    }
+    if (deliveryDate && deliveryDate < earliestDeliveryDate) {
+      setDeliveryDate(earliestDeliveryDate);
+    }
+    if (deliveryDate && rentalStartDate && deliveryDate > rentalStartDate) {
+      setDeliveryDate(rentalStartDate);
+    }
+  }, [deliveryDate, earliestDeliveryDate, earliestRentalStartDate, rentalStartDate, rentalEndDate]);
 
   const getQuotationAddressee = () => {
     let addressee = "";
@@ -245,7 +285,16 @@ export default function Checkout() {
               <input
                 type="date"
                 value={rentalStartDate || ""}
-                onChange={(e) => setRentalStartDate(e.target.value)}
+                min={earliestRentalStartDate}
+                onChange={(e) => {
+                  setRentalStartDate(e.target.value);
+                  if (deliveryDate && e.target.value && deliveryDate > e.target.value) {
+                    setDeliveryDate(e.target.value);
+                  }
+                  if (rentalEndDate && e.target.value && rentalEndDate < e.target.value) {
+                    setRentalEndDate(e.target.value);
+                  }
+                }}
                 className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
@@ -267,9 +316,14 @@ export default function Checkout() {
               <input
                 type="date"
                 value={deliveryDate || ""}
+                min={earliestDeliveryDate}
+                max={rentalStartDate || undefined}
                 onChange={(e) => setDeliveryDate(e.target.value)}
                 className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
+              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                14:00前のご注文は本日納品を選択できます。14:00以降は翌日以降を選択してください。
+              </p>
             </div>
           </div>
           
@@ -544,6 +598,10 @@ export default function Checkout() {
             <button 
               disabled={!isFormValid}
               onClick={() => {
+                if (!isDateRangeValid) {
+                  alert("日付を確認してください。14:00以降は本日のレンタル開始を選択できません。レンタル終了予定日はレンタル開始日以降を選択してください。");
+                  return;
+                }
                 setProfile({ ...profile, companyName, firstName: personFirstName, lastName: personLastName, address: deliveryLocation });
                 navigate("/checkout-confirm", {
                   state: {

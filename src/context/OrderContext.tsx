@@ -34,12 +34,15 @@ export interface Order {
   staffNote?: string;
   assignedStaff?: string;
   deliveryPhoto?: string;
+  deliveryPhotos?: any[];
   deliverySignature?: string;
   collectionPhoto?: string;
+  collectionPhotos?: any[];
   collectionSignature?: string;
   warehousePhoto?: string;
+  warehousePhotos?: any[];
   warehouseSignature?: string;
-  itemIssues?: { itemId: string; type: "missing" | "broken"; quantity: number; notes: string; photo?: string }[];
+  itemIssues?: { itemId: string; itemName?: string; type: "missing" | "broken"; quantity: number; notes: string; photo?: any }[];
   invoiceBlocks?: any[];
   inspectedByWarehouse?: boolean;
 }

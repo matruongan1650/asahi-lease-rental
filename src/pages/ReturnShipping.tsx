@@ -2,6 +2,12 @@ import React, { useState, useRef } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 
+function normalizeDateInput(value: any): string {
+  const match = String(value || "").match(/(\d{4})[^\d](\d{1,2})[^\d](\d{1,2})/);
+  if (!match) return "";
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
 export default function ReturnShipping() {
   const navigate = useNavigate();
   const { orderId } = useParams();
@@ -16,10 +22,16 @@ export default function ReturnShipping() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<string[]>([]);
+  const returnMinDate = normalizeDateInput(order?.rentalStartDate);
+  const returnMaxDate = normalizeDateInput(order?.rentalEndDate);
   
   const [address, setAddress] = useState(profile.address);
-  const [pickupDate, setPickupDate] = useState("");
+  const [pickupDate, setPickupDate] = useState(returnMaxDate || returnMinDate || "");
   const [pickupTime, setPickupTime] = useState("午前中");
+  const isDateOutOfRange = Boolean(
+    pickupDate &&
+    ((returnMinDate && pickupDate < returnMinDate) || (returnMaxDate && pickupDate > returnMaxDate))
+  );
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -118,9 +130,14 @@ export default function ReturnShipping() {
                 <input 
                   type="date" 
                   value={pickupDate}
+                  min={returnMinDate || undefined}
+                  max={returnMaxDate || undefined}
                   onChange={(e) => setPickupDate(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
                 />
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  {returnMinDate || "開始日未設定"} 〜 {returnMaxDate || "終了日未設定"} の範囲で選択してください。
+                </p>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-300">回収希望時間</label>
@@ -135,6 +152,26 @@ export default function ReturnShipping() {
                   <option>16:00 - 18:00</option>
                 </select>
               </div>
+            </div>
+          </section>
+        )}
+
+        {method === "direct" && (
+          <section className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col gap-3">
+            <h3 className="text-sm font-bold border-b border-slate-100 dark:border-slate-700 pb-2">持込予定日</h3>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">返却予定日 <span className="text-red-500 ml-1">*</span></label>
+              <input
+                type="date"
+                value={pickupDate}
+                min={returnMinDate || undefined}
+                max={returnMaxDate || undefined}
+                onChange={(e) => setPickupDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+              />
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                {returnMinDate || "開始日未設定"} 〜 {returnMaxDate || "終了日未設定"} の範囲で選択してください。
+              </p>
             </div>
           </section>
         )}
@@ -188,6 +225,10 @@ export default function ReturnShipping() {
         <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
           <button 
             onClick={() => {
+              if (!pickupDate || isDateOutOfRange) {
+                alert("返却予定日はレンタル開始日からレンタル終了予定日の範囲で選択してください。");
+                return;
+              }
               setProfile({ ...profile, address });
               navigate(`/return-confirmation`, { state: { returnQuantities, order, method, address, pickupDate, pickupTime, photos }});
             }}

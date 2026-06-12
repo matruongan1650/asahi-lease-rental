@@ -2,6 +2,91 @@ import React, { useState } from "react";
 import { Drawer, Badge, triggerToast } from "./AdminUI";
 import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock } from "../utils/billing";
 import DocumentViewer from "./DocumentViewer";
+import { formatStatusWithReturnRequest } from "../utils/returnLabels";
+
+type FieldPhoto = {
+  src: string;
+  label: string;
+  note?: string;
+  bg?: string;
+};
+
+function normalizeFieldPhoto(photo: any, label: string, note?: string): FieldPhoto | null {
+  if (!photo) return null;
+  if (typeof photo === "string") {
+    return { src: photo, label, note };
+  }
+  const src = photo.dataUrl || photo.url || photo.src || photo.href || "";
+  const photoLabel = photo.time || photo.label || photo.name || label;
+  if (!src && !photo.bg) return null;
+  return { src, label: photoLabel, note, bg: photo.bg };
+}
+
+function collectFieldPhotos(label: string, ...values: any[]): FieldPhoto[] {
+  return values
+    .flatMap((value) => Array.isArray(value) ? value : value ? [value] : [])
+    .map((photo) => normalizeFieldPhoto(photo, label))
+    .filter((photo): photo is FieldPhoto => Boolean(photo));
+}
+
+function FieldPhotoGrid({ photos, alt }: { photos: FieldPhoto[]; alt: string }) {
+  if (photos.length === 0) return null;
+  return (
+    <div className="grid grid-cols-3 gap-2 mb-3">
+      {photos.map((photo, index) => {
+        const body = photo.src ? (
+          <img src={photo.src} alt={alt} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full grid place-items-center text-white/70" style={{ background: photo.bg || "#e2e8f0" }}>
+            <span className="material-symbols-outlined text-[24px]">image</span>
+          </div>
+        );
+        return photo.src ? (
+          <a
+            key={`${photo.label}-${index}`}
+            href={photo.src}
+            target="_blank"
+            rel="noreferrer"
+            className="aspect-square bg-slate-100 rounded-md overflow-hidden relative group block"
+          >
+            {body}
+            {(photo.label || photo.note) && (
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[9px] px-1.5 py-1 truncate">
+                {photo.note || photo.label}
+              </span>
+            )}
+          </a>
+        ) : (
+          <div key={`${photo.label}-${index}`} className="aspect-square bg-slate-100 rounded-md overflow-hidden relative">
+            {body}
+            {(photo.label || photo.note) && (
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[9px] px-1.5 py-1 truncate">
+                {photo.note || photo.label}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function buildOrderEditDraft(order: any) {
+  return {
+    ...order,
+    items: (order.items || []).map((item: any) => ({ ...item })),
+    subtotal: Number(order.subtotal || 0),
+    tax: Number(order.tax || 0),
+    total: Number(order.total || 0),
+    delivery: Number(order.delivery || 0),
+  };
+}
+
+function editableItemAmount(item: any): number {
+  const qty = Number(item.quantity || 0);
+  const unit = Number(item.calculatedPrice ?? (item.type === "rent" ? item.rentPrice : item.buyPrice) ?? 0);
+  return unit * qty + Number(item.guaranteeFeeFlat || 0);
+}
 
 interface AdminOrderDrawerProps {
   open: boolean;
@@ -23,8 +108,32 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
 
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState<"請求書" | "回収書" | "納品書" | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState<any>(() => buildOrderEditDraft(order));
 
   const blocks = getOrGenerateInvoiceBlocks(order);
+  const deliveryPhotos = collectFieldPhotos("納品写真", order.deliveryPhotos, order.deliveryPhoto);
+  const collectionPhotos = collectFieldPhotos("回収写真", order.collectionPhotos, order.collectionPhoto);
+  const warehousePhotos = collectFieldPhotos("倉庫検品写真", order.warehousePhotos, order.warehousePhoto);
+  const issuePhotos = (order.itemIssues || [])
+    .map((issue: any) => normalizeFieldPhoto(
+      issue.photo,
+      issue.type === "missing" ? "不足写真" : "破損写真",
+      `${issue.itemName || issue.itemId || "商品"} / ${issue.type === "missing" ? "不足" : "破損"} ${issue.quantity || ""}点`
+    ))
+    .filter((photo: FieldPhoto | null): photo is FieldPhoto => Boolean(photo));
+  const deliverySignature = order.signature || order.deliverySignature;
+  const collectionSignature = order.collectionSignature;
+  const warehouseSignature = order.warehouseSignature;
+  const hasFieldRecords = Boolean(
+    deliveryPhotos.length ||
+    collectionPhotos.length ||
+    warehousePhotos.length ||
+    issuePhotos.length ||
+    deliverySignature ||
+    collectionSignature ||
+    warehouseSignature
+  );
 
   const handleAddCost = () => {
     if (!activeBlockId) return;
@@ -100,6 +209,73 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
     }
   };
 
+  const openEditModal = () => {
+    setEditDraft(buildOrderEditDraft(order));
+    setEditOpen(true);
+  };
+
+  const setDraftValue = (key: string, value: any) => {
+    setEditDraft((prev: any) => ({ ...prev, [key]: value }));
+  };
+
+  const setDraftItemValue = (index: number, key: string, value: any) => {
+    setEditDraft((prev: any) => ({
+      ...prev,
+      items: (prev.items || []).map((item: any, i: number) => i === index ? { ...item, [key]: value } : item),
+    }));
+  };
+
+  const recalcEditDraftTotals = () => {
+    setEditDraft((prev: any) => {
+      const subtotal = (prev.items || []).reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + Number(prev.delivery || 0);
+      const tax = Math.floor(subtotal * 0.1);
+      return { ...prev, subtotal, tax, total: subtotal + tax };
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!onUpdateOrder || !editDraft) return;
+    const normalizedItems = (editDraft.items || []).map((item: any) => ({
+      ...item,
+      quantity: Number(item.quantity || 0),
+      rentPrice: item.rentPrice === "" || item.rentPrice === undefined ? item.rentPrice : Number(item.rentPrice),
+      buyPrice: item.buyPrice === "" || item.buyPrice === undefined ? item.buyPrice : Number(item.buyPrice),
+      calculatedPrice: item.calculatedPrice === "" || item.calculatedPrice === undefined ? item.calculatedPrice : Number(item.calculatedPrice),
+      guaranteeFeeFlat: Number(item.guaranteeFeeFlat || 0),
+    }));
+
+    const updates: any = {
+      companyName: editDraft.companyName || "",
+      personName: editDraft.personName || "",
+      personLastName: editDraft.personLastName || "",
+      personFirstName: editDraft.personFirstName || "",
+      userEmail: editDraft.userEmail || "",
+      userPhone: editDraft.userPhone || "",
+      siteName: editDraft.siteName || "",
+      constructionNumber: editDraft.constructionNumber || "",
+      deliveryLocation: editDraft.deliveryLocation || "",
+      deliveryDate: editDraft.deliveryDate || "",
+      rentalStartDate: editDraft.rentalStartDate || "",
+      rentalEndDate: editDraft.rentalEndDate || "",
+      actualReturnDate: editDraft.actualReturnDate || "",
+      status: editDraft.status || order.status,
+      staffStatus: editDraft.staffStatus || "",
+      assignedStaff: editDraft.assignedStaff || "",
+      returnRequestType: editDraft.returnRequestType || undefined,
+      notes: editDraft.notes || editDraft.note || "",
+      items: normalizedItems,
+      delivery: Number(editDraft.delivery || 0),
+      subtotal: Number(editDraft.subtotal || 0),
+      tax: Number(editDraft.tax || 0),
+      total: Number(editDraft.total || 0),
+      invoiceBlocks: undefined,
+    };
+
+    onUpdateOrder(order.firestoreId || order.id, updates);
+    triggerToast("注文情報を更新しました", "ok");
+    setEditOpen(false);
+  };
+
   return (
     <>
       <Drawer
@@ -116,22 +292,33 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
           <div>
             <div className="text-xs font-bold text-slate-500 mb-1">現在の状態</div>
             <Badge tone={order.status === "処理中" ? "warning" : order.status === "完了" || order.status === "配送済み" ? "ok" : "default"}>
-              {order.status}
+              {formatStatusWithReturnRequest(order.status, order.returnRequestType)}
             </Badge>
           </div>
           
-          {order.status === "処理中" && onUpdateStatus && (
-            <button
-              onClick={() => {
-                onUpdateStatus(order.firestoreId || order.id, "確認済み", "配送予定");
-                onClose();
-              }}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-bold text-sm shadow-sm transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]">send</span>
-              手配する
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onUpdateOrder && (
+              <button
+                onClick={openEditModal}
+                className="flex items-center gap-2 bg-white hover:bg-slate-100 text-slate-700 px-3 py-2 rounded-md font-bold text-sm shadow-sm border border-slate-200 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">edit</span>
+                注文情報を編集
+              </button>
+            )}
+            {order.status === "処理中" && onUpdateStatus && (
+              <button
+                onClick={() => {
+                  onUpdateStatus(order.firestoreId || order.id, "確認済み", "配送予定");
+                  onClose();
+                }}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-bold text-sm shadow-sm transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">send</span>
+                手配する
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 帳票（PDF）— この注文の納品書・回収書・請求書を表示 */}
@@ -196,6 +383,10 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
               <div>
                 <span className="text-slate-500 block text-[10px]">現場名</span>
                 <span className="font-bold text-slate-800">{order.siteName || "—"}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block text-[10px]">工事番号</span>
+                <span className="font-bold text-slate-800">{order.constructionNumber || "—"}</span>
               </div>
               <div>
                 <span className="text-slate-500 block text-[10px]">納品先住所</span>
@@ -394,56 +585,62 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
         </div>
 
         {/* Field Records */}
-        {(order.deliveryPhotos || order.signature || order.collectionPhotos || order.collectionSignature) && (
+        {hasFieldRecords && (
           <div className="bg-white border border-slate-200 rounded-lg p-4">
             <h3 className="text-xs font-bold text-slate-400 mb-4 flex items-center gap-1">
               <span className="material-symbols-outlined text-[14px]">photo_camera</span>
               現場記録
             </h3>
             
-            {(order.deliveryPhotos?.length > 0 || order.signature) && (
+            {(deliveryPhotos.length > 0 || deliverySignature) && (
               <div className="mb-4">
                 <h4 className="text-[11px] font-bold text-slate-500 mb-2 border-b border-slate-100 pb-1">納品時</h4>
-                {order.deliveryPhotos && order.deliveryPhotos.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    {order.deliveryPhotos.map((p: any, i: number) => (
-                      <div key={i} className="aspect-square bg-slate-100 rounded-md overflow-hidden relative">
-                         <img src={p.url || p} alt="納品写真" className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {order.signature && (
+                <FieldPhotoGrid photos={deliveryPhotos} alt="納品写真" />
+                {deliverySignature && (
                   <div>
                     <div className="text-[10px] text-slate-500 mb-1">受領サイン</div>
                     <div className="bg-white border border-slate-200 rounded-md p-2 max-w-[250px] flex items-center justify-center">
-                      <img src={order.signature} alt="受領サイン" className="max-w-full h-auto max-h-[80px] object-contain" />
+                      <img src={deliverySignature} alt="受領サイン" className="max-w-full h-auto max-h-[80px] object-contain" />
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {(order.collectionPhotos?.length > 0 || order.collectionSignature) && (
+            {(collectionPhotos.length > 0 || collectionSignature) && (
               <div className="mt-4">
                 <h4 className="text-[11px] font-bold text-slate-500 mb-2 border-b border-slate-100 pb-1">回収時</h4>
-                {order.collectionPhotos && order.collectionPhotos.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    {order.collectionPhotos.map((p: any, i: number) => (
-                      <div key={i} className="aspect-square bg-slate-100 rounded-md overflow-hidden relative">
-                         <img src={p.url || p} alt="回収写真" className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {order.collectionSignature && (
+                <FieldPhotoGrid photos={collectionPhotos} alt="回収写真" />
+                {collectionSignature && (
                   <div>
                     <div className="text-[10px] text-slate-500 mb-1">受領サイン</div>
                     <div className="bg-white border border-slate-200 rounded-md p-2 max-w-[250px] flex items-center justify-center">
-                      <img src={order.collectionSignature} alt="受領サイン" className="max-w-full h-auto max-h-[80px] object-contain" />
+                      <img src={collectionSignature} alt="受領サイン" className="max-w-full h-auto max-h-[80px] object-contain" />
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {(warehousePhotos.length > 0 || warehouseSignature) && (
+              <div className="mt-4">
+                <h4 className="text-[11px] font-bold text-slate-500 mb-2 border-b border-slate-100 pb-1">倉庫検品時</h4>
+                <FieldPhotoGrid photos={warehousePhotos} alt="倉庫検品写真" />
+                {warehouseSignature && (
+                  <div>
+                    <div className="text-[10px] text-slate-500 mb-1">倉庫確認サイン</div>
+                    <div className="bg-white border border-slate-200 rounded-md p-2 max-w-[250px] flex items-center justify-center">
+                      <img src={warehouseSignature} alt="倉庫確認サイン" className="max-w-full h-auto max-h-[80px] object-contain" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {issuePhotos.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-[11px] font-bold text-slate-500 mb-2 border-b border-slate-100 pb-1">不足・破損写真</h4>
+                <FieldPhotoGrid photos={issuePhotos} alt="不足・破損写真" />
               </div>
             )}
           </div>
@@ -542,6 +739,221 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors"
               >
                 費用を追加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editOpen && editDraft && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 animate-fadeIn">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden animate-scaleIn flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="font-bold text-slate-800">注文情報を編集</h3>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{order.orderNumber || order.id}</p>
+              </div>
+              <button
+                onClick={() => setEditOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-5 text-sm">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-500 mb-3">顧客情報</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="col-span-2">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">会社名</span>
+                      <input value={editDraft.companyName || ""} onChange={(e) => setDraftValue("companyName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label className="col-span-2">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">担当者名</span>
+                      <input value={editDraft.personName || ""} onChange={(e) => setDraftValue("personName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">姓</span>
+                      <input value={editDraft.personLastName || ""} onChange={(e) => setDraftValue("personLastName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">名</span>
+                      <input value={editDraft.personFirstName || ""} onChange={(e) => setDraftValue("personFirstName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">メール</span>
+                      <input value={editDraft.userEmail || ""} onChange={(e) => setDraftValue("userEmail", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">電話番号</span>
+                      <input value={editDraft.userPhone || ""} onChange={(e) => setDraftValue("userPhone", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-500 mb-3">現場・日程</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">現場名</span>
+                      <input value={editDraft.siteName || ""} onChange={(e) => setDraftValue("siteName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">工事番号</span>
+                      <input value={editDraft.constructionNumber || ""} onChange={(e) => setDraftValue("constructionNumber", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label className="col-span-2">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">納品先住所</span>
+                      <input value={editDraft.deliveryLocation || ""} onChange={(e) => setDraftValue("deliveryLocation", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">納品希望日</span>
+                      <input type="date" value={editDraft.deliveryDate || ""} onChange={(e) => setDraftValue("deliveryDate", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">実際の返却日</span>
+                      <input type="date" value={editDraft.actualReturnDate || ""} onChange={(e) => setDraftValue("actualReturnDate", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">レンタル開始日</span>
+                      <input type="date" value={editDraft.rentalStartDate || ""} onChange={(e) => setDraftValue("rentalStartDate", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">レンタル終了予定日</span>
+                      <input type="date" value={editDraft.rentalEndDate || ""} onChange={(e) => setDraftValue("rentalEndDate", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-500 mb-3">ステータス</h4>
+                  <div className="space-y-3">
+                    <label className="block">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">注文ステータス</span>
+                      <select value={editDraft.status || ""} onChange={(e) => setDraftValue("status", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 bg-white outline-none focus:border-blue-500">
+                        {["処理中", "確認済み", "準備中", "配送中", "配送済み", "レンタル中", "回収予定", "回収中", "検品待ち", "一部返却", "返却済", "返却済み", "完了", "キャンセル"].map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">スタッフステータス</span>
+                      <input value={editDraft.staffStatus || ""} onChange={(e) => setDraftValue("staffStatus", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">返却区分</span>
+                      <select value={editDraft.returnRequestType || ""} onChange={(e) => setDraftValue("returnRequestType", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 bg-white outline-none focus:border-blue-500">
+                        <option value="">未設定</option>
+                        <option value="full">一括返却</option>
+                        <option value="partial">一部返却</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 col-span-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-slate-500">金額</h4>
+                    <button onClick={recalcEditDraftTotals} className="text-[11px] font-bold text-blue-600 hover:text-blue-700">金額を再計算</button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-3">
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">配送費</span>
+                      <input type="number" value={editDraft.delivery || 0} onChange={(e) => setDraftValue("delivery", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 font-mono outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">小計</span>
+                      <input type="number" value={editDraft.subtotal || 0} onChange={(e) => setDraftValue("subtotal", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 font-mono outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">消費税</span>
+                      <input type="number" value={editDraft.tax || 0} onChange={(e) => setDraftValue("tax", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 font-mono outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">合計</span>
+                      <input type="number" value={editDraft.total || 0} onChange={(e) => setDraftValue("total", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 font-mono outline-none focus:border-blue-500" />
+                    </label>
+                  </div>
+                  <label className="block mt-3">
+                    <span className="text-[11px] font-bold text-slate-500 block mb-1">備考</span>
+                    <textarea rows={2} value={editDraft.notes || editDraft.note || ""} onChange={(e) => setDraftValue("notes", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                  </label>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-500">注文商品</h4>
+                  <button
+                    onClick={() => setDraftValue("items", [...(editDraft.items || []), { id: `custom-${Date.now()}`, name: "", type: "rent", quantity: 1, calculatedPrice: 0 }])}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-700"
+                  >
+                    商品行を追加
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-white text-slate-400">
+                      <tr className="border-b border-slate-100">
+                        <th className="p-2 text-left">商品名</th>
+                        <th className="p-2 text-left">区分</th>
+                        <th className="p-2 text-right">数量</th>
+                        <th className="p-2 text-right">単価</th>
+                        <th className="p-2 text-right">保証料</th>
+                        <th className="p-2 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(editDraft.items || []).map((item: any, idx: number) => (
+                        <tr key={`${item.id || idx}-${idx}`}>
+                          <td className="p-2 min-w-[220px]">
+                            <input value={item.name || ""} onChange={(e) => setDraftItemValue(idx, "name", e.target.value)} className="w-full border border-slate-200 rounded p-1.5 outline-none focus:border-blue-500" />
+                          </td>
+                          <td className="p-2">
+                            <select value={item.type || "rent"} onChange={(e) => setDraftItemValue(idx, "type", e.target.value)} className="border border-slate-200 rounded p-1.5 bg-white outline-none focus:border-blue-500">
+                              <option value="rent">レンタル</option>
+                              <option value="buy">購入</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input type="number" value={item.quantity || 0} onChange={(e) => setDraftItemValue(idx, "quantity", e.target.value)} className="w-20 border border-slate-200 rounded p-1.5 text-right font-mono outline-none focus:border-blue-500" />
+                          </td>
+                          <td className="p-2">
+                            <input type="number" value={item.calculatedPrice ?? (item.type === "rent" ? item.rentPrice : item.buyPrice) ?? 0} onChange={(e) => setDraftItemValue(idx, "calculatedPrice", e.target.value)} className="w-28 border border-slate-200 rounded p-1.5 text-right font-mono outline-none focus:border-blue-500" />
+                          </td>
+                          <td className="p-2">
+                            <input type="number" value={item.guaranteeFeeFlat || 0} onChange={(e) => setDraftItemValue(idx, "guaranteeFeeFlat", e.target.value)} className="w-24 border border-slate-200 rounded p-1.5 text-right font-mono outline-none focus:border-blue-500" />
+                          </td>
+                          <td className="p-2 text-right">
+                            <button
+                              onClick={() => setDraftValue("items", (editDraft.items || []).filter((_: any, i: number) => i !== idx))}
+                              className="text-red-500 hover:text-red-700 font-bold"
+                            >
+                              削除
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                onClick={() => setEditOpen(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors"
+              >
+                保存する
               </button>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
+import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 
 export default function OrderHistory() {
   const { orders } = useOrders();
@@ -132,7 +133,7 @@ export default function OrderHistory() {
                 id={order.id}
                 orderNumber={order.orderNumber}
                 date={order.date}
-                status={order.status + (order.returnRequestType === 'partial' ? ' (一部)' : order.returnRequestType === 'full' ? ' (全量)' : '')}
+                status={formatStatusWithReturnRequest(order.status, order.returnRequestType)}
                 statusColor={displayProps.color}
                 statusIcon={displayProps.icon}
                 productName={firstItem ? firstItem.name : "不明な商品"}

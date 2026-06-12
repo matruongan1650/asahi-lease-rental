@@ -5,6 +5,70 @@ import { isVehicleCategory } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
 import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../utils/billing";
 import OrderBus from "../lib/orderBus";
+import { formatStatusWithReturnRequest } from "../utils/returnLabels";
+
+type CustomerPhoto = {
+  src: string;
+  label: string;
+  note?: string;
+  bg?: string;
+};
+
+function normalizeCustomerPhoto(photo: any, label: string, note?: string): CustomerPhoto | null {
+  if (!photo) return null;
+  if (typeof photo === "string") {
+    return { src: photo, label, note };
+  }
+  const src = photo.dataUrl || photo.url || photo.src || photo.href || "";
+  const photoLabel = photo.time || photo.label || photo.name || label;
+  if (!src && !photo.bg) return null;
+  return { src, label: photoLabel, note, bg: photo.bg };
+}
+
+function collectCustomerPhotos(label: string, ...values: any[]): CustomerPhoto[] {
+  return values
+    .flatMap((value) => Array.isArray(value) ? value : value ? [value] : [])
+    .map((photo) => normalizeCustomerPhoto(photo, label))
+    .filter((photo): photo is CustomerPhoto => Boolean(photo));
+}
+
+function CustomerPhotoTile({ photo, alt }: { photo: CustomerPhoto; alt: string }) {
+  const image = photo.src ? (
+    <img src={photo.src} alt={alt} className="aspect-square w-full rounded-lg object-cover border border-slate-200 dark:border-slate-700" />
+  ) : (
+    <div className="relative aspect-square w-full rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700" style={{ background: photo.bg || "#e2e8f0" }}>
+      <span className="material-symbols-outlined absolute inset-0 grid place-items-center text-white/60 text-[20px]">image</span>
+    </div>
+  );
+
+  const content = (
+    <div className="relative">
+      {image}
+      {(photo.note || photo.label) && (
+        <span className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/55 text-white text-[9px] px-1.5 py-1 truncate">
+          {photo.note || photo.label}
+        </span>
+      )}
+    </div>
+  );
+
+  return photo.src ? (
+    <a href={photo.src} target="_blank" rel="noreferrer" className="block">
+      {content}
+    </a>
+  ) : content;
+}
+
+function CustomerPhotoGrid({ photos, alt, cols = "grid-cols-3" }: { photos: CustomerPhoto[]; alt: string; cols?: string }) {
+  if (photos.length === 0) return null;
+  return (
+    <div className={`grid ${cols} gap-2`}>
+      {photos.map((photo, index) => (
+        <CustomerPhotoTile key={`${photo.label}-${index}`} photo={photo} alt={alt} />
+      ))}
+    </div>
+  );
+}
 
 export default function OrderDetail() {
   const navigate = useNavigate();
@@ -38,6 +102,25 @@ export default function OrderDetail() {
   }
 
   const blocks = getOrGenerateInvoiceBlocks(order);
+  const deliveryPhotos = collectCustomerPhotos("納品写真", (order as any).deliveryPhotos, (order as any).deliveryPhoto);
+  const collectionPhotos = collectCustomerPhotos("回収写真", (order as any).collectionPhotos, (order as any).collectionPhoto);
+  const warehousePhotos = collectCustomerPhotos("倉庫検品写真", (order as any).warehousePhotos, (order as any).warehousePhoto);
+  const issuePhotos = ((order as any).itemIssues || [])
+    .map((issue: any) => normalizeCustomerPhoto(
+      issue.photo,
+      issue.type === "missing" ? "不足写真" : "破損写真",
+      `${issue.itemName || issue.itemId || "商品"} / ${issue.type === "missing" ? "不足" : "破損"} ${issue.quantity || ""}点`
+    ))
+    .filter((photo: CustomerPhoto | null): photo is CustomerPhoto => Boolean(photo));
+  const deliverySignature = (order as any).signature || (order as any).deliverySignature;
+  const collectionSignature = (order as any).collectionSignature;
+  const warehouseSignature = (order as any).warehouseSignature;
+  const fieldRecordGroups = [
+    { title: "納品時", photos: deliveryPhotos, signature: deliverySignature, signatureLabel: "受領サイン", alt: "納品写真" },
+    { title: "回収時", photos: collectionPhotos, signature: collectionSignature, signatureLabel: "受領サイン", alt: "回収写真" },
+    { title: "倉庫検品時", photos: warehousePhotos, signature: warehouseSignature, signatureLabel: "倉庫確認サイン", alt: "倉庫検品写真" }
+  ].filter((group) => group.photos.length > 0 || group.signature);
+  const hasFieldRecords = fieldRecordGroups.length > 0 || issuePhotos.length > 0;
 
   // Stepper logic
   const statuses = ["ご注文", "準備中", "配送中", "レンタル中", "返却・完了"];
@@ -94,7 +177,7 @@ export default function OrderDetail() {
       return;
     }
 
-    if (selectedEnd <= currentEnd) {
+    if (selectedEnd < currentEnd) {
       setExtendingError("延長日は現在の返却予定日以降の日付を選択してください。");
       return;
     }
@@ -189,7 +272,7 @@ export default function OrderDetail() {
               statusColor === 'blue' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
               'bg-amber-100 text-amber-700 border border-amber-200'
             }`}>
-              {order.status} {order.returnRequestType === 'partial' ? '(一部)' : order.returnRequestType === 'full' ? '(全量)' : ''}
+              {formatStatusWithReturnRequest(order.status, order.returnRequestType)}
             </div>
           </div>
 
@@ -413,6 +496,39 @@ export default function OrderDetail() {
           </div>
         </section>
 
+        {/* Field Photos */}
+        {hasFieldRecords && (
+          <section className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm">
+            <h3 className="text-[10px] font-bold tracking-widest text-slate-500 dark:text-slate-400 mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+              現場写真・検品写真
+            </h3>
+            <div className="flex flex-col gap-4">
+              {fieldRecordGroups.map((group) => (
+                <div key={group.title} className="border-t first:border-t-0 border-slate-100 dark:border-slate-700 first:pt-0 pt-4">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">{group.title}</p>
+                  <CustomerPhotoGrid photos={group.photos} alt={group.alt} />
+                  {group.signature && (
+                    <div className="mt-3">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-1 font-bold">{group.signatureLabel}</p>
+                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 max-w-[220px] flex items-center justify-center">
+                        <img src={group.signature} alt={group.signatureLabel} className="max-w-full h-auto max-h-[72px] object-contain" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {issuePhotos.length > 0 && (
+                <div className="border-t border-slate-100 dark:border-slate-700 pt-4">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">不足・破損写真</p>
+                  <CustomerPhotoGrid photos={issuePhotos} alt="不足・破損写真" />
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Customer Operations */}
         {isRentalActive && hasRentItems && (
           <section className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm">
@@ -542,16 +658,10 @@ export default function OrderDetail() {
                             {rp.note && <span className="text-[11px] text-slate-500 ml-2">{rp.note}</span>}
                             {(rp.photos || []).length > 0 && (
                               <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-                                {rp.photos.map((ph: any, pi: number) => (
-                                  ph && ph.dataUrl ? (
-                                    <img key={pi} src={ph.dataUrl} alt="検品写真" className="aspect-square w-full rounded-lg object-cover border border-slate-200 dark:border-slate-700" />
-                                  ) : (
-                                    <div key={pi} className="relative aspect-square w-full rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700" style={{ background: ph?.bg || "#e2e8f0" }}>
-                                      <span className="material-symbols-outlined absolute inset-0 grid place-items-center text-white/60 text-[20px]">image</span>
-                                      {ph?.time && <span className="absolute bottom-0.5 left-1 text-[9px] text-white/90 bg-black/40 px-1 rounded">{ph.time}</span>}
-                                    </div>
-                                  )
-                                ))}
+                                {rp.photos.map((ph: any, pi: number) => {
+                                  const photo = normalizeCustomerPhoto(ph, "検品写真");
+                                  return photo ? <CustomerPhotoTile key={pi} photo={photo} alt="検品写真" /> : null;
+                                })}
                               </div>
                             )}
                           </div>
@@ -559,6 +669,17 @@ export default function OrderDetail() {
                       </div>
                     ))}
                   </div>
+                  {/* 返却受付時にお客様が送付した状態写真（検品記録として保存） */}
+                  {Array.isArray(rec.customerPhotos) && rec.customerPhotos.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                      <p className="text-[11px] font-bold text-slate-500 mb-1.5">状態写真（{rec.customerPhotos.length}枚）</p>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {rec.customerPhotos.map((url: string, pi: number) => (
+                          <img key={pi} src={url} alt={`状態写真 ${pi + 1}`} className="aspect-square w-full rounded-lg object-cover border border-slate-200 dark:border-slate-700" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -615,6 +736,7 @@ export default function OrderDetail() {
                   <input 
                     type="date"
                     value={newEndDate}
+                    min={order.rentalEndDate || undefined}
                     onChange={(e) => {
                       setNewEndDate(e.target.value);
                       setExtendingError("");

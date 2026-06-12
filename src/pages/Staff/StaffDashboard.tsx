@@ -447,7 +447,7 @@ function ProfileTab({ staff, doneDlv, doneRtn, deliveries, recoveries, outdoorMo
 // ---------------------------------------------------------------------------
 // Central Dashboard Core View Setup
 // ---------------------------------------------------------------------------
-function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean, setOutdoorMode: (v: boolean) => void }) {
+function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   const ml = useMobileLive();
   const { orders, updateOrder, addCustomOrder } = useOrders();
   const [tab, setTab] = useState("home");
@@ -598,7 +598,10 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
         totalExpected: recProducts.reduce((a: number, p: any) => a + p.expected, 0),
         totalCounted: recProducts.reduce((a: number, p: any) => a + p.counted, 0),
         hasShortage: recProducts.some((p: any) => p.shortage > 0 || (p.reports && p.reports.length > 0)),
-        collectionSignature: signature || undefined,
+        collectionSignature: signature || walkinOrder?.receptionSignature || walkinOrder?.fieldSignature || undefined,
+        // お客様送付／現場撮影の写真（dataURL）を検品記録として永続化（admin・お客様の履歴で表示）
+        customerPhotos: (Array.isArray(walkinOrder?.photos) ? walkinOrder.photos : [])
+          .filter((u: any) => typeof u === "string" && u.startsWith("data:")),
       } as any);
     } catch (e) {
       console.warn("[completeReturn] 検品記録の保存に失敗しました。", e);
@@ -691,26 +694,6 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
               <IconBtn name="bell" badge />
             </div>
             
-            <button
-              onClick={() => setOutdoorMode(!outdoorMode)}
-              style={{
-                background: outdoorMode ? "#00FF66" : "var(--surface)",
-                color: outdoorMode ? "#000000" : "var(--brand-strong)",
-                border: outdoorMode ? "3px solid #00FF66" : "1.5px solid var(--border-2)",
-                borderRadius: 999,
-                padding: "8px 14px",
-                fontSize: "12px",
-                fontWeight: 900,
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                cursor: "pointer"
-              }}
-              className="active:scale-95 transition-transform"
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>sunny</span>
-              {outdoorMode ? "屋外: ON" : "屋外モード"}
-            </button>
           </div>
 
           {/* Premium Overview Hub Panel */}
@@ -896,7 +879,7 @@ function UnifiedStaffApp({ outdoorMode, setOutdoorMode }: { outdoorMode: boolean
 }
 
 export default function StaffDashboard() {
-  const [outdoorMode, setOutdoorMode] = useState(false);
+  const outdoorMode = false;
 
   return (
     <MobileLiveProvider>
@@ -943,7 +926,7 @@ export default function StaffDashboard() {
           </div>
 
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <UnifiedStaffApp outdoorMode={outdoorMode} setOutdoorMode={setOutdoorMode} />
+            <UnifiedStaffApp outdoorMode={outdoorMode} />
           </div>
         </div>
       </div>

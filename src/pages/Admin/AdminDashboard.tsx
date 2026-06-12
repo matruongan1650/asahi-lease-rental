@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import AdminSidebar, { AdminTab } from "../../components/AdminSidebar";
 import AdminDashboardHome from "../../components/AdminDashboardHome";
 import AdminProductManagement from "../../components/AdminProductManagement";
@@ -6,6 +6,7 @@ import AdminUserManagement from "../../components/AdminUserManagement";
 import AdminCustomerManagement from "../../components/AdminCustomerManagement";
 import AdminFieldReportManagement from "../../components/AdminFieldReportManagement";
 import { ToastHost } from "../../components/AdminUI";
+import { useAdminCollection, useAdminOrders } from "../../context/AdminDataContext";
 
 // New Admin components
 import AdminCalendar from "./AdminCalendar";
@@ -25,6 +26,21 @@ import AdminSettings from "./AdminSettings";
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+  const liveOrders = useAdminOrders();
+  const { rows: fieldReports } = useAdminCollection("fieldReports");
+
+  const notificationCount = useMemo(() => {
+    const today = new Date();
+    const processing = liveOrders.orders.filter((o: any) => ["処理中", "確認済み", "検品待ち"].includes(String(o.status || ""))).length;
+    const pendingReports = fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length;
+    const overdue = liveOrders.orders.filter((o: any) => {
+      if (["返却済", "返却済み", "完了", "キャンセル"].includes(String(o.status || ""))) return false;
+      if (!o.rentalEndDate) return false;
+      const end = new Date(String(o.rentalEndDate).replace(/\//g, "-"));
+      return !isNaN(end.getTime()) && end < today && (o.items || []).some((item: any) => item.type === "rent");
+    }).length;
+    return processing + pendingReports + overdue;
+  }, [liveOrders.orders, fieldReports]);
 
   const tabTitles: Record<AdminTab, { title: string; sub: string }> = {
     dashboard: { title: "概要", sub: "ダッシュボード" },
@@ -78,9 +94,11 @@ export default function AdminDashboard() {
             </div>
             <div className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center cursor-pointer relative">
               <span className="material-symbols-outlined text-slate-600">notifications</span>
-              <div className="absolute top-2 right-2 w-4 h-4 bg-red-500 rounded-full border-2 border-white text-white text-[9px] font-bold flex items-center justify-center">
-                3
-              </div>
+              {notificationCount > 0 && (
+                <div className="absolute top-2 right-2 min-w-4 h-4 px-1 bg-red-500 rounded-full border-2 border-white text-white text-[9px] font-bold flex items-center justify-center">
+                  {notificationCount > 99 ? "99+" : notificationCount}
+                </div>
+              )}
             </div>
           </div>
         </header>

@@ -23,6 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Modal, Field, TextInput, Row, triggerToast, Btn } from "./AdminUI";
+import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 
 // --- Contract file types & helpers ---
 interface ContractFile {
@@ -1144,7 +1145,7 @@ export default function AdminCustomerManagement() {
                                 <span className={`w-1.5 h-1.5 rounded-full ${
                                   o.status === "完了" || o.status === "返却済み" ? "bg-emerald-500" : "bg-blue-500"
                                 }`}></span>{" "}
-                                {o.status}
+                                {formatStatusWithReturnRequest(o.status, o.returnRequestType)}
                               </span>
                             </td>
                           </tr>
@@ -1196,7 +1197,7 @@ export default function AdminCustomerManagement() {
                                 <span className={`w-1.5 h-1.5 rounded-full ${
                                   o.status === "完了" ? "bg-emerald-500" : "bg-indigo-500"
                                 }`}></span>{" "}
-                                {o.status}
+                                {formatStatusWithReturnRequest(o.status, o.returnRequestType)}
                               </span>
                             </td>
                           </tr>

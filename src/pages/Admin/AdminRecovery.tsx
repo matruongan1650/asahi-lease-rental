@@ -11,6 +11,7 @@ import {
 import { FMT } from "../../data/adminMockData";
 import OrderBus from "../../lib/orderBus";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
+import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 
 export default function AdminRecovery() {
   const { rentals, orders, live, patchOrder } = useAdminOrders();
@@ -28,16 +29,33 @@ export default function AdminRecovery() {
     (r) => r.status === "レンタル中" || r.status === "進行中" || r.status === "延滞"
   );
 
-  // 返却・回収が発生した注文（検品待ち・一部返却・返却済・完了）。詳細を確認できるようにする。
+  // 返却・回収が発生した注文だけを表示する。items が空の古い -R 伝票や販売完了のみの注文は除外する。
   const RETURN_STATUSES = ["検品待ち", "一部返却", "返却済", "返却済み", "完了"];
   const returnedOrders = (orders || []).filter(
-    (o: any) =>
-      o &&
-      (RETURN_STATUSES.includes(o.status) ||
-        o.staffStatus === "回収完了" ||
-        o.staffStatus === "完了" ||
+    (o: any) => {
+      if (!o) return false;
+      const hasReturnedItems = (o.items || []).some((item: any) => Number(item?.quantity || 0) > 0);
+      const hasRentalItems = (o.items || []).some((item: any) => item?.type === "rent");
+      const hasReturnSignal = Boolean(
+        o.returnRequestType ||
+        o.actualReturnDate ||
         o.collectionSignature ||
-        (o.itemIssues && o.itemIssues.length > 0))
+        o.collectionPhotos ||
+        o.inspectedByWarehouse ||
+        (o.itemIssues && o.itemIssues.length > 0) ||
+        ["検品待ち", "一部返却", "返却済", "返却済み"].includes(o.status)
+      );
+      if (!hasReturnedItems) return false;
+      return (
+        hasRentalItems &&
+        hasReturnSignal &&
+        (RETURN_STATUSES.includes(o.status) ||
+          o.staffStatus === "回収完了" ||
+          o.staffStatus === "完了" ||
+          o.collectionSignature ||
+          (o.itemIssues && o.itemIssues.length > 0))
+      );
+    }
   );
 
   const returnedCols = [
@@ -76,7 +94,7 @@ export default function AdminRecovery() {
     },
     {
       h: "状態",
-      cell: (o: any) => <Badge>{o.status} {o.returnRequestType === 'partial' ? '(一部)' : o.returnRequestType === 'full' ? '(全量)' : ''}</Badge>,
+      cell: (o: any) => <Badge>{formatStatusWithReturnRequest(o.status, o.returnRequestType)}</Badge>,
     },
     {
       h: "操作",

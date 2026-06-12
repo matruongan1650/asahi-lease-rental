@@ -11,12 +11,10 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { useOrders, Order } from "../context/OrderContext";
-import { useProducts } from "../context/ProductContext";
-import { useVehicles } from "../context/VehicleContext";
+import { useAdminCollection, useAdminOrders } from "../context/AdminDataContext";
 import { isVehicleCategory } from "../utils/productUtils";
 import AdminOrderDrawer from "./AdminOrderDrawer";
-import { triggerToast } from "./AdminUI";
+import { Btn, Modal, triggerToast } from "./AdminUI";
 import {
   Download,
   Plus,
@@ -59,16 +57,87 @@ function pctBadge(pct: number) {
 
 function todayStr() {
   const d = new Date();
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+  return formatDateKey(d);
+}
+
+function formatDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function parseOrderDate(order: any): Date | null {
+  const raw = order?.createdAt || order?.date || "";
+  if (!raw) return null;
+  if (typeof raw === "string" && raw.includes("T")) {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const datePart = String(raw).split("•")[0]?.trim() || "";
+  const m = datePart.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function normalizeDateKey(raw: unknown): string {
+  if (!raw) return "";
+  const text = String(raw).split("•")[0]?.trim() || "";
+  const m = text.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (!m) return "";
+  return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+}
+
+function isClosedOrder(status: unknown): boolean {
+  return ["返却済", "返却済み", "完了", "キャンセル"].includes(String(status || ""));
+}
+
+function percentChange(current: number, previous: number): number {
+  if (previous === 0) return current === 0 ? 0 : 100;
+  return ((current - previous) / previous) * 100;
+}
+
+function itemLineSubtotal(item: any): number {
+  if (!item) return 0;
+  const qty = Number(item.quantity || 0);
+  if (item.type === "rent") {
+    return (Number(item.calculatedPrice ?? item.rentPrice ?? 0) * qty) + Number(item.guaranteeFeeFlat || 0);
+  }
+  return Number(item.buyPrice || 0) * qty;
+}
+
+function splitOrderRevenue(order: any): { rental: number; sales: number } {
+  let rentalSub = 0;
+  let salesSub = 0;
+  (order.items || []).forEach((item: any) => {
+    const value = itemLineSubtotal(item);
+    if (item.type === "rent") rentalSub += value;
+    else if (item.type === "buy") salesSub += value;
+  });
+
+  const subtotal = rentalSub + salesSub;
+  const total = Number(order.total || 0);
+  if (subtotal <= 0) {
+    return order.items?.some((item: any) => item.type === "rent")
+      ? { rental: total, sales: 0 }
+      : { rental: 0, sales: total };
+  }
+  return {
+    rental: Math.round((rentalSub / subtotal) * total),
+    sales: Math.round((salesSub / subtotal) * total),
+  };
 }
 
 // ─── component ───────────────────────────────────────────
 export default function AdminDashboardHome() {
-  const { orders, updateOrder } = useOrders();
-  const { products } = useProducts();
-  const { vehicles } = useVehicles();
+  const liveOrders = useAdminOrders();
+  const { rows: products } = useAdminCollection("products");
+  const { rows: vehicles } = useAdminCollection("vehicles");
+  const { rows: fieldReports } = useAdminCollection("fieldReports");
+  const { rows: maintenance } = useAdminCollection("maintenance");
+  const { rows: repairs } = useAdminCollection("repairs");
+  const orders = liveOrders.orders;
   const [trendRange, setTrendRange] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [viewAllModal, setViewAllModal] = useState<"unreturned" | "transactions" | null>(null);
 
   // ══════════════════════════════════════
   // KPIs
@@ -81,54 +150,41 @@ export default function AdminDashboardHome() {
     let rentalRevenue = 0;
     let salesRevenue = 0;
     orders.forEach((o) => {
-      let orderRentSub = 0;
-      let orderBuySub = 0;
-      o.items?.forEach((item) => {
-        const itemVal = item.calculatedPrice || (item.type === "rent" ? (item.rentPrice || 0) * item.quantity : (item.buyPrice || 0) * item.quantity);
-        if (item.type === "rent") {
-          orderRentSub += itemVal;
-        } else {
-          orderBuySub += itemVal;
-        }
-      });
-      const orderSub = orderRentSub + orderBuySub;
-      if (orderSub > 0) {
-        rentalRevenue += (orderRentSub / orderSub) * (o.total || 0);
-        salesRevenue += (orderBuySub / orderSub) * (o.total || 0);
-      } else {
-        const hasRent = o.items?.some((i) => i.type === "rent");
-        if (hasRent) {
-          rentalRevenue += o.total || 0;
-        } else {
-          salesRevenue += o.total || 0;
-        }
-      }
+      const split = splitOrderRevenue(o);
+      rentalRevenue += split.rental;
+      salesRevenue += split.sales;
     });
 
     rentalRevenue = Math.round(rentalRevenue);
     salesRevenue = Math.round(salesRevenue);
     const totalRevenue = rentalRevenue + salesRevenue;
 
-    const total = totalRevenue > 0 ? totalRevenue : 12450000;
-    const rental = rentalRevenue > 0 ? rentalRevenue : 8200000;
-    const sales = salesRevenue > 0 ? salesRevenue : 4250000;
-    const avg = avgTransaction > 0 ? avgTransaction : 450000;
-    const rentalPct = total > 0 ? Math.round((rental / total) * 100) : 65;
-    const salesPct = 100 - rentalPct;
+    const total = totalRevenue;
+    const rental = rentalRevenue;
+    const sales = salesRevenue;
+    const avg = avgTransaction;
+    const rentalPct = total > 0 ? Math.round((rental / total) * 100) : 0;
+    const salesPct = total > 0 ? 100 - rentalPct : 0;
 
     const totalStock = products.reduce((s, p) => s + (p.stock || 0), 0);
-    const inUse = rentOrders.filter((o) => o.status !== "返却済" && o.status !== "新規").length;
-    const utilizationRate = totalStock > 0 ? Math.min(99, Math.round((inUse / totalStock) * 100 + 70)) : 85;
+    const activeRentQty = rentOrders
+      .filter((o) => !isClosedOrder(o.status))
+      .reduce((sum, order) => sum + (order.items || []).reduce((itemSum: number, item: any) => {
+        if (item.type !== "rent") return itemSum;
+        return itemSum + Math.max(0, Number(item.quantity || 0) - Number(item.returnedQuantity || 0));
+      }, 0), 0);
+    const inventoryBase = totalStock + activeRentQty;
+    const utilizationRate = inventoryBase > 0 ? Math.round((activeRentQty / inventoryBase) * 100) : 0;
 
     const safetyVehicles = products.filter((p) => isVehicleCategory(p.category)).reduce((s, p) => s + (p.stock || 0), 0);
     const safetySupplies = totalStock - safetyVehicles;
 
     return {
       total, rental, sales, avg, rentalPct, salesPct,
-      totalStock: totalStock > 0 ? totalStock : 1240,
+      totalStock,
       utilizationRate,
-      safetyVehicles: safetyVehicles > 0 ? safetyVehicles : 33,
-      safetySupplies: safetySupplies > 0 ? safetySupplies : 1207,
+      safetyVehicles,
+      safetySupplies,
       totalOrders: orders.length,
       rentCount: rentOrders.length,
       buyCount: buyOrders.length,
@@ -142,61 +198,94 @@ export default function AdminDashboardHome() {
     const now = new Date();
     const points: { date: string; value: number }[] = [];
     const numPoints = trendRange === "daily" ? 30 : trendRange === "weekly" ? 12 : 6;
+    const totalsByKey = new Map<string, number>();
+
+    orders.forEach((order) => {
+      const d = parseOrderDate(order);
+      if (!d) return;
+      let key = "";
+      if (trendRange === "monthly") {
+        key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      } else if (trendRange === "weekly") {
+        const start = new Date(d);
+        start.setDate(d.getDate() - d.getDay());
+        key = formatDateKey(start);
+      } else {
+        key = formatDateKey(d);
+      }
+      totalsByKey.set(key, (totalsByKey.get(key) || 0) + Number(order.total || 0));
+    });
+
     for (let i = numPoints - 1; i >= 0; i--) {
       const d = new Date(now);
       if (trendRange === "daily") d.setDate(d.getDate() - i);
       else if (trendRange === "weekly") d.setDate(d.getDate() - i * 7);
       else d.setMonth(d.getMonth() - i);
+      const key = trendRange === "monthly"
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+        : trendRange === "weekly"
+          ? formatDateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay()))
+          : formatDateKey(d);
       const label = trendRange === "monthly"
         ? `${d.getMonth() + 1}月`
         : `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`;
-      const base = 200000 + Math.sin((i / numPoints) * Math.PI * 1.5) * 180000;
-      const noise = (Math.random() - 0.4) * 60000;
-      const growth = (numPoints - i) * 15000;
-      points.push({ date: label, value: Math.max(50000, Math.round(base + noise + growth)) });
+      points.push({ date: label, value: Math.round(totalsByKey.get(key) || 0) });
     }
     return points;
-  }, [trendRange]);
+  }, [orders, trendRange]);
 
   // ══════════════════════════════════════
   // Donut chart data
   // ══════════════════════════════════════
   const donutData = useMemo(() => {
-    const rentActive = orders.filter(
-      (o) => o.items?.some((i) => i.type === "rent") && o.status !== "返却済" && o.status !== "新規"
-    ).length;
-    const total = Math.max(rentActive + 5, 10);
-    const inUsePct = Math.round((Math.max(rentActive, 3) / total) * 100);
-    const maintPct = 15;
-    const repairPct = Math.max(0, 100 - inUsePct - maintPct);
+    const activeRentQty = orders
+      .filter((o) => o.items?.some((i: any) => i.type === "rent") && !isClosedOrder(o.status))
+      .reduce((sum, order) => sum + (order.items || []).reduce((itemSum: number, item: any) => {
+        if (item.type !== "rent") return itemSum;
+        return itemSum + Math.max(0, Number(item.quantity || 0) - Number(item.returnedQuantity || 0));
+      }, 0), 0);
+    const maintCount =
+      vehicles.filter((v: any) => v.status === "整備中").length +
+      maintenance.filter((m: any) => !["完了", "正常"].includes(String(m.status || ""))).length;
+    const repairCount =
+      repairs.filter((r: any) => !["完了", "対応済"].includes(String(r.status || ""))).length +
+      fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length;
+    const availableStock = products.reduce((sum: number, p: any) => sum + Math.max(0, Number(p.stock || 0)), 0);
+    const total = activeRentQty + maintCount + repairCount + availableStock;
+    const inUsePct = total > 0 ? Math.round((activeRentQty / total) * 100) : 0;
+    const maintPct = total > 0 ? Math.round((maintCount / total) * 100) : 0;
+    const repairPct = total > 0 ? Math.max(0, 100 - inUsePct - maintPct) : 0;
     return [
       { name: "稼働中 (In Use)", value: inUsePct, color: "#3B82F6" },
       { name: "点検中 (Maint.)", value: maintPct, color: "#F59E0B" },
       { name: "修理待ち (Repair)", value: repairPct, color: "#EF4444" },
     ];
-  }, [orders]);
+  }, [orders, products, vehicles, maintenance, repairs, fieldReports]);
+  const donutTotalPct = donutData.reduce((sum, item) => sum + item.value, 0);
 
   // ══════════════════════════════════════
   // Recent transactions
   // ══════════════════════════════════════
-  const recentOrders = useMemo(() => {
-    return [...orders].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 6);
+  const allRecentOrders = useMemo(() => {
+    return [...orders].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [orders]);
+  const recentOrders = allRecentOrders.slice(0, 6);
 
   // ══════════════════════════════════════
   // 本日の予定 (Today's Schedule)
   // ══════════════════════════════════════
   const todaySchedule = useMemo(() => {
     const today = todayStr();
-    const deliveries = orders.filter((o) => o.deliveryDate === today || o.status === "配達中");
+    const deliveries = orders.filter((o) => normalizeDateKey(o.deliveryDate) === today || o.status === "配送中");
     const collections = orders.filter(
-      (o) => o.rentalEndDate === today || o.status === "回収予定" || o.status === "回収中"
+      (o) => normalizeDateKey(o.rentalEndDate) === today || o.status === "回収予定" || o.status === "回収中"
     );
-    const fieldReports = orders.filter(
-      (o) => o.itemIssues && o.itemIssues.length > 0 && o.status !== "返却済"
+    const orderIssueReports = orders.filter(
+      (o) => o.itemIssues && o.itemIssues.length > 0 && !isClosedOrder(o.status)
     );
-    return { deliveries, collections, fieldReports };
-  }, [orders]);
+    const pendingFieldReports = fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || "")));
+    return { deliveries, collections, fieldReports: [...pendingFieldReports, ...orderIssueReports] };
+  }, [orders, fieldReports]);
 
   // ══════════════════════════════════════
   // アラート (Alerts)
@@ -207,7 +296,7 @@ export default function AdminDashboardHome() {
     // Overdue rentals
     const today = new Date();
     const overdueRentals = orders.filter((o) => {
-      if (o.status === "返却済" || o.status === "新規") return false;
+      if (isClosedOrder(o.status)) return false;
       if (!o.rentalEndDate) return false;
       const end = new Date(o.rentalEndDate.replace(/\//g, "-"));
       return end < today && o.items?.some((i) => i.type === "rent");
@@ -222,9 +311,13 @@ export default function AdminDashboardHome() {
     }
 
     // Unprocessed field reports
-    const unprocessedReports = orders.filter(
-      (o) => o.itemIssues && o.itemIssues.length > 0 && o.status !== "返却済"
+    const issueOrders = orders.filter(
+      (o) => o.itemIssues && o.itemIssues.length > 0 && !isClosedOrder(o.status)
     );
+    const unprocessedReports = [
+      ...fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))),
+      ...issueOrders,
+    ];
     if (unprocessedReports.length > 0) {
       list.push({
         icon: <ShieldAlert size={18} />,
@@ -256,25 +349,29 @@ export default function AdminDashboardHome() {
       });
     }
 
-    // Add fallback alerts if empty
-    if (list.length === 0) {
-      list.push(
-        { icon: <Clock size={18} />, title: "延滞中のレンタル 2 件", desc: "回収手配が必要です", color: "red" },
-        { icon: <ShieldAlert size={18} />, title: "現場報告 未対応 1 件", desc: "破損報告の確認待ち", color: "orange" },
-      );
+    const pendingMaintenance = maintenance.filter(
+      (m: any) => !["完了", "正常"].includes(String(m.status || "")) && Number(m.days ?? 999) <= 7
+    );
+    if (pendingMaintenance.length > 0) {
+      list.push({
+        icon: <Wrench size={18} />,
+        title: `メンテナンス予定 ${pendingMaintenance.length} 件`,
+        desc: pendingMaintenance.slice(0, 2).map((m: any) => m.name || m.asset || m.id).join("、"),
+        color: "blue",
+      });
     }
 
     return list;
-  }, [orders, products, vehicles]);
+  }, [orders, products, vehicles, fieldReports, maintenance]);
 
   // ══════════════════════════════════════
   // 未回収一覧 (Unreturned Equipment)
   // ══════════════════════════════════════
-  const unreturnedOrders = useMemo(() => {
+  const allUnreturnedOrders = useMemo(() => {
     const today = new Date();
     return orders
       .filter((o) => {
-        if (o.status === "返却済" || o.status === "新規") return false;
+        if (isClosedOrder(o.status)) return false;
         return o.items?.some((i) => i.type === "rent");
       })
       .map((o) => {
@@ -282,9 +379,9 @@ export default function AdminDashboardHome() {
         const daysRemaining = endDate ? Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null;
         return { ...o, daysRemaining };
       })
-      .sort((a, b) => (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999))
-      .slice(0, 5);
+      .sort((a, b) => (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999));
   }, [orders]);
+  const unreturnedOrders = allUnreturnedOrders.slice(0, 5);
 
   // ══════════════════════════════════════
   // 売上ランキング (Top Customers)
@@ -298,17 +395,6 @@ export default function AdminDashboardHome() {
       map[key].count += 1;
     });
     const list = Object.values(map).sort((a, b) => b.total - a.total).slice(0, 5);
-
-    // Fallback demo data
-    if (list.length === 0) {
-      return [
-        { name: "大成建設 株式会社", total: 8420000, count: 12 },
-        { name: "清水建設 株式会社", total: 5230000, count: 8 },
-        { name: "鹿島建設 株式会社", total: 4180000, count: 6 },
-        { name: "株式会社ビルドテック", total: 3020000, count: 5 },
-        { name: "西松建設 株式会社", total: 2450000, count: 4 },
-      ];
-    }
     return list;
   }, [orders]);
 
@@ -325,14 +411,8 @@ export default function AdminDashboardHome() {
       });
     });
     const list = Object.values(map).sort((a, b) => b.count - a.count).slice(0, 5);
-
-    if (list.length === 0) {
-      return products.slice(0, 5).map((p) => ({
-        name: p.name, count: Math.floor(Math.random() * 20) + 5, category: p.category, image: p.image,
-      }));
-    }
     return list;
-  }, [orders, products]);
+  }, [orders]);
 
   // ══════════════════════════════════════
   // 在庫不足 (Low Stock)
@@ -349,23 +429,36 @@ export default function AdminDashboardHome() {
   // ══════════════════════════════════════
   const monthComparison = useMemo(() => {
     const now = new Date();
-    const thisMonthStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthStr = `${lastMonth.getFullYear()}/${String(lastMonth.getMonth() + 1).padStart(2, "0")}`;
+    const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}`;
 
-    const thisMonthOrders = orders.filter((o) => o.date?.startsWith(thisMonthStr));
-    const lastMonthOrders = orders.filter((o) => o.date?.startsWith(lastMonthStr));
+    const orderMonthKey = (o: any) => {
+      const d = parseOrderDate(o);
+      return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : "";
+    };
+    const thisMonthOrders = orders.filter((o) => orderMonthKey(o) === thisMonthStr);
+    const lastMonthOrders = orders.filter((o) => orderMonthKey(o) === lastMonthStr);
 
-    const thisRevenue = thisMonthOrders.reduce((s, o) => s + (o.total || 0), 0) || 3250000;
-    const lastRevenue = lastMonthOrders.reduce((s, o) => s + (o.total || 0), 0) || 2890000;
-    const thisCount = thisMonthOrders.length || 14;
-    const lastCount = lastMonthOrders.length || 11;
+    const thisRevenue = thisMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
+    const lastRevenue = lastMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
+    const thisCount = thisMonthOrders.length;
+    const lastCount = lastMonthOrders.length;
+    const thisRental = thisMonthOrders.reduce((s, o) => s + splitOrderRevenue(o).rental, 0);
+    const lastRental = lastMonthOrders.reduce((s, o) => s + splitOrderRevenue(o).rental, 0);
+    const thisSales = thisMonthOrders.reduce((s, o) => s + splitOrderRevenue(o).sales, 0);
+    const lastSales = lastMonthOrders.reduce((s, o) => s + splitOrderRevenue(o).sales, 0);
+    const thisAvg = thisCount > 0 ? Math.round(thisRevenue / thisCount) : 0;
+    const lastAvg = lastCount > 0 ? Math.round(lastRevenue / lastCount) : 0;
 
-    const revChange = lastRevenue > 0 ? ((thisRevenue - lastRevenue) / lastRevenue) * 100 : 12.5;
-    const countChange = lastCount > 0 ? ((thisCount - lastCount) / lastCount) * 100 : 27.3;
+    const revChange = percentChange(thisRevenue, lastRevenue);
+    const countChange = percentChange(thisCount, lastCount);
 
     return {
       thisRevenue, lastRevenue, thisCount, lastCount, revChange, countChange,
+      rentalChange: percentChange(thisRental, lastRental),
+      salesChange: percentChange(thisSales, lastSales),
+      avgChange: percentChange(thisAvg, lastAvg),
       thisMonthLabel: `${now.getMonth() + 1}月`,
       lastMonthLabel: `${lastMonth.getMonth() + 1}月`,
     };
@@ -378,18 +471,22 @@ export default function AdminDashboardHome() {
     const inUse = vehicles.filter((v) => v.status === "使用中").length;
     const idle = vehicles.filter((v) => v.status === "空車").length;
     const maint = vehicles.filter((v) => v.status === "整備中").length;
-    const total = vehicles.length || 8;
+    const total = vehicles.length;
 
     return {
-      total: total,
-      inUse: inUse || 4,
-      idle: idle || 3,
-      maint: maint || 1,
-      inUsePct: Math.round(((inUse || 4) / total) * 100),
+      total,
+      inUse,
+      idle,
+      maint,
+      inUsePct: total > 0 ? Math.round((inUse / total) * 100) : 0,
     };
   }, [vehicles]);
 
-  const miniBarData = [65, 48, 72, 56, 80, 68, 75];
+  const miniBarData = useMemo(() => {
+    const recent = trendData.slice(-7);
+    const max = Math.max(1, ...recent.map((p) => p.value));
+    return recent.length > 0 ? recent.map((p) => Math.round((p.value / max) * 100)) : [0, 0, 0, 0, 0, 0, 0];
+  }, [trendData]);
 
   // ══════════════════════════════════════
   // RENDER
@@ -424,7 +521,7 @@ export default function AdminDashboardHome() {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">総売上高</span>
-            {pctBadge(12.5)}
+            {pctBadge(monthComparison.revChange)}
           </div>
           <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-4">{fmtYen(kpis.total)}</h2>
           <div className="flex items-end gap-1.5 h-8">
@@ -440,7 +537,7 @@ export default function AdminDashboardHome() {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">レンタル売上</span>
-            {pctBadge(5.0)}
+            {pctBadge(monthComparison.rentalChange)}
           </div>
           <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-3">{fmtYen(kpis.rental)}</h2>
           <div className="flex items-center gap-3 text-xs font-bold text-slate-500 mb-2">
@@ -455,7 +552,7 @@ export default function AdminDashboardHome() {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">販売売上</span>
-            {pctBadge(4.2)}
+            {pctBadge(monthComparison.salesChange)}
           </div>
           <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-3">{fmtYen(kpis.sales)}</h2>
           <div className="flex items-center gap-3 text-xs font-bold text-slate-500 mb-2">
@@ -470,11 +567,11 @@ export default function AdminDashboardHome() {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">平均取引額</span>
-            {pctBadge(2.1)}
+            {pctBadge(monthComparison.avgChange)}
           </div>
           <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-3">{fmtYen(kpis.avg)}</h2>
           <p className="text-xs text-slate-400 font-medium">
-            前月比: <span className="text-slate-600 font-bold">¥12,000</span> 増
+            今月 {monthComparison.thisCount.toLocaleString()} 件の実取引から算出
           </p>
         </div>
 
@@ -575,7 +672,7 @@ export default function AdminDashboardHome() {
             </span>
           </div>
           <div className="space-y-3">
-            {alerts.map((a, i) => (
+            {alerts.length > 0 ? alerts.map((a, i) => (
               <div
                 key={i}
                 className={`p-3.5 rounded-xl flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity border ${
@@ -593,7 +690,9 @@ export default function AdminDashboardHome() {
                 </div>
                 <ChevronRight size={16} className="text-slate-400 flex-shrink-0" />
               </div>
-            ))}
+            )) : (
+              <div className="py-8 text-center text-sm font-medium text-slate-400">現在のアラートはありません</div>
+            )}
           </div>
         </div>
       </div>
@@ -653,7 +752,7 @@ export default function AdminDashboardHome() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold text-slate-800 tracking-tight">100<span className="text-base font-bold text-slate-400">%</span></span>
+                <span className="text-3xl font-extrabold text-slate-800 tracking-tight">{donutTotalPct}<span className="text-base font-bold text-slate-400">%</span></span>
                 <span className="text-xs text-slate-400 font-medium">Total Status</span>
               </div>
             </div>
@@ -681,7 +780,10 @@ export default function AdminDashboardHome() {
               <Clock size={20} className="text-red-500" />
               <h3 className="font-bold text-slate-800 text-base">未回収一覧</h3>
             </div>
-            <button className="text-sm font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <button
+              onClick={() => setViewAllModal("unreturned")}
+              className="text-sm font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+            >
               すべて見る <ArrowRight size={14} />
             </button>
           </div>
@@ -696,7 +798,11 @@ export default function AdminDashboardHome() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {unreturnedOrders.length > 0 ? unreturnedOrders.map((o) => (
-                <tr key={o.id} className="hover:bg-slate-50/60 transition-colors">
+                <tr
+                  key={o.id}
+                  onClick={() => setSelectedOrder(o)}
+                  className="hover:bg-slate-50/60 transition-colors cursor-pointer"
+                >
                   <td className="px-6 py-3 font-bold text-slate-800 text-xs">{o.companyName || o.personName || "—"}</td>
                   <td className="px-6 py-3 text-slate-600 text-xs truncate max-w-[180px]">{o.items?.[0]?.name || "—"}</td>
                   <td className="px-6 py-3 text-center font-mono text-xs text-slate-500">{o.rentalEndDate || "—"}</td>
@@ -779,7 +885,7 @@ export default function AdminDashboardHome() {
             <h3 className="font-bold text-slate-800 text-base">売上ランキング</h3>
           </div>
           <div className="space-y-3">
-            {topCustomers.map((c, i) => (
+            {topCustomers.length > 0 ? topCustomers.map((c, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-extrabold ${
                   i === 0 ? "bg-amber-100 text-amber-700" :
@@ -795,7 +901,9 @@ export default function AdminDashboardHome() {
                 </div>
                 <span className="text-sm font-bold text-slate-700 font-mono">{fmtYen(c.total)}</span>
               </div>
-            ))}
+            )) : (
+              <div className="py-10 text-center text-sm font-medium text-slate-400">売上データがありません</div>
+            )}
           </div>
         </div>
 
@@ -806,7 +914,7 @@ export default function AdminDashboardHome() {
             <h3 className="font-bold text-slate-800 text-base">人気機材</h3>
           </div>
           <div className="space-y-3">
-            {popularEquipment.map((eq, i) => (
+            {popularEquipment.length > 0 ? popularEquipment.map((eq, i) => (
               <div key={i} className="flex items-center gap-3">
                 <img
                   src={eq.image}
@@ -820,7 +928,9 @@ export default function AdminDashboardHome() {
                 </div>
                 <span className="text-sm font-bold text-blue-600 font-mono">{eq.count}回</span>
               </div>
-            ))}
+            )) : (
+              <div className="py-10 text-center text-sm font-medium text-slate-400">レンタル実績がありません</div>
+            )}
           </div>
         </div>
 
@@ -913,7 +1023,10 @@ export default function AdminDashboardHome() {
             <h3 className="font-bold text-slate-800 text-base">最近の取引</h3>
             <p className="text-xs text-slate-400 mt-1">最新のレンタルおよび販売アクティビティ</p>
           </div>
-          <button className="text-sm font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+          <button
+            onClick={() => setViewAllModal("transactions")}
+            className="text-sm font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+          >
             すべて見る <Eye size={14} />
           </button>
         </div>
@@ -968,22 +1081,129 @@ export default function AdminDashboardHome() {
         </table>
       </div>
 
+      <Modal
+        open={viewAllModal === "unreturned"}
+        onClose={() => setViewAllModal(null)}
+        title={`未回収一覧（全${allUnreturnedOrders.length}件）`}
+        width={980}
+        footer={<Btn variant="secondary" onClick={() => setViewAllModal(null)}>閉じる</Btn>}
+      >
+        <div className="max-h-[62vh] overflow-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-slate-500 z-10">
+              <tr className="border-b border-slate-200">
+                <th className="px-4 py-3 text-left font-bold text-xs">注文番号</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">顧客</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">機材</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">現場</th>
+                <th className="px-4 py-3 text-center font-bold text-xs">終了日</th>
+                <th className="px-4 py-3 text-center font-bold text-xs">状況</th>
+                <th className="px-4 py-3 text-right font-bold text-xs">金額</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {allUnreturnedOrders.length > 0 ? allUnreturnedOrders.map((o) => (
+                <tr
+                  key={o.id}
+                  onClick={() => setSelectedOrder(o)}
+                  className="hover:bg-blue-50/50 transition-colors cursor-pointer"
+                >
+                  <td className="px-4 py-3 font-mono font-bold text-blue-700">{o.orderNumber || o.id}</td>
+                  <td className="px-4 py-3 font-bold text-slate-800">{o.companyName || o.personName || "—"}</td>
+                  <td className="px-4 py-3 text-slate-600 max-w-[220px] truncate">
+                    {o.items?.[0]?.name || "—"}
+                    {(o.items?.length || 0) > 1 && <span className="text-xs text-slate-400 ml-1">他{(o.items?.length || 0) - 1}点</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 max-w-[180px] truncate">{o.siteName || o.deliveryLocation || "—"}</td>
+                  <td className="px-4 py-3 text-center font-mono text-xs text-slate-500">{o.rentalEndDate || "—"}</td>
+                  <td className="px-4 py-3 text-center">
+                    {o.daysRemaining !== null && o.daysRemaining < 0 ? (
+                      <span className="px-2.5 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold">{Math.abs(o.daysRemaining)}日超過</span>
+                    ) : o.daysRemaining !== null && o.daysRemaining <= 3 ? (
+                      <span className="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-full text-xs font-bold">残{o.daysRemaining}日</span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-emerald-50 text-emerald-600 rounded-full text-xs font-bold">{o.status || "レンタル中"}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen(o.total || 0)}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">未回収データなし</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
+
+      <Modal
+        open={viewAllModal === "transactions"}
+        onClose={() => setViewAllModal(null)}
+        title={`最近の取引（全${allRecentOrders.length}件）`}
+        width={1040}
+        footer={<Btn variant="secondary" onClick={() => setViewAllModal(null)}>閉じる</Btn>}
+      >
+        <div className="max-h-[62vh] overflow-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-slate-500 z-10">
+              <tr className="border-b border-slate-200">
+                <th className="px-4 py-3 text-left font-bold text-xs">日付</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">注文番号</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">顧客名</th>
+                <th className="px-4 py-3 text-left font-bold text-xs">機材名</th>
+                <th className="px-4 py-3 text-center font-bold text-xs">取引タイプ</th>
+                <th className="px-4 py-3 text-center font-bold text-xs">状態</th>
+                <th className="px-4 py-3 text-right font-bold text-xs">金額</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {allRecentOrders.length > 0 ? allRecentOrders.map((o) => {
+                const isRental = o.items?.some((i) => i.type === "rent");
+                const firstItem = o.items?.[0];
+                return (
+                  <tr
+                    key={o.id}
+                    onClick={() => setSelectedOrder(o)}
+                    className="hover:bg-blue-50/50 transition-colors cursor-pointer"
+                  >
+                    <td className="px-4 py-3 font-mono text-slate-600 text-xs">{o.date || "—"}</td>
+                    <td className="px-4 py-3 font-mono font-bold text-blue-700">{o.orderNumber || o.id}</td>
+                    <td className="px-4 py-3 font-bold text-slate-800">{o.companyName || o.personName || "—"}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[240px] truncate">
+                      {firstItem?.name || "—"}
+                      {(o.items?.length || 0) > 1 && <span className="text-xs text-slate-400 ml-1">他{(o.items?.length || 0) - 1}点</span>}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {isRental
+                        ? <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-bold">レンタル</span>
+                        : <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-xs font-bold">販売</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold">{o.status || "—"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen(o.total || 0)}</td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">取引データがありません</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
+
       {/* Order Detail Drawer */}
       <AdminOrderDrawer
         open={!!selectedOrder}
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          if (updateOrder) {
-            updateOrder(id, { status, staffStatus });
-            triggerToast("注文ステータスを更新しました", "ok");
-          }
+          liveOrders.patchOrder(id, { status, staffStatus });
+          triggerToast("注文ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {
-          if (updateOrder) {
-            updateOrder(id, updates);
-            setSelectedOrder(prev => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
-          }
+          liveOrders.patchOrder(id, updates);
+          setSelectedOrder(prev => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
         }}
       />
     </div>

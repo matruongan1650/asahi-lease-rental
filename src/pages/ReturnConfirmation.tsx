@@ -150,7 +150,7 @@ export default function ReturnConfirmation() {
         rentalNo: order.orderNumber || "—",
         time:
           new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 受付",
-        note: `お客様による${returningEverything ? "全量返却" : "一部返却"}（直接持ち込み）。倉庫にて検品をお願いします。`,
+        note: `お客様による${returningEverything ? "一括返却" : "一部返却"}（直接持ち込み）。倉庫にて検品をお願いします。`,
         requestedReturn: returnQuantities,
         photos: photos || [],
         products: walkinProducts,

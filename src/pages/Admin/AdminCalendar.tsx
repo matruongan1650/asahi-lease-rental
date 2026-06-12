@@ -11,13 +11,49 @@ import {
   triggerToast
 } from "../../components/AdminUI";
 import { useAdminData } from "../../context/AdminDataContext";
-import { CAL_TYPES, CAL_EVENTS as INITIAL_CAL_EVENTS } from "../../data/adminMockData";
+import { CAL_TYPES } from "../../data/adminMockData";
+import AdminOrderDrawer from "../../components/AdminOrderDrawer";
+import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
+
+type CalEvent = {
+  t: string;
+  x: string;
+  id?: string;
+  isCustom?: boolean;
+  dateStr?: string;
+  fullDate?: Date;
+  order?: any;
+  orderId?: string;
+  customer?: string;
+  site?: string;
+  status?: string;
+  amount?: number;
+  description?: string;
+};
+
+function normalizeDateParts(value: any): { y: number; m: number; d: number } | null {
+  if (!value) return null;
+  const match = String(value).match(/(\d{4})[^\d](\d{1,2})[^\d](\d{1,2})/);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (!y || !m || !d) return null;
+  return { y, m, d };
+}
+
+function dateKey(value: any): string {
+  const parts = normalizeDateParts(value);
+  if (!parts) return "";
+  return `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`;
+}
 
 export default function AdminCalendar() {
   const [filter, setFilter] = useState<string[]>(Object.keys(CAL_TYPES));
-  const { raw: rawOrders, cols } = useAdminData();
+  const { raw: rawOrders, cols, patchOrder } = useAdminData();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
 
   // Dynamic Date state
   const today = new Date();
@@ -69,39 +105,61 @@ export default function AdminCalendar() {
   const currentYearNum = currentMonth.getFullYear();
   const currentMonthNum = currentMonth.getMonth() + 1;
 
-  // Type for events to include more info
-  type CalEvent = { t: string; x: string; id?: string; isCustom?: boolean; dateStr?: string; fullDate?: Date };
-
   // Check if date falls in current month and get day
   const dayOf = (s: any): number | null => {
-    if (!s) return null;
-    const parts = String(s).split(/[^\d]/);
-    if (parts.length >= 3) {
-      const y = parseInt(parts[0]);
-      const m = parseInt(parts[1]);
-      const d = parseInt(parts[2]);
-      if (y === currentYearNum && m === currentMonthNum) {
-        return d;
-      }
+    const parts = normalizeDateParts(s);
+    if (parts && parts.y === currentYearNum && parts.m === currentMonthNum) {
+      return parts.d;
     }
     return null;
   };
 
   const ev: Record<number, Array<CalEvent>> = {};
-  const addEvent = (d: number | null, t: string, x: string, dateStr?: string) => {
+  const addEvent = (d: number | null, t: string, x: string, dateStr?: string, extra: Partial<CalEvent> = {}) => {
     if (!d) return;
     if (!ev[d]) ev[d] = [];
-    ev[d].push({ t, x, dateStr, fullDate: new Date(currentYearNum, currentMonthNum - 1, d) });
+    ev[d].push({ t, x, dateStr, fullDate: new Date(currentYearNum, currentMonthNum - 1, d), ...extra });
   };
 
   (rawOrders || []).forEach(o => {
     const cust = o.companyName || o.personName || "ゲスト";
-    addEvent(dayOf(o.deliveryDate), "delivery", `${cust} 納品`, o.deliveryDate);
-    addEvent(dayOf(o.rentalEndDate), "rental", `${o.orderNumber || "RN"} 返却`, o.rentalEndDate);
+    const site = o.siteName || o.deliveryLocation || "—";
+    const orderNo = o.orderNumber || o.id || "注文";
+    const orderInfo = {
+      order: o,
+      orderId: o.firestoreId || o.id,
+      customer: cust,
+      site,
+      status: formatStatusWithReturnRequest(o.status, o.returnRequestType),
+      amount: o.total || 0,
+    };
+
+    addEvent(dayOf(o.deliveryDate), "delivery", `${orderNo} 納品`, o.deliveryDate, {
+      ...orderInfo,
+      description: `${cust} / ${site}`,
+    });
+
+    if ((o.items || []).some((item: any) => item.type === "rent")) {
+      addEvent(dayOf(o.rentalStartDate), "rental", `${orderNo} レンタル開始`, o.rentalStartDate, {
+        ...orderInfo,
+        description: `${cust} / ${site}`,
+      });
+      addEvent(dayOf(o.rentalEndDate), "rental", `${orderNo} 返却予定`, o.rentalEndDate, {
+        ...orderInfo,
+        description: `${cust} / ${site}`,
+      });
+      if (o.actualReturnDate && dateKey(o.actualReturnDate) !== dateKey(o.rentalEndDate)) {
+        addEvent(dayOf(o.actualReturnDate), "rental", `${orderNo} 返却済`, o.actualReturnDate, {
+          ...orderInfo,
+          description: `${cust} / ${site}`,
+        });
+      }
+    }
   });
 
   (cols.maintenance || []).forEach((m: any) => {
-    addEvent(dayOf(m.next), "maint", `${m.name} 点検`, m.next);
+    const nextDate = m.next || m.nextDate || m.nextMaintenanceDate || m.dueDate;
+    addEvent(dayOf(nextDate), "maint", `${m.name || m.assetName || "設備"} 点検`, nextDate);
   });
 
   (cols.vehicles || []).forEach((v: any) => {
@@ -109,9 +167,7 @@ export default function AdminCalendar() {
     addEvent(dayOf(shakenNext), "warranty", `${v.plate || v.model} 車検`, shakenNext);
   });
 
-  const baseCal: Record<number, Array<CalEvent>> = (currentYearNum === 2026 && currentMonthNum === 6) 
-    ? ({ ...INITIAL_CAL_EVENTS } as unknown as Record<number, Array<CalEvent>>)
-    : {};
+  const baseCal: Record<number, Array<CalEvent>> = {};
     
   Object.entries(ev).forEach(([dStr, evs]) => {
     const d = parseInt(dStr);
@@ -344,6 +400,9 @@ export default function AdminCalendar() {
                   />
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-xs text-slate-800 truncate leading-tight">{e.x}</div>
+                    {e.description && (
+                      <div className="text-[10px] text-slate-400 font-semibold mt-1 truncate">{e.description}</div>
+                    )}
                     <div
                       className="text-[10px] font-semibold mt-1 leading-none"
                       style={{ color: typeConfig.color }}
@@ -404,9 +463,23 @@ export default function AdminCalendar() {
                 削除
               </Btn>
             ) : <div />}
-            <Btn variant="secondary" onClick={() => setSelectedEvent(null)}>
-              閉じる
-            </Btn>
+            <div className="flex gap-2">
+              {selectedEvent?.order && (
+                <Btn
+                  variant="primary"
+                  icon="open_in_new"
+                  onClick={() => {
+                    setSelectedOrder(selectedEvent.order);
+                    setSelectedEvent(null);
+                  }}
+                >
+                  注文詳細を開く
+                </Btn>
+              )}
+              <Btn variant="secondary" onClick={() => setSelectedEvent(null)}>
+                閉じる
+              </Btn>
+            </div>
           </div>
         }
       >
@@ -427,9 +500,49 @@ export default function AdminCalendar() {
                 日付: {selectedEvent.fullDate ? `${selectedEvent.fullDate.getFullYear()}年 ${selectedEvent.fullDate.getMonth() + 1}月 ${selectedEvent.fullDate.getDate()}日` : selectedEvent.dateStr || "—"}
               </p>
             </div>
+            {selectedEvent.order && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-2">
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-400 font-bold">注文番号</span>
+                  <span className="font-mono font-bold text-blue-700">{selectedEvent.order.orderNumber || selectedEvent.order.id}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-400 font-bold">顧客</span>
+                  <span className="font-bold text-slate-800 text-right">{selectedEvent.customer || "—"}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-400 font-bold">現場</span>
+                  <span className="font-semibold text-slate-700 text-right">{selectedEvent.site || "—"}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-400 font-bold">状態</span>
+                  <span className="font-bold text-slate-700 text-right">{selectedEvent.status || "—"}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-400 font-bold">金額</span>
+                  <span className="font-mono font-bold text-slate-900">¥{Number(selectedEvent.amount || 0).toLocaleString()}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>
+
+      <AdminOrderDrawer
+        open={!!selectedOrder}
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        onUpdateStatus={(id, status, staffStatus) => {
+          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          triggerToast("ステータスを更新しました", "ok");
+        }}
+        onUpdateOrder={(id, updates) => {
+          patchOrder(id, updates);
+          setSelectedOrder((prev: any) =>
+            prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev
+          );
+        }}
+      />
     </div>
   );
 }

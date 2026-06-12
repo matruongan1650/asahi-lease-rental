@@ -250,6 +250,19 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             <div style={{ fontSize: 13.5, color: "var(--fg)", lineHeight: 1.5, fontWeight: 600 }}>{order.note}</div>
           </div>
         )}
+        {/* お客様が返却受付時に送付した状態写真（dataURL 文字列の配列） */}
+        {Array.isArray(order.photos) && order.photos.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 700 }}>{order.photos.length}枚</span>}>お客様からの状態写真</SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+              {order.photos.map((url: string, i: number) => (
+                typeof url === "string" && url.startsWith("data:") ? (
+                  <img key={i} src={url} alt={`お客様写真 ${i + 1}`} style={{ aspectRatio: "1", width: "100%", objectFit: "cover", borderRadius: 12, border: "1px solid var(--border-2)", background: "#fff" }} />
+                ) : null
+              ))}
+            </div>
+          </div>
+        )}
       </>
     );
     footer = <Btn full size="lg" icon="scan" onClick={next}>検品を開始</Btn>;

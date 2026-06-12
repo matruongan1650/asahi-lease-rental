@@ -255,7 +255,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         contact: ((o.personLastName || "") + " " + (o.personFirstName || "")).trim() || o.personName || o.companyName || "",
         note: "",
         products: (o.items || []).filter((i: any) => i.type === "rent").map((i: any, idx: number) => ({
-          id: "P-" + idx, qr: "AS-" + (i.id || idx), name: i.name, expected: i.quantity || 1, icon: i.category === "カラーコーン" ? "cone" : "package", image: i.image
+          id: i.id || "P-" + idx, qr: "AS-" + (i.id || idx), name: i.name, expected: (i.quantity || 1) - (i.returnedQuantity || 0), icon: i.category === "カラーコーン" ? "cone" : "package", image: i.image, category: i.category
         })),
         rawOrder: o,
       }))
@@ -270,7 +270,11 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
 
   const completeDelivery = (id: string, signature?: string | null, photos?: any[], extra?: any) => {
     const updates: any = { staffStatus: "配送完了", status: "配送済み" };
-    if (signature) updates.signature = signature;
+    // 受領サインは Order スキーマ上の deliverySignature と、既存表示が参照する signature の両方に保存
+    if (signature) {
+      updates.signature = signature;
+      updates.deliverySignature = signature;
+    }
     if (photos && photos.length > 0) updates.deliveryPhotos = photos;
     // 保安車両: 貸出時の走行距離・車両状態の記録（満タンで貸出）
     if (extra && extra.vehicleCheckout) updates.vehicleCheckout = extra.vehicleCheckout;
@@ -332,11 +336,15 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         source: "field_recovery",
         stage: "recheck",
         fieldSignature: signature || null,
+        // 現場で撮影した写真（dataURL のみ抽出）— 倉庫の最終検品画面で参照できる
+        photos: (photos || [])
+          .map((p: any) => (typeof p === "string" ? p : (p && p.dataUrl) || null))
+          .filter((u: any) => typeof u === "string" && u.startsWith("data:")),
         returningEverything: true,
         products: (targetOrder.items || [])
           .filter((i: any) => i.type === "rent")
           .map((i: any, idx: number) => ({
-            id: "P-" + idx,
+            id: i.id || "P-" + idx,
             qr: "AS-" + (i.id || idx),
             name: i.name,
             expected: (i.quantity || 1) - (i.returnedQuantity || 0),

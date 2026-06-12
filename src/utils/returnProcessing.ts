@@ -149,6 +149,15 @@ export function finalizePartialReturn(
   const split = computeReturnSplit(order, returnQuantities, actualReturnDate);
   const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature, extraFields = {} } = options;
 
+  if (split.returnedItemsList.length === 0) {
+    console.warn("[finalizePartialReturn] No returned items matched the order. Skipping return finalization.", {
+      orderId: order?.id,
+      orderNumber: order?.orderNumber,
+      returnQuantities,
+    });
+    return split;
+  }
+
   if (split.returningEverything) {
     const tempOrder = {
       ...order,
