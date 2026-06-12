@@ -237,37 +237,38 @@ export default function Checkout() {
             />
           </label>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col w-full relative">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">レンタル開始日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
+          {/* 小さいスマホ（〜360px）でもはみ出さないよう min-w-0 + 控えめな padding */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col w-full min-w-0 relative">
+              <p className="text-slate-700 dark:text-slate-300 text-[13px] font-bold leading-normal pb-2 whitespace-nowrap">レンタル開始日 <span className="text-red-500 text-[11px] font-normal ml-1">必須</span></p>
               {/* 期間延長と同じネイティブのカレンダー（OS 標準の日付ピッカー）を使用 */}
               <input
                 type="date"
                 value={rentalStartDate || ""}
                 onChange={(e) => setRentalStartDate(e.target.value)}
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
-            <div className="flex flex-col w-full relative">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">レンタル終了予定日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
+            <div className="flex flex-col w-full min-w-0 relative">
+              <p className="text-slate-700 dark:text-slate-300 text-[13px] font-bold leading-normal pb-2 whitespace-nowrap">レンタル終了予定日 <span className="text-red-500 text-[11px] font-normal ml-1">必須</span></p>
               <input
                 type="date"
                 value={rentalEndDate || ""}
                 min={rentalStartDate || undefined}
                 onChange={(e) => setRentalEndDate(e.target.value)}
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col w-full relative">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">納品希望日 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col w-full min-w-0 relative">
+              <p className="text-slate-700 dark:text-slate-300 text-[13px] font-bold leading-normal pb-2 whitespace-nowrap">納品希望日 <span className="text-red-500 text-[11px] font-normal ml-1">必須</span></p>
               <input
                 type="date"
                 value={deliveryDate || ""}
                 onChange={(e) => setDeliveryDate(e.target.value)}
-                className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-4 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
           </div>

@@ -276,6 +276,27 @@ button, a, [role="button"] {
   }
 }
 
+/* ネイティブの日付入力はブラウザ既定の最小幅を持ち、2カラムのグリッドで
+   小さい画面（〜360px）からはみ出す。最小幅を解除し列幅に収める。 */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  background-color: transparent;
+}
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+}
+/* すべてのスマホ画面に適応: 画像・動画は親をはみ出さない */
+img, video, canvas {
+  max-width: 100%;
+}
+
 /* ────────────────────────────────────────────────────────
    Flip7 ボタン（お客様サイト共通 CTA）
    ピル型・最小タップ 48px・カラードグロー・押下 scale(0.95)
