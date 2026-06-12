@@ -535,10 +535,10 @@ export default function Checkout() {
           <div className="flex gap-2">
             <button 
               onClick={handleDownloadEstimate}
-              className="flex-1 flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-primary px-2 py-2 text-primary font-bold shadow-sm hover:bg-primary/5 active:scale-[0.98] transition-all"
+              className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 rounded-full border-2 border-primary px-2 py-2 text-primary font-bold bg-white dark:bg-slate-800 shadow-sm active:scale-95 transition-all"
             >
               <span className="material-symbols-outlined text-[20px]">request_quote</span>
-              <span className="text-[11px]">見積書を発行</span>
+              <span className="text-[11px] whitespace-nowrap">見積書を発行</span>
             </button>
             <button 
               disabled={!isFormValid}
@@ -559,7 +559,7 @@ export default function Checkout() {
                   }
                 });
               }}
-              className={`flex-[2.5] flex items-center justify-center gap-2 rounded-lg px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-primary/30 active:scale-[0.98] transition-all ${!isFormValid ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none" : "bg-primary hover:bg-blue-600"}`}
+              className={`f7-cta flex-[2.5] min-w-0 whitespace-nowrap px-4 ${!isFormValid ? "" : ""}`}
             >
               <span className="material-symbols-outlined text-[20px]">check_circle</span>
               注文を確定する

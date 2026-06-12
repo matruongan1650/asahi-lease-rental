@@ -151,7 +151,7 @@ export default function Cart() {
       {totalItems > 0 && (
         <div className="fixed bottom-[72px] left-1/2 -translate-x-1/2 z-10 w-full max-w-[480px] border-t border-slate-200 bg-white/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-background-dark/95 pb-safe">
           <div className="mx-auto max-w-lg">
-            <Link to="/checkout" className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-base font-bold text-white shadow-lg shadow-blue-500/30 transition-all hover:bg-blue-600 active:scale-[0.98]">
+            <Link to="/checkout" className="f7-cta w-full">
               <span>会計に進む</span>
               <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
             </Link>

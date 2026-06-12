@@ -51,8 +51,9 @@
   --color-amber:  #E5961B;
 
   /* ── Customer App (legacy compat) ── */
-  --color-primary:          #136dec;
-  --color-secondary:        #f59e0b;
+  /* Flip7 デザインシステム: ティール×ゴールド（お客様サイト共通） */
+  --color-primary:          #2BA8A2;
+  --color-secondary:        #FFD23F;
   --color-background-light: #f6f7f8;
   --color-background-dark:  #101822;
   --color-surface-light:    #ffffff;
@@ -274,6 +275,40 @@ button, a, [role="button"] {
     font-size: 16px !important;
   }
 }
+
+/* ────────────────────────────────────────────────────────
+   Flip7 ボタン（お客様サイト共通 CTA）
+   ピル型・最小タップ 48px・カラードグロー・押下 scale(0.95)
+   ──────────────────────────────────────────────────────── */
+.f7-cta,
+.f7-cta-teal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.12s cubic-bezier(.34,1.56,.64,1), filter 0.12s;
+  max-width: 100%;
+}
+.f7-cta {
+  background: linear-gradient(180deg, #FFE47A, #FFD23F 45%, #E6B800);
+  color: #4A3800;
+  box-shadow: 0 4px 20px rgba(255, 210, 63, 0.40);
+}
+.f7-cta-teal {
+  background: linear-gradient(180deg, #3CC4BD, #1E8C86);
+  color: #ffffff;
+  box-shadow: 0 4px 20px rgba(43, 168, 162, 0.30);
+}
+.f7-cta:active, .f7-cta-teal:active { transform: scale(0.95); }
+.f7-cta:disabled, .f7-cta-teal:disabled { opacity: 0.45; box-shadow: none; cursor: not-allowed; }
 
 @layer utilities {
 

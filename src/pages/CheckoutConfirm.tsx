@@ -131,7 +131,7 @@ export default function CheckoutConfirm() {
           <button 
             disabled={isSubmitting}
             onClick={handleOrderConfirm}
-            className={`w-full flex items-center justify-center gap-2 rounded-lg px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-primary/30 active:scale-[0.98] transition-all ${isSubmitting ? "bg-slate-400 dark:bg-slate-600 cursor-not-allowed" : "bg-primary hover:bg-blue-600"}`}
+            className="f7-cta w-full"
           >
             {isSubmitting ? (
               <span className="material-symbols-outlined text-[20px] animate-spin">progress_activity</span>

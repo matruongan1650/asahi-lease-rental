@@ -96,7 +96,7 @@ export default function CustomerLogin() {
 
           <button
             type="submit"
-            className="w-full rounded-xl bg-primary py-3.5 text-base font-bold text-white shadow-lg shadow-primary/30 hover:bg-blue-600 active:scale-[0.98] transition-all"
+            className="f7-cta w-full"
           >
             ログイン
           </button>
