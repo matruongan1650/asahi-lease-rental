@@ -21,9 +21,14 @@ import {
   Empty,
   PhotoTile,
   makePhoto,
-  Overline
+  Overline,
+  MetricCard,
+  SegmentControl,
+  formatCount
 } from "../../components/staff/StaffUI";
+import ProductQrScanner from "../../components/staff/ProductQrScanner";
 import { useMobileLive, pushFieldReportsLocal, STAFF, daysUntil } from "../../context/MobileLiveContext";
+import { getProductQrCode } from "../../utils/productQr";
 
 export const isVehicle = (p: any) => {
   if (!p) return false;
@@ -417,13 +422,11 @@ export function WhStock({ moves, addMove, onReturn }: any) {
   const ml = useMobileLive();
   const liveProducts = ml.products || [];
   const list = moves.filter((m: any) => filter === "all" || m.type === filter);
+  const inQty = moves.filter((m: any) => m.type === "入庫").reduce((sum: number, m: any) => sum + Number(m.qty || 0), 0);
+  const outQty = moves.filter((m: any) => m.type === "出庫").reduce((sum: number, m: any) => sum + Number(m.qty || 0), 0);
+  const stockTotal = liveProducts.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
 
   const openScan = (type: string) => { setScan(type); setPicked(null); setQty(10); };
-  const scanProduct = () => {
-    if (liveProducts.length === 0) { addMove(scan); setScan(null); return; }
-    const idx = Math.floor(Math.random() * liveProducts.length);
-    setPicked(liveProducts[idx]);
-  };
   
   const confirmMove = () => {
     const isIn = scan === "入庫";
@@ -439,14 +442,26 @@ export function WhStock({ moves, addMove, onReturn }: any) {
         <TopBar title="入出庫管理" sub="WAREHOUSE" right={<IconBtn name="clipboardCheck" onClick={onReturn} />} />
         
         <div style={{ padding: "0 16px 12px" }}>
-          <div style={{ display: "flex", gap: 7, background: "var(--surface-2)", padding: 4, borderRadius: 12 }}>
-            {[["all", "すべて"], ["入庫", "入庫"], ["出庫", "出庫"]].map(([k, l]) => (
-              <button key={k} onClick={() => setFilter(k)} style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", background: filter === k ? "var(--surface)" : "transparent", color: filter === k ? "var(--fg)" : "var(--fg-muted)", fontWeight: 800, fontSize: 13.5, cursor: "pointer", boxShadow: filter === k ? "var(--shadow-card)" : "none", fontFamily: "var(--font-jp)" }}>{l}</button>
-            ))}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+            <MetricCard label="現在庫" value={formatCount(stockTotal)} unit="点" icon="warehouse" tone="neutral" />
+            <MetricCard label="本日入庫" value={formatCount(inQty)} unit="点" icon="boxIn" tone="success" onClick={() => setFilter("入庫")} />
+            <MetricCard label="本日出庫" value={formatCount(outQty)} unit="点" icon="boxOut" tone="brand" onClick={() => setFilter("出庫")} />
           </div>
+          <SegmentControl
+            active={filter}
+            onChange={setFilter}
+            items={[
+              { key: "all", label: "すべて", count: moves.length },
+              { key: "入庫", label: "入庫", count: moves.filter((m: any) => m.type === "入庫").length },
+              { key: "出庫", label: "出庫", count: moves.filter((m: any) => m.type === "出庫").length },
+            ]}
+          />
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
+          {list.length === 0 ? (
+            <Empty icon="layers" title="入出庫履歴はありません" sub="QRスキャンで入庫または出庫を登録できます" />
+          ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {list.map((m: any) => {
               const isIn = m.type === "入庫";
@@ -468,6 +483,7 @@ export function WhStock({ moves, addMove, onReturn }: any) {
               );
             })}
           </div>
+          )}
         </div>
 
         <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", display: "flex", gap: 10 }}>
@@ -479,22 +495,10 @@ export function WhStock({ moves, addMove, onReturn }: any) {
       <Sheet open={!!scan} onClose={() => { setScan(null); setPicked(null); }} title={`${scan}スキャン`}>
         {!picked ? (
           <>
-            {/* Fake QR Scanner */}
-            <div style={{ position: "relative", height: 200, borderRadius: 16, overflow: "hidden", background: "#0a0d14", border: "1px solid var(--border)" }}>
-              <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 50% 45%, #1a2233, #0a0d14 70%)" }} />
-              <div style={{ position: "absolute", left: "50%", top: "45%", transform: "translate(-50%,-50%)", opacity: 0.25, color: "#fff" }}><Icon name="qr" size={84} /></div>
-              <div style={{ position: "absolute", left: "50%", top: "45%", transform: "translate(-50%,-50%)", width: 130, height: 130 }}>
-                {[["0","0","auto","auto"],["0","auto","auto","0"],["auto","0","0","auto"],["auto","auto","0","0"]].map((c, i) => (
-                  <span key={i} style={{ position: "absolute", top: c[0], right: c[1], bottom: c[2], left: c[3], width: 26, height: 26,
-                    borderTop: (c[0] === "0" ? "3px solid var(--brand-accent)" : "none"), borderBottom: (c[2] === "0" ? "3px solid var(--brand-accent)" : "none"),
-                    borderLeft: (c[3] === "0" ? "3px solid var(--brand-accent)" : "none"), borderRight: (c[1] === "0" ? "3px solid var(--brand-accent)" : "none"),
-                    borderRadius: 4 }} />
-                ))}
-                <div style={{ position: "absolute", left: 6, right: 6, height: 2, background: "var(--brand-accent)", boxShadow: "0 0 8px var(--brand-accent)", borderRadius: 2, animation: "scanline 2s ease-in-out infinite" }} />
-              </div>
-              <div style={{ position: "absolute", left: 0, right: 0, bottom: 12, display: "flex", justifyContent: "center" }}>
-                <button onClick={scanProduct} style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 99, padding: "11px 22px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 6px 18px rgba(0,0,0,0.4)" }}><Icon name="scan" size={19} />QRをスキャン</button>
-              </div>
+            <div style={{ borderRadius: 16, border: "1px dashed var(--border-strong)", background: "var(--surface-2)", padding: 18, textAlign: "center" }}>
+              <Icon name="qr" size={42} color="var(--brand-accent)" />
+              <div style={{ marginTop: 8, fontSize: 14.5, fontWeight: 800, color: "var(--fg)" }}>商品QRを読み取っています</div>
+              <div style={{ marginTop: 4, fontSize: 12.5, fontWeight: 700, color: "var(--fg-muted)", lineHeight: 1.5 }}>カメラが使えない場合は下の入力欄にQRコードまたは商品IDを入力してください。</div>
             </div>
             <p style={{ fontSize: 13, color: "var(--fg-muted)", textAlign: "center", margin: "14px 0 0", lineHeight: 1.5 }}>製品のQRコードをスキャンして{scan}処理を行います</p>
           </>
@@ -521,6 +525,14 @@ export function WhStock({ moves, addMove, onReturn }: any) {
           </>
         )}
       </Sheet>
+      <ProductQrScanner
+        open={!!scan && !picked}
+        title={`${scan || ""} QRスキャン`}
+        products={liveProducts}
+        description={`商品QRを読み取り、${scan || ""}数量を登録します。`}
+        onClose={() => { setScan(null); setPicked(null); }}
+        onMatch={(product) => setPicked(product)}
+      />
     </>
   );
 }
@@ -557,24 +569,55 @@ export function WhInspect() {
     }
   }, [liveMnt]);
 
+  const fmtD = (d: Date) =>
+    `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+  const addCycleDate = (from: Date, cycle: string) => {
+    const d = new Date(from);
+    if (cycle.includes("2週")) d.setDate(d.getDate() + 14);
+    else if (cycle.includes("1ヶ月")) d.setMonth(d.getMonth() + 1);
+    else if (cycle.includes("6ヶ月")) d.setMonth(d.getMonth() + 6);
+    else if (cycle.includes("1年")) d.setFullYear(d.getFullYear() + 1);
+    else d.setMonth(d.getMonth() + 3); // 3ヶ月 既定
+    return d;
+  };
+
   const recordShaken = (plate: string) => {
-    const upd = { status: "使用中", days: 730, inspectionDaysRemaining: 730, inspectionDate: "2028/06/01", nextInspectionDate: "2028/06/01" };
-    setVeh(vs => vs.map(v => v.plate === plate ? { ...v, ...upd, shaken: { ...v.shaken, last: "2026/06/02", next: "2028/06/01" } } : v));
+    // 車検完了 = 当日実施、次回は1年後（事業用車両の年次点検）
+    const today = new Date();
+    const next = new Date(today);
+    next.setFullYear(next.getFullYear() + 1);
+    const days = Math.ceil((next.getTime() - today.getTime()) / 86400000);
+    const upd: any = {
+      status: "使用中",
+      days,
+      inspectionDaysRemaining: days,
+      inspectionDate: fmtD(next),
+      nextInspectionDate: fmtD(next),
+    };
+    setVeh(vs => vs.map(v => v.plate === plate ? { ...v, ...upd, shaken: { ...v.shaken, last: fmtD(today), next: fmtD(next) } } : v));
     if (ml.recordVehicleShaken) {
-      ml.recordVehicleShaken(plate, {
-        ...upd,
-        "shaken.last": "2026/06/02",
-        "shaken.next": "2028/06/01"
-      });
+      ml.recordVehicleShaken(plate, { ...upd, "shaken.last": fmtD(today), "shaken.next": fmtD(next) });
     }
     setVehPlate(null);
   };
 
   const recordMnt = (id: string) => {
     const item = mnt.find(m => m.id === id);
-    setMnt(ms => ms.map(m => m.id === id ? { ...m, status: "正常", days: 90, last: "2026/06/02" } : m));
+    const today = new Date();
+    const next = addCycleDate(today, item?.cycle || "3ヶ月");
+    const days = Math.ceil((next.getTime() - today.getTime()) / 86400000);
+    const hist = Array.isArray(item?.history) ? [...item.history] : [];
+    hist.unshift({
+      id: "INS-" + Date.now(),
+      date: fmtD(today),
+      result: "合格",
+      inspector: STAFF.souko.name,
+      note: "倉庫スタッフによる定期点検",
+    });
+    const upd = { status: "正常", days, last: fmtD(today), next: fmtD(next), history: hist };
+    setMnt(ms => ms.map(m => m.id === id ? { ...m, ...upd } : m));
     if (ml.recordMaintenance && item) {
-      ml.recordMaintenance(item.firestoreId || item.id, { status: "正常", days: 90, last: "2026/06/02" });
+      ml.recordMaintenance(item.firestoreId || item.id, upd);
     }
     setDetail(null);
   };
@@ -584,24 +627,32 @@ export function WhInspect() {
     return <VehicleDetail v={openVeh} onBack={() => setVehPlate(null)} onRecordShaken={() => recordShaken(openVeh.plate)} />;
   }
 
+  const vehicleAlertsCount = veh.reduce((sum, v) => sum + vehicleAlerts(v).length, 0);
+  const maintenanceOverdue = mnt.filter(m => Number(m.days || 0) < 0).length;
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
       <TopBar title="点検管理" sub="INSPECTION" />
       
       <div style={{ padding: "0 16px 12px" }}>
-        <div style={{ display: "flex", gap: 7, background: "var(--surface-2)", padding: 4, borderRadius: 12 }}>
-          {[["shaken", "車検・車両"], ["mainte", "定期メンテナンス"]].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", background: tab === k ? "var(--surface)" : "transparent", color: tab === k ? "var(--fg)" : "var(--fg-muted)", fontWeight: 800, fontSize: 13.5, cursor: "pointer", boxShadow: tab === k ? "var(--shadow-card)" : "none", fontFamily: "var(--font-jp)" }}>{l}</button>
-          ))}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          <MetricCard label="車両アラート" value={vehicleAlertsCount} unit="件" icon="car" tone={vehicleAlertsCount ? "danger" : "success"} onClick={() => setTab("shaken")} />
+          <MetricCard label="整備超過" value={maintenanceOverdue} unit="件" icon="wrench" tone={maintenanceOverdue ? "danger" : "neutral"} onClick={() => setTab("mainte")} />
         </div>
+        <SegmentControl
+          active={tab}
+          onChange={setTab}
+          items={[
+            { key: "shaken", label: "車検・車両", count: veh.length },
+            { key: "mainte", label: "メンテ", count: mnt.length },
+          ]}
+        />
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
         {tab === "shaken" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {veh.length === 0 && (
-              <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-muted)", fontSize: 13.5, fontWeight: 600 }}>登録された車両がありません</div>
-            )}
+            {veh.length === 0 && <Empty icon="car" title="登録された車両がありません" sub="admin の車庫管理で登録された車両が表示されます" />}
             {veh.map(v => {
               const alertCount = vehicleAlerts(v).length;
               const days = v.days ?? v.inspectionDaysRemaining ?? 0;
@@ -633,9 +684,7 @@ export function WhInspect() {
 
         {tab === "mainte" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {mnt.length === 0 && (
-              <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-muted)", fontSize: 13.5, fontWeight: 600 }}>メンテナンス記録がありません</div>
-            )}
+            {mnt.length === 0 && <Empty icon="wrench" title="メンテナンス記録がありません" sub="admin の点検・整備データが表示されます" />}
             {mnt.map(m => (
               <Card key={m.id} pad={14} onClick={() => setDetail({ kind: "mainte", item: m })}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -703,7 +752,8 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
           id: p.id || p.firestoreId,
           firestoreId: p.firestoreId,
           name: p.name,
-          qr: "AS-" + (p.id || i),
+          qr: getProductQrCode(p),
+          qrPayload: p.qrPayload,
           loc: p.category ? p.category.slice(0, 1) + "-" + String(i + 1).padStart(2, "0") : "—",
           system: Number(p.stock) || 0,
           counted: null as number | null,
@@ -718,6 +768,7 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
   const [val, setVal] = useState("");
   const [dmg, setDmg] = useState<string | null>(null); // item id for damage report
   const [confirmed, setConfirmed] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
 
   // Sync products before counting starts
   useEffect(() => {
@@ -727,7 +778,8 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
   }, [liveProducts]);
 
   const counted = inv.filter(i => i.counted !== null).length;
-  const done = counted === inv.length;
+  const done = inv.length > 0 && counted === inv.length;
+  const diffCount = inv.filter(i => i.counted !== null && i.counted !== i.system).length;
 
   const openEdit = (i: any) => {
     setEdit(i.id);
@@ -739,10 +791,7 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
     setEdit(null);
   };
 
-  const scanNext = () => {
-    const n = inv.find(i => i.counted === null);
-    if (n) openEdit(n);
-  };
+  const scanNext = () => setScanOpen(true);
 
   const saveReport = (report: any[]) => {
     setInv(xs => xs.map(x => x.id === dmg ? { ...x, report } : x));
@@ -812,11 +861,15 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
           </div>
 
           <Card pad={14} style={{ margin: "14px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <span style={{ fontSize: 13.5, color: "var(--fg-muted)", fontWeight: 700 }}>進捗</span>
-              <span style={{ fontSize: 14, fontWeight: 800, color: "var(--brand-accent)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{counted} / {inv.length} 品目</span>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 13.5, color: "var(--fg-muted)", fontWeight: 800 }}>棚卸し進捗</span>
+              <span style={{ fontSize: 14, fontWeight: 900, color: "var(--brand-accent)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{counted} / {inv.length} 品目</span>
             </div>
             <ProgressBar value={counted} max={inv.length} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12.5, fontWeight: 800 }}>
+              <span style={{ color: "var(--fg-muted)" }}>差異</span>
+              <span style={{ color: diffCount > 0 ? "var(--danger-bright)" : "var(--success-bright)" }}>{diffCount}件</span>
+            </div>
           </Card>
           
           <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 700 }}>QRで読取 または タップ入力</span>}>棚卸しリスト</SectionLabel>
@@ -898,6 +951,17 @@ export function WhStocktake({ onBack }: { onBack?: () => void }) {
       </Sheet>
       
       <DamageReportSheet open={!!dmg} product={inv.find(i => i.id === dmg)} onClose={() => setDmg(null)} onSave={saveReport} />
+      <ProductQrScanner
+        open={scanOpen}
+        title="棚卸 QRスキャン"
+        products={inv}
+        description="商品QRを読み取り、該当商品の実数量入力を開きます。"
+        onClose={() => setScanOpen(false)}
+        onMatch={(product) => {
+          setScanOpen(false);
+          openEdit(product);
+        }}
+      />
     </>
   );
 }

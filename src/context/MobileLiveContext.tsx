@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from "react";
 import OrderBus from "../lib/orderBus";
 import { patchOrder } from "../lib/firebase";
+import { getProductQrCode } from "../utils/productQr";
 
 // ---------------------------------------------------------------------------
 // Mock Data (matching project reference)
@@ -254,9 +255,20 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         phone: "",
         contact: ((o.personLastName || "") + " " + (o.personFirstName || "")).trim() || o.personName || o.companyName || "",
         note: "",
-        products: (o.items || []).filter((i: any) => i.type === "rent").map((i: any, idx: number) => ({
-          id: i.id || "P-" + idx, qr: "AS-" + (i.id || idx), name: i.name, expected: (i.quantity || 1) - (i.returnedQuantity || 0), icon: i.category === "カラーコーン" ? "cone" : "package", image: i.image, category: i.category
-        })),
+        products: (o.items || []).filter((i: any) => i.type === "rent").map((i: any, idx: number) => {
+          const master = products.find((p: any) => p && (p.id === i.id || p.name === i.name));
+          const id = i.id || master?.id || "P-" + idx;
+          return {
+            id,
+            qr: master ? getProductQrCode(master) : getProductQrCode({ id } as any),
+            qrPayload: master?.qrPayload,
+            name: i.name,
+            expected: (i.quantity || 1) - (i.returnedQuantity || 0),
+            icon: i.category === "カラーコーン" ? "cone" : "package",
+            image: i.image,
+            category: i.category
+          };
+        }),
         rawOrder: o,
       }))
   ];
@@ -343,15 +355,20 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         returningEverything: true,
         products: (targetOrder.items || [])
           .filter((i: any) => i.type === "rent")
-          .map((i: any, idx: number) => ({
-            id: i.id || "P-" + idx,
-            qr: "AS-" + (i.id || idx),
-            name: i.name,
-            expected: (i.quantity || 1) - (i.returnedQuantity || 0),
-            icon: "package",
-            image: i.image,
-            category: i.category,
-          })),
+          .map((i: any, idx: number) => {
+            const master = products.find((p: any) => p && (p.id === i.id || p.name === i.name));
+            const itemId = i.id || master?.id || "P-" + idx;
+            return {
+              id: itemId,
+              qr: master ? getProductQrCode(master) : getProductQrCode({ id: itemId } as any),
+              qrPayload: master?.qrPayload,
+              name: i.name,
+              expected: (i.quantity || 1) - (i.returnedQuantity || 0),
+              icon: "package",
+              image: i.image,
+              category: i.category,
+            };
+          }),
       } as any);
     }
   };
@@ -431,7 +448,19 @@ export function pushFieldReportsLocal({ source, ref, reporter, customer, site, p
   const withIssues = (products || []).filter((p: any) => p.report && p.report.length > 0);
   const ids: string[] = [];
   withIssues.forEach((p: any) => {
-    const entries = p.report.map((e: any) => ({ reason: e.reason, qty: e.qty, photos: (e.photos || []).length, note: e.note || "" }));
+    const entries = p.report.map((e: any) => {
+      // スタッフが撮影した実画像（dataURL）を抽出して admin の現場報告でも表示できるようにする。
+      const photoUrls = (e.photos || [])
+        .map((ph: any) => (typeof ph === "string" ? ph : (ph && ph.dataUrl) || null))
+        .filter((u: any) => typeof u === "string" && u.startsWith("data:"));
+      return {
+        reason: e.reason,
+        qty: e.qty,
+        photos: (e.photos || []).length, // 互換: 件数
+        photoUrls, // 実画像
+        note: e.note || "",
+      };
+    });
     const id = "FR-" + String(Date.now()).slice(-6) + Math.floor(Math.random() * 10);
     ids.push(id);
     OrderBus.push("fieldReports", {

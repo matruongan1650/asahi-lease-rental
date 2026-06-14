@@ -869,6 +869,24 @@ export default function AdminFieldReportManagement() {
                             {entry.note}
                           </p>
                         )}
+                        {/* スタッフが現場で撮影した実画像 */}
+                        {Array.isArray(entry.photoUrls) && entry.photoUrls.length > 0 ? (
+                          <div className="grid grid-cols-4 gap-1.5 mt-2">
+                            {entry.photoUrls.map((url: string, pi: number) => (
+                              <img
+                                key={pi}
+                                src={url}
+                                alt={`証拠写真 ${pi + 1}`}
+                                className="aspect-square w-full rounded-lg object-cover border border-slate-200 cursor-zoom-in"
+                                onClick={() => window.open(url, "_blank")}
+                              />
+                            ))}
+                          </div>
+                        ) : (entry.photos > 0 ? (
+                          <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
+                            <Camera size={12} /> 写真 {entry.photos} 枚（画像データなし）
+                          </p>
+                        ) : null)}
                       </div>
                     </div>
                   ))}
