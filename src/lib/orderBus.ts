@@ -2,7 +2,7 @@
  * orderBus.ts — Cross-tab real-time sync via localStorage + BroadcastChannel
  *
  * TypeScript port of shared/order-bus.jsx.
- * Replaces Firebase for local development. All 3 apps (customer, admin, mobile) share data.
+ * All 3 apps (customer, admin, mobile) share data through XServer /api sync.
  *
  * Data stores:
  *   asahi.orders       → customer orders
@@ -22,7 +22,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
-import { apiSync, apiUpsert, apiRemove } from "./backendSync";
+import { apiList, apiSync, apiUpsert, apiRemove } from "./backendSync";
 
 
 // ---------------------------------------------------------------------------
@@ -280,14 +280,14 @@ function _generateId(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Vercel backend sync (polling)  —  DATA_BACKEND === "api"
+// XServer backend sync (polling)  —  DATA_BACKEND === "api"
 //   /api/sync で差分(rev)をポーリングし、全クライアントへ反映する。
 //   書き込みは push/patch/remove/setAll から /api/store へ write-through。
 //   _applyingRemote の間はリモート反映中なので書き戻さない（ループ防止）。
 // ---------------------------------------------------------------------------
 
 let _applyingRemote = false;
-let _vercelPollerStarted = false;
+let _apiPollerStarted = false;
 let _firstPoll = false;
 let _lastRev = 0;
 const _REV_KEY = "asahi._rev";
@@ -311,15 +311,38 @@ function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; delet
   _write(store, merged);
 }
 
-async function _vercelTick(): Promise<void> {
+async function _reloadAuthoritativeSnapshot(): Promise<number> {
+  let maxRev = 0;
+  _applyingRemote = true;
+  try {
+    for (const store of BUS_STORES) {
+      const rows = await apiList(store);
+      _write(store, rows as BusRecord[]);
+    }
+    const fresh = await apiSync(0);
+    if (fresh && typeof fresh.rev === "number") {
+      maxRev = fresh.rev;
+    }
+  } finally {
+    _applyingRemote = false;
+  }
+  _firstPoll = false;
+  try { localStorage.setItem(_SYNCED_KEY, "1"); } catch { /* ignore */ }
+  try { localStorage.setItem(_REV_KEY, String(maxRev)); } catch { /* ignore */ }
+  return maxRev;
+}
+
+async function _apiTick(): Promise<void> {
   try {
     const res = await apiSync(_lastRev);
+    if (res && typeof res.rev === "number" && res.rev < _lastRev) {
+      _lastRev = await _reloadAuthoritativeSnapshot();
+      return;
+    }
     if (res && Array.isArray(res.changes)) {
       const byStore: Record<string, Array<{ id: string; deleted: boolean; data: BusRecord | null }>> = {};
-      const serverIds: Record<string, Set<string>> = {};
       for (const ch of res.changes) {
         (byStore[ch.store] ||= []).push({ id: ch.id, deleted: ch.deleted, data: ch.data as BusRecord | null });
-        (serverIds[ch.store] ||= new Set()).add(String(ch.id));
       }
       _applyingRemote = true;
       try {
@@ -330,19 +353,11 @@ async function _vercelTick(): Promise<void> {
         _applyingRemote = false;
       }
 
-      // 初回同期: サーバーに無いローカル限定レコードをアップロードして「以前のローカルデータ」を保持。
+      // 初回同期: サーバーが唯一の正。クライアントのローカル（seed/デモ）を一括アップロード
+      // しない（以前はこれでデモアカウント等が共有サーバーへ再注入されていた）。
+      // ユーザーが実際に作成・編集したレコードのみ push/patch/setAll 経由で個別に同期される。
       if (_firstPoll) {
         _firstPoll = false;
-        for (const store of BUS_STORES) {
-          if (store === "orders") continue; // orders は push/patch で個別反映
-          const local = _read(store);
-          const ids = serverIds[store] || new Set<string>();
-          for (const r of local) {
-            if (r && r.id !== undefined && r.id !== null && !ids.has(String(r.id))) {
-              apiUpsert(store, r as any).catch(() => {});
-            }
-          }
-        }
         try { localStorage.setItem(_SYNCED_KEY, "1"); } catch { /* ignore */ }
       }
     }
@@ -353,13 +368,13 @@ async function _vercelTick(): Promise<void> {
   } catch {
     // サーバー未起動 / オフライン → ローカルのみで継続（次回再試行）。
   } finally {
-    setTimeout(() => { void _vercelTick(); }, SYNC_POLL_MS);
+    setTimeout(() => { void _apiTick(); }, SYNC_POLL_MS);
   }
 }
 
-function _startVercelPoller(): void {
-  if (_vercelPollerStarted || DATA_BACKEND !== "api") return;
-  _vercelPollerStarted = true;
+function _startApiPoller(): void {
+  if (_apiPollerStarted || DATA_BACKEND !== "api") return;
+  _apiPollerStarted = true;
   let established = false;
   try { established = localStorage.getItem(_SYNCED_KEY) === "1"; } catch { /* ignore */ }
   if (established) {
@@ -369,7 +384,7 @@ function _startVercelPoller(): void {
     _lastRev = 0; // 初回はフル同期（since=0）でサーバー全件を取得しローカルとマージ
     _firstPoll = true;
   }
-  void _vercelTick();
+  void _apiTick();
 }
 
 // ---------------------------------------------------------------------------
@@ -385,8 +400,8 @@ export const OrderBus: IOrderBus = {
     const wrappedCallback = callback as BusListener;
     _listeners[store].push(wrappedCallback);
 
-    // Vercel バックエンド使用時はポーリング同期を開始（全ストア共通、1回だけ）。
-    _startVercelPoller();
+    // XServer バックエンド使用時はポーリング同期を開始（全ストア共通、1回だけ）。
+    _startApiPoller();
 
     // Immediately fire with current data
     try {
@@ -395,8 +410,7 @@ export const OrderBus: IOrderBus = {
       console.warn(`[OrderBus] subscribe initial fire error for "${store}":`, e);
     }
 
-    // クラウド同期は XServer(MySQL) の /api ポーリング（_startVercelPoller）のみ。
-    // Firebase/Firestore は廃止済み。
+    // クラウド同期は XServer(MySQL) の /api ポーリング（_startApiPoller）のみ。
 
     // Return unsubscribe function
     return () => {
@@ -521,6 +535,11 @@ export const OrderBus: IOrderBus = {
   },
 
   seedIfEmpty<T extends BusRecord = BusRecord>(store: BusStore, items: T[]): number {
+    // クラウド運用（api）ではサーバーが唯一の正。デモ/初期データをローカルへ seed しない。
+    // （seed すると初回ポーリングのマージ後もローカルに残り、admin にデモアカウント等が再表示され、
+    //   さらに以前は first-poll で共有サーバーへ再アップロードされてしまっていた。）
+    // 真にサーバーが空の初回デプロイ時のみ admin の seedAll で投入する想定。
+    if (DATA_BACKEND === "api") return 0;
     const existing = _read(store);
     if (existing.length === 0 && items && items.length > 0) {
       _write(store, items);

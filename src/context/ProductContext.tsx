@@ -26,52 +26,46 @@ export function ProductProvider({ children }: { children: ReactNode }) {
     return INITIAL_PRODUCTS;
   });
 
+  // ローカルキャッシュ（オフライン表示用）。サーバーへは push しない。
   useEffect(() => {
     try {
       localStorage.setItem("app_products", JSON.stringify(products));
     } catch (e) {
-      // localStorage の容量超過 (QuotaExceededError) などで失敗しても
-      // アプリ全体がクラッシュ（画面が真っ白）しないようにする。
-      // メモリ上の state は更新済みなので、当該セッション中は変更が反映される。
-      console.error(
-        "[ProductContext] 商品データの localStorage 保存に失敗しました（容量超過の可能性）。",
-        e
-      );
-    }
-    try {
-      const obProds = OrderBus.getAll<any>("products");
-      if (JSON.stringify(obProds) !== JSON.stringify(products)) {
-        OrderBus.setAll("products", products as any);
-      }
-    } catch (e) {
-      console.error("[ProductContext] OrderBus への商品データ同期に失敗しました。", e);
+      // 容量超過などで失敗してもアプリをクラッシュさせない。
+      console.error("[ProductContext] 商品データの localStorage 保存に失敗しました（容量超過の可能性）。", e);
     }
   }, [products]);
 
+  // サーバー（OrderBus "products"）が唯一の正。購読して state を反映するだけ。
+  // ★ ここから OrderBus へ書き戻さない（INITIAL_PRODUCTS で既存カタログを上書きしたり、
+  //   StrictMode の effect 二重実行で seed を再アップロードする事故を防ぐ）。
   useEffect(() => {
     const unsub = OrderBus.subscribe("products", (newProds) => {
       if (newProds && newProds.length > 0) {
-        setProducts((prev) => {
-          if (JSON.stringify(prev) !== JSON.stringify(newProds)) {
-            return newProds as unknown as Product[];
-          }
-          return prev;
-        });
+        setProducts((prev) =>
+          JSON.stringify(prev) !== JSON.stringify(newProds)
+            ? (newProds as unknown as Product[])
+            : prev,
+        );
       }
     });
     return unsub;
   }, []);
 
+  // 追加・編集・削除は「ユーザーの明示操作」のみ。state 更新 + OrderBus（→/api）へ個別反映。
   const addProduct = (product: Product) => {
     setProducts(prev => [product, ...prev]);
+    OrderBus.push("products", product as any);
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     setProducts(prev => (prev || []).filter(Boolean).map(p => p.id === id ? { ...p, ...updates } : p));
+    OrderBus.patch("products", id, updates as any);
   };
 
   const deleteProduct = (id: string) => {
     setProducts(prev => (prev || []).filter(Boolean).filter(p => p.id !== id));
+    OrderBus.remove("products", id);
   };
 
   return (
