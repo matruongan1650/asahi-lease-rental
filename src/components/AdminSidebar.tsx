@@ -14,6 +14,7 @@ export type AdminTab =
   | "incoming"
   | "outgoing"
   | "sales"
+  | "invoices"
   | "collection"
   | "repair"
   | "maintenance"
@@ -27,11 +28,18 @@ interface AdminSidebarProps {
   setActiveTab: (tab: AdminTab) => void;
 }
 
+type SidebarItem = {
+  id: AdminTab;
+  label: string;
+  icon: string;
+  badge?: number;
+};
+
 export default function AdminSidebar({
   activeTab,
   setActiveTab,
 }: AdminSidebarProps) {
-  const menuGroups = [
+  const menuGroups: { title: string; items: SidebarItem[] }[] = [
     {
       title: "業務",
       items: [
@@ -49,21 +57,24 @@ export default function AdminSidebar({
       ],
     },
     {
-      title: "取引",
+      title: "受注・入出庫",
       items: [
-        { id: "incoming", label: "入庫", icon: "input" },
-        { id: "outgoing", label: "出庫", icon: "output" },
-        { id: "orders", label: "レンタル", icon: "sync" },
-        { id: "sales", label: "販売", icon: "payments" },
-        { id: "collection", label: "回収", icon: "inventory_2" },
+        { id: "incoming", label: "入庫管理", icon: "input" },
+        { id: "outgoing", label: "出庫管理", icon: "output" },
+        { id: "orders", label: "受注・レンタル", icon: "sync" },
+        { id: "sales", label: "販売受注", icon: "payments" },
+        { id: "invoices", label: "請求", icon: "receipt_long" },
+        { id: "collection", label: "回収・返却", icon: "inventory_2" },
       ],
     },
     {
       title: "保全",
+      // 業務フローの順序で配置:
+      //   現場報告（事故・トラブルの入口）→ 修理依頼（外注処理）→ 定期点検（予防保全）
       items: [
-        { id: "repair", label: "修理・保証", icon: "build" },
-        { id: "maintenance", label: "メンテナンス", icon: "engineering" },
-        { id: "field_report", label: "現場報告", icon: "assignment", badge: 2 },
+        { id: "field_report", label: "現場報告", icon: "assignment" },
+        { id: "repair", label: "修理依頼", icon: "build" },
+        { id: "maintenance", label: "定期点検", icon: "engineering" },
       ],
     },
     {
@@ -82,37 +93,43 @@ export default function AdminSidebar({
   ];
 
   return (
-    <div className="w-64 bg-slate-50 border-r border-slate-200 flex flex-col h-screen fixed left-0 top-0 overflow-y-auto">
-      <div className="p-4 flex items-center gap-3">
-        <div className="w-8 h-8 bg-blue-700 text-white rounded-lg flex items-center justify-center font-bold text-lg leading-none">
-          C
-        </div>
-        <div>
-          <h1 className="font-black text-slate-800 leading-tight">
-            ASAHI LEASE
-          </h1>
-          <p className="text-[10px] text-slate-500 font-bold">管理コンソール</p>
+    <aside className="w-[236px] bg-[#f7fbfa] border-r border-[#cfe6e3] flex flex-col h-screen fixed left-0 top-0 overflow-y-auto admin-scrollbar">
+      <div className="px-4 py-4 border-b border-[#cfe6e3] bg-[#fffdf6]">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-[#173b38] text-[#ffd23f] rounded-lg flex items-center justify-center font-black text-lg leading-none shadow-[0_4px_18px_rgba(43,168,162,0.22)]">
+            A
+          </div>
+          <div className="min-w-0">
+            <h1 className="font-black text-[#173b38] leading-tight tracking-tight">
+              ASAHI LEASE
+            </h1>
+            <p className="text-[10px] text-[#46706c] font-bold tracking-[0.14em] uppercase">Admin</p>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 py-4">
+      <div className="flex-1 py-3 px-3">
         {menuGroups.map((group, index) => (
-          <div key={index} className="mb-6">
-            <h3 className="px-6 text-xs font-bold text-slate-400 mb-2">
+          <div key={index} className="mb-4">
+            <h3 className="px-2.5 text-[10px] font-black text-[#7ca39f] mb-1.5 tracking-[0.12em] uppercase">
               {group.title}
             </h3>
-            <ul>
+            <ul className="space-y-0.5">
               {group.items.map((item) => (
                 <li key={item.id}>
                   <button
-                    onClick={() => setActiveTab(item.id as AdminTab)}
-                    className={`w-full flex items-center gap-3 px-6 py-2.5 text-sm transition-colors relative ${activeTab === item.id ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-600 hover:bg-slate-100 font-medium"}`}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-all relative rounded-lg ${
+                      activeTab === item.id
+                        ? "bg-[#fff8e7] text-[#173b38] font-black shadow-[0_4px_18px_rgba(43,168,162,0.12)] ring-1 ring-[#ffd23f]/70"
+                        : "text-[#46706c] hover:bg-white hover:text-[#173b38] font-semibold"
+                    }`}
                   >
                     {activeTab === item.id && (
-                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600 rounded-r-md"></div>
+                      <div className="absolute left-0 top-2 bottom-2 w-1 bg-[#2ba8a2] rounded-r-md"></div>
                     )}
                     <span
-                      className={`material-symbols-outlined text-[20px] ${activeTab === item.id ? "text-blue-600" : "text-slate-400"}`}
+                      className={`material-symbols-outlined text-[19px] ${activeTab === item.id ? "text-[#1e8c86]" : "text-[#8fbcb7]"}`}
                     >
                       {item.icon}
                     </span>
@@ -129,25 +146,6 @@ export default function AdminSidebar({
           </div>
         ))}
       </div>
-
-      <div className="p-4 border-t border-slate-200 mt-auto bg-slate-50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-700 text-white rounded-full flex items-center justify-center font-bold">
-            佐
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <h4 className="font-bold text-sm text-slate-800 truncate">
-              管理者 佐藤
-            </h4>
-            <p className="text-xs text-slate-500 truncate">倉庫マネージャー</p>
-          </div>
-          <button className="text-slate-400 hover:text-slate-700 transition-colors">
-            <span className="material-symbols-outlined text-[20px]">
-              logout
-            </span>
-          </button>
-        </div>
-      </div>
-    </div>
+    </aside>
   );
 }
