@@ -90,11 +90,14 @@ export default function AdminFieldReportManagement() {
       id: repairId,
       asset: report.asset,
       vendor: selectedVendor,
-      status: "修理中",
+      // 業者は確定したが金額未確定 → 見積中（金額入力後に「修理中」へ遷移）
+      status: "見積中",
       req: today,
       cost: null,
       warranty: isWarranty,
-      issue: repairNotes || "現場報告からの修理依頼"
+      issue: repairNotes || "現場報告からの修理依頼",
+      // ★ 現場報告に逆リンク: 修理完了時に報告も自動で「対応済」に更新するため
+      sourceReportId: report.id,
     });
 
     OrderBus.patch("fieldReports", report.id, {
@@ -597,7 +600,7 @@ export default function AdminFieldReportManagement() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredOrders.map((o) => {
-                  const isCollect = o.status === "配達中"; // mock logic
+                  const isCollect = o.status === "配達中";
                   return (
                     <tr
                       key={o.id}

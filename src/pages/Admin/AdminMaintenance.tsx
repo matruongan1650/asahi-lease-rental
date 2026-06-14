@@ -72,6 +72,9 @@ export default function AdminMaintenance() {
   const [inspBy, setInspBy] = useState("");
   const [inspNote, setInspNote] = useState("");
 
+  // 履歴閲覧モーダル
+  const [viewingHistory, setViewingHistory] = useState<any | null>(null);
+
   // ── 残り日数を毎レンダリングで再計算（リアルタイムで超過を反映） ──
   const rowsWithDays = useMemo(() => {
     const today = new Date();
@@ -230,6 +233,30 @@ export default function AdminMaintenance() {
             className="p-1.5 rounded hover:bg-emerald-50 text-slate-500 hover:text-emerald-700 cursor-pointer flex items-center justify-center transition-colors"
           >
             <span className="material-symbols-outlined text-[16px]">fact_check</span>
+          </button>
+          <button
+            onClick={() => setViewingHistory(r)}
+            title="点検履歴を見る"
+            className="p-1.5 rounded hover:bg-blue-50 text-slate-500 hover:text-blue-700 cursor-pointer flex items-center justify-center transition-colors relative"
+          >
+            <span className="material-symbols-outlined text-[16px]">history</span>
+            {Array.isArray(r.history) && r.history.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 bg-blue-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center font-mono">
+                {r.history.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              if (window.confirm(`${r.name} を削除してもよろしいですか？`)) {
+                OrderBus.remove("maintenance", r.id);
+                triggerToast(`${r.name} を削除しました`, "ok");
+              }
+            }}
+            title="削除"
+            className="p-1.5 rounded hover:bg-red-50 text-slate-500 hover:text-red-700 cursor-pointer flex items-center justify-center transition-colors"
+          >
+            <span className="material-symbols-outlined text-[16px]">delete</span>
           </button>
         </div>
       ),
@@ -390,6 +417,59 @@ export default function AdminMaintenance() {
             </div>
           )}
         </div>
+      </Modal>
+
+      {/* ── 点検履歴モーダル ────────────────────────────────── */}
+      <Modal
+        open={!!viewingHistory}
+        onClose={() => setViewingHistory(null)}
+        title={`点検履歴 — ${viewingHistory?.name || ""}`}
+        width={560}
+        footer={
+          <Btn variant="secondary" onClick={() => setViewingHistory(null)}>閉じる</Btn>
+        }
+      >
+        {(() => {
+          const hist: any[] = Array.isArray(viewingHistory?.history) ? viewingHistory.history : [];
+          if (hist.length === 0) {
+            return <div className="text-sm text-slate-500 text-center py-6">まだ点検履歴がありません。</div>;
+          }
+          return (
+            <div className="space-y-2">
+              {hist.map((h: any) => (
+                <div
+                  key={h.id}
+                  className={`border rounded-lg p-3 ${
+                    h.result === "要修理"
+                      ? "border-amber-200 bg-amber-50"
+                      : h.result === "修理完了"
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] text-slate-500">{h.date}</span>
+                      <Badge
+                        tone={
+                          h.result === "要修理"
+                            ? "warning"
+                            : h.result === "修理完了"
+                            ? "ok"
+                            : "ok"
+                        }
+                      >
+                        {h.result}
+                      </Badge>
+                    </div>
+                    <span className="text-[11px] text-slate-500">{h.inspector || "—"}</span>
+                  </div>
+                  {h.note && <p className="text-xs text-slate-600 leading-relaxed">{h.note}</p>}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

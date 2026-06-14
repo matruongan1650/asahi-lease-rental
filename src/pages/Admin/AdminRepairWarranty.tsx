@@ -109,6 +109,21 @@ export default function AdminRepairWarranty() {
     if (completing.sourceReportId) {
       OrderBus.patch("fieldReports", completing.sourceReportId, { status: "対応済" });
     }
+    // 定期点検からの「要修理」自動作成だった場合は、点検対象を「正常」に戻して履歴に追記
+    if (completing.sourceInspectionId) {
+      const m = OrderBus.getAll<any>("maintenance").find((x) => x.id === completing.sourceInspectionId);
+      if (m) {
+        const history = Array.isArray(m.history) ? [...m.history] : [];
+        history.unshift({
+          id: "INS-FIX-" + Date.now(),
+          date: doneDate.replace(/-/g, "/"),
+          result: "修理完了",
+          inspector: "—",
+          note: `修理依頼 ${completing.id} 完了（${FMT(cost)}）`,
+        });
+        OrderBus.patch("maintenance", completing.sourceInspectionId, { status: "正常", history });
+      }
+    }
     triggerToast(`${completing.id} を完了にしました（${FMT(cost)}）`, "ok");
     setCompleting(null);
   };
@@ -164,6 +179,11 @@ export default function AdminRepairWarranty() {
           {r.sourceReportId && (
             <div className="text-[10px] text-slate-400 font-mono mt-0.5">
               現場報告: {r.sourceReportId}
+            </div>
+          )}
+          {r.sourceInspectionId && (
+            <div className="text-[10px] text-emerald-600 font-mono mt-0.5">
+              定期点検: {r.sourceInspectionId}
             </div>
           )}
         </div>
