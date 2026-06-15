@@ -112,9 +112,9 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
   const [editDraft, setEditDraft] = useState<any>(() => buildOrderEditDraft(order));
 
   const blocks = getOrGenerateInvoiceBlocks(order);
-  const deliveryPhotos = collectFieldPhotos("納品写真", order.deliveryPhotos, order.deliveryPhoto);
-  const collectionPhotos = collectFieldPhotos("回収写真", order.collectionPhotos, order.collectionPhoto);
-  const warehousePhotos = collectFieldPhotos("倉庫検品写真", order.warehousePhotos, order.warehousePhoto);
+  const deliveryPhotos = collectFieldPhotos("納品写真", order.deliveryPhotos);
+  const collectionPhotos = collectFieldPhotos("回収写真", order.collectionPhotos);
+  const warehousePhotos = collectFieldPhotos("倉庫検品写真", order.warehousePhotos);
   const issuePhotos = (order.itemIssues || [])
     .map((issue: any) => normalizeFieldPhoto(
       issue.photo,

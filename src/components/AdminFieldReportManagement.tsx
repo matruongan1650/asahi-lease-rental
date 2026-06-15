@@ -105,7 +105,6 @@ function getRecoveryModeInfo(order: Order, walkinReturns: WalkinReturnRecord[]) 
 
   if (
     hasPhotoValue(order.collectionPhotos) ||
-    hasPhotoValue(order.collectionPhoto) ||
     !!order.collectionSignature ||
     staffStatus.includes("回収") ||
     ["回収予定", "回収中", "回収完了"].includes(status)
@@ -119,7 +118,6 @@ function getRecoveryModeInfo(order: Order, walkinReturns: WalkinReturnRecord[]) 
 
   if (
     hasPhotoValue(order.warehousePhotos) ||
-    hasPhotoValue(order.warehousePhoto) ||
     !!order.warehouseSignature ||
     order.inspectedByWarehouse ||
     status === "検品待ち"
@@ -364,10 +362,8 @@ export default function AdminFieldReportManagement() {
     const rentItems = selectedOrder.items?.filter((i) => i.type === "rent") || [];
     const recoveryMode = getRecoveryModeInfo(selectedOrder, walkinReturns || []);
     const RecoveryIcon = recoveryMode.icon;
-    const collectionPhotoUrl =
-      firstPhotoUrl(selectedOrder.collectionPhotos) || firstPhotoUrl(selectedOrder.collectionPhoto);
-    const warehousePhotoUrl =
-      firstPhotoUrl(selectedOrder.warehousePhotos) || firstPhotoUrl(selectedOrder.warehousePhoto);
+    const collectionPhotoUrl = firstPhotoUrl(selectedOrder.collectionPhotos);
+    const warehousePhotoUrl = firstPhotoUrl(selectedOrder.warehousePhotos);
 
     return (
       <div className="space-y-6 max-w-5xl mx-auto">

@@ -113,9 +113,9 @@ export default function OrderDetail() {
   }
 
   const blocks = getOrGenerateInvoiceBlocks(order);
-  const deliveryPhotos = collectCustomerPhotos("納品写真", (order as any).deliveryPhotos, (order as any).deliveryPhoto);
-  const collectionPhotos = collectCustomerPhotos("回収写真", (order as any).collectionPhotos, (order as any).collectionPhoto);
-  const warehousePhotos = collectCustomerPhotos("倉庫検品写真", (order as any).warehousePhotos, (order as any).warehousePhoto);
+  const deliveryPhotos = collectCustomerPhotos("納品写真", (order as any).deliveryPhotos);
+  const collectionPhotos = collectCustomerPhotos("回収写真", (order as any).collectionPhotos);
+  const warehousePhotos = collectCustomerPhotos("倉庫検品写真", (order as any).warehousePhotos);
   const issuePhotos = ((order as any).itemIssues || [])
     .map((issue: any) => normalizeCustomerPhoto(
       issue.photo,

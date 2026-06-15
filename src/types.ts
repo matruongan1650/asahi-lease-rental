@@ -28,6 +28,9 @@ export interface Product {
   badgeColor?: string;
   stock: number;
   category: string;
+  qrCode?: string;
+  qrPayload?: string;
+  qrUpdatedAt?: string;
   featured?: boolean;
   description?: string;
   specs?: Record<string, string>;
@@ -127,11 +130,8 @@ export interface Order {
   staffStatus?: StaffStatus | string;
   staffNote?: string;
   assignedStaff?: string;
-  deliveryPhoto?: string;
   deliverySignature?: string;
-  collectionPhoto?: string;
   collectionSignature?: string;
-  warehousePhoto?: string;
   warehouseSignature?: string;
   itemIssues?: ItemIssue[];
   notes?: string;
@@ -199,6 +199,15 @@ export interface VehicleAlert {
   icon: string;
 }
 
+export interface VehicleFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  uploadedAt: string;
+  dataUrl: string;
+}
+
 export interface MaintenanceRecord {
   date: string;
   item: string;
@@ -245,6 +254,8 @@ export interface VehicleDetail {
   maintenanceHistory: MaintenanceRecord[];
   repairHistory: RepairRecord[];
   documents: string[];
+  vehicleFiles?: VehicleFile[];
+  photos?: string[];
 }
 
 // ==========================================
