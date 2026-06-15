@@ -190,7 +190,17 @@ function _key(store: BusStore): string {
   return "asahi." + store;
 }
 
+// メモリ上の「完全な」データ（写真・サインの base64 を含む）。
+// localStorage は容量対策で base64 を間引く（=不完全）ため、クライアント内の正本はこちら。
+// これがないと、ポーリングのたびに _applyRemoteChanges が間引かれたキャッシュを土台にして
+// 差分の無いレコードから画像が消える（= 全サイトで写真/サインが表示されない原因）。
+const _mem: Partial<Record<BusStore, BusRecord[]>> = {};
+
 function _read<T extends BusRecord = BusRecord>(store: BusStore): T[] {
+  // メモリに完全版があればそれを使う（画像が間引かれない）。
+  const mem = _mem[store];
+  if (mem) return mem as unknown as T[];
+  // コールドスタート時のみ localStorage から読み込む（起動直後の即時表示用ブートストラップ）。
   try {
     const raw = localStorage.getItem(_key(store));
     if (!raw) return [];
@@ -221,6 +231,10 @@ function _slimReplacer(_key: string, value: unknown): unknown {
 }
 
 function _write<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): void {
+  // クライアント内の正本（完全版）はメモリに保持する。以降の _read / _applyRemoteChanges は
+  // ここを土台にするので、localStorage が間引かれても画像/サインは失われない。
+  _mem[store] = data as unknown as BusRecord[];
+
   const next = JSON.stringify(data);
   const changed = _lastSerialized[store] !== next;
   _lastSerialized[store] = next;
