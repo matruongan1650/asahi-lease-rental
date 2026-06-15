@@ -8,6 +8,9 @@
   RewriteRule ^api/store/?$  api/store.php  [L,QSA]
   RewriteRule ^api/sync/?$   api/sync.php   [L,QSA]
   RewriteRule ^api/health/?$ api/health.php [L,QSA]
+  RewriteRule ^api/mail/?$   api/mail.php   [L,QSA]
+  RewriteRule ^api/notify-customers/?$ api/notify-customers.php [L,QSA]
+  RewriteRule ^api/upload/?$ api/upload.php [L,QSA]
 
   # /api/・/assets/ 配下と実在ファイル/ディレクトリ以外は index.html へ（React Router 用）
   # （/assets/ を除外: 削除済みの旧バンドルに HTML を返さず素直に 404 にする）

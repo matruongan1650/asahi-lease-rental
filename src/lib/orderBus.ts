@@ -23,6 +23,7 @@
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
 import { apiList, apiSync, apiUpsert, apiRemove } from "./backendSync";
+import { externalizeImages } from "./imageUpload";
 
 
 // ---------------------------------------------------------------------------
@@ -436,6 +437,40 @@ function _startApiPoller(): void {
   void _apiTick();
 }
 
+/**
+ * レコード内の base64 画像をサーバーにアップロードして URL 化し、
+ * ローカル（メモリ/キャッシュ）も URL 版に置換してから /api へ upsert する。
+ * これにより base64 がレコードに残らず、容量・同期・再起動消失の問題を根絶する。
+ * 画像が無いレコードは即 upsert（高速パス）。
+ */
+async function _upsertExternalized(store: BusStore, recordId: string): Promise<void> {
+  let data = _read(store);
+  let idx = data.findIndex((r) => String(r.id) === String(recordId));
+  if (idx < 0) return;
+  const original = data[idx];
+
+  let ext: BusRecord = original;
+  try {
+    ext = await externalizeImages(original);
+  } catch {
+    ext = original;
+  }
+
+  // 画像をアップロードして URL 化した場合のみローカルを書き換える。
+  if (ext !== original) {
+    data = _read(store);
+    idx = data.findIndex((r) => String(r.id) === String(recordId));
+    if (idx >= 0) {
+      data[idx] = ext;
+      _write(store, data);
+    }
+  }
+
+  apiUpsert(store, ext as any).catch((e) =>
+    console.warn(`[OrderBus] backend upsert failed "${store}/${recordId}":`, e)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // OrderBus singleton
 // ---------------------------------------------------------------------------
@@ -487,9 +522,7 @@ export const OrderBus: IOrderBus = {
     _write(store, data);
 
     if (DATA_BACKEND === "api" && !_applyingRemote) {
-      apiUpsert(store, record as any).catch((e) =>
-        console.warn(`[OrderBus] backend push failed "${store}/${record.id}":`, e)
-      );
+      void _upsertExternalized(store, String(record.id));
     }
 
     return record.id;
@@ -511,10 +544,8 @@ export const OrderBus: IOrderBus = {
       _write(store, data);
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {
-        // マージ後のレコード全体を upsert（バックエンドは id ベースの upsert）。
-        apiUpsert(store, data[idx] as any).catch((e) =>
-          console.warn(`[OrderBus] backend patch failed "${store}/${targetId}":`, e)
-        );
+        // マージ後のレコード全体を upsert（base64 画像はアップロードして URL 化）。
+        void _upsertExternalized(store, String(targetId));
       }
     } else {
       console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
@@ -564,9 +595,7 @@ export const OrderBus: IOrderBus = {
           if (!r || r.id == null) continue;
           const k = String(r.id);
           if (prevJsonById.get(k) !== JSON.stringify(r)) {
-            apiUpsert(store, r as any).catch((e) =>
-              console.warn(`[OrderBus] backend setAll-upsert failed "${store}/${k}":`, e)
-            );
+            void _upsertExternalized(store, k);
           }
         }
         // このクライアントが削除した id のみ remove（サーバー側の未知レコードは消さない）

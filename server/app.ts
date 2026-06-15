@@ -12,11 +12,20 @@
  */
 
 import express, { type Request, type Response } from "express";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDb, ensureInit } from "./db";
 
 export const app = express();
 
-app.use(express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "20mb" }));
+
+// 画像アップロード保存先（開発用）。本番(XServer)は public/api/upload.php が同等処理。
+const UPLOAD_DIR = join(process.cwd(), ".dev-uploads");
+const EXT_MAP: Record<string, string> = {
+  png: "png", jpeg: "jpg", jpg: "jpg", webp: "webp", gif: "gif", "svg+xml": "svg", bmp: "bmp",
+};
 
 // 開発時のクロスオリジン保険（Vercel/Vite proxy では同一オリジンなので通常不要）。
 app.use((_req, res, next) => {
@@ -45,6 +54,33 @@ async function withDb<T>(res: Response, fn: () => Promise<T>): Promise<void> {
 
 app.get("/api/health", (_req: Request, res: Response) => {
   res.json({ ok: true, backend: getDb().kind });
+});
+
+// 静的配信: 保存済み画像（本番は Apache が /api/uploads を直接配信）。
+app.use("/api/uploads", express.static(UPLOAD_DIR));
+
+// 画像アップロード: base64 → ファイル保存 → URL を返す（upload.php と同等）。
+app.post("/api/upload", (req: Request, res: Response) => {
+  const dataUrl = req.body && typeof req.body.dataUrl === "string" ? req.body.dataUrl : "";
+  const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUrl);
+  if (!m) return res.status(400).json({ error: "invalid image data URL" });
+  const ext = EXT_MAP[m[1].toLowerCase()];
+  if (!ext) return res.status(415).json({ error: "unsupported image type" });
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(m[2], "base64");
+  } catch {
+    return res.status(400).json({ error: "base64 decode failed" });
+  }
+  if (bytes.length === 0 || bytes.length > 20 * 1024 * 1024) {
+    return res.status(413).json({ error: "bad size" });
+  }
+  if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
+  const fname = createHash("sha1").update(bytes).digest("hex") + "." + ext;
+  const fpath = join(UPLOAD_DIR, fname);
+  if (!existsSync(fpath)) writeFileSync(fpath, bytes);
+  const url = `${req.protocol}://${req.get("host")}/api/uploads/${fname}`;
+  res.json({ ok: true, url });
 });
 
 app.get("/api/store", (req: Request, res: Response) => {

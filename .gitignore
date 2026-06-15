@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+dist-staff/
 coverage/
 .DS_Store
 *.log
@@ -9,3 +10,12 @@ coverage/
 
 # DB 認証情報（サーバー上に直接作成）
 public/api/config.php
+
+# Local toolchains / generated app packages
+.local-jdk/
+apk/*.apk
+.jdk21/
+
+# uploaded images (runtime only, not in repo)
+.dev-uploads/
+public/api/uploads/
