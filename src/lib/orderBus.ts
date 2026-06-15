@@ -48,6 +48,7 @@ export type BusStore =
   | "warehouse"
   | "stocktake"
   | "repairs"
+  | "purchaseOrders"
   | "users";
 
 /** Every record stored in the bus must at least have an `id` */
@@ -161,6 +162,7 @@ const BUS_STORES: readonly BusStore[] = [
   "warehouse",
   "stocktake",
   "repairs",
+  "purchaseOrders",
   "users",
 ] as const;
 
@@ -204,23 +206,40 @@ function _read<T extends BusRecord = BusRecord>(store: BusStore): T[] {
   }
 }
 
+// 直近に書き込んだ各ストアの直列化文字列（重複通知=無限ループ防止用）。
+// localStorage の読み戻しに依存しないので、容量超過でキャッシュが失敗しても
+// 重複判定が壊れない。
+const _lastSerialized: Partial<Record<BusStore, string>> = {};
+
+// localStorage キャッシュ用に「重い base64（写真・サイン等の data: URL）」を間引く replacer。
+// サーバー(MySQL)が正本なので、再起動後はポーリングで画像を取り直せる。キャッシュは構造データ優先。
+function _slimReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "string" && value.length > 256 && value.startsWith("data:")) {
+    return undefined;
+  }
+  return value;
+}
+
 function _write<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): void {
   const next = JSON.stringify(data);
-  let prev: string | null = null;
-  try {
-    prev = localStorage.getItem(_key(store));
-  } catch {
-    // ignore read error
-  }
+  const changed = _lastSerialized[store] !== next;
+  _lastSerialized[store] = next;
+
+  // 永続化はベストエフォート。容量超過なら重い base64 を除いた軽量版で再試行する。
+  // 失敗しても下の通知は必ず行う（=メモリ上の最新データを UI へ届け、同期を止めない）。
   try {
     localStorage.setItem(_key(store), next);
-  } catch (e) {
-    console.error(`[OrderBus] Failed to write store "${store}" to localStorage.`, e);
-    return;
+  } catch {
+    try {
+      localStorage.setItem(_key(store), JSON.stringify(data, _slimReplacer));
+    } catch (e2) {
+      console.warn(`[OrderBus] localStorage 容量超過のため "${store}" のキャッシュをスキップ（同期は継続）。`, e2);
+    }
   }
+
   // データに変化が無ければ通知・ブロードキャストをスキップする。
   // （購読コールバック内で同じ配列を setAll し直すケースの無限ループを防ぐ）
-  if (prev === next) {
+  if (!changed) {
     return;
   }
   _notify(store, data);
