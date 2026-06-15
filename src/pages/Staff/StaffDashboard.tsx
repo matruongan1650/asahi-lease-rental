@@ -366,8 +366,10 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
         o.status === "返却済み")
   );
 
-  const pendingDlvCount = deliveries.length - doneDlv.length;
-  const pendingRtnCount = recoveries.length - doneRtn.length;
+  // 完了済み(doneDlv/doneRtn)はリストから外れるため、単純な引き算だと
+  // 件数がマイナスになる。実際に残っているタスクを filter で数える。
+  const pendingDlvCount = deliveries.filter((o: any) => !doneDlv.includes(o.id)).length;
+  const pendingRtnCount = recoveries.filter((o: any) => !doneRtn.includes(o.id)).length;
 
   const tabs = [
     { key: "haisou", label: "配送", count: pendingDlvCount },
@@ -855,8 +857,10 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   const overdueVeh = VL.filter(v => (v.days ?? v.inspectionDaysRemaining ?? 0) < 0).length;
   const overdueMnt = ML.filter(m => m.days < 0).length;
 
-  const pendingDlvCount = deliveries.length - doneDlv.length;
-  const pendingRtnCount = recoveries.length - doneRtn.length;
+  // 完了済み(doneDlv/doneRtn)はリストから外れるため、単純な引き算だと
+  // 件数がマイナスになる。実際に残っているタスクを filter で数える。
+  const pendingDlvCount = deliveries.filter((o: any) => !doneDlv.includes(o.id)).length;
+  const pendingRtnCount = recoveries.filter((o: any) => !doneRtn.includes(o.id)).length;
   const totalTasks = deliveries.length + recoveries.length;
   const completedTasks = doneDlv.length + doneRtn.length;
   const staffNotifications = buildStaffNotifications({ deliveries, recoveries, walkin: ml.walkin || [], vehicles: VL, maintenance: ML });
