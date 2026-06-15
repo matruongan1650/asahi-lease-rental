@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
+import { isFullyReturned } from "../utils/orderStatus";
 
 export default function OrderHistory() {
   const { orders } = useOrders();
@@ -17,9 +18,9 @@ export default function OrderHistory() {
     );
 
     if (activeTab === "処理中") {
-      filtered = filtered.filter(o => o.status !== "返却済");
+      filtered = filtered.filter(o => !isFullyReturned(o.status));
     } else {
-      filtered = filtered.filter(o => o.status === "返却済" || o.status === "一部返却");
+      filtered = filtered.filter(o => isFullyReturned(o.status) || o.status === "一部返却");
     }
 
     if (searchQuery.trim()) {

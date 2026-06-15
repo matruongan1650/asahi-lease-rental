@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Modal, Field, TextInput, Row, triggerToast, Btn } from "./AdminUI";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
+import { isFullyReturned, isClosedOrder } from "../utils/orderStatus";
 
 // --- Contract file types & helpers ---
 interface ContractFile {
@@ -1140,10 +1141,10 @@ export default function AdminCustomerManagement() {
                             </td>
                             <td className="p-4 text-right">
                               <span className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1 ${
-                                o.status === "完了" || o.status === "返却済み" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+                                o.status === "完了" || isFullyReturned(o.status) ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
                               }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${
-                                  o.status === "完了" || o.status === "返却済み" ? "bg-emerald-500" : "bg-blue-500"
+                                  o.status === "完了" || isFullyReturned(o.status) ? "bg-emerald-500" : "bg-blue-500"
                                 }`}></span>{" "}
                                 {formatStatusWithReturnRequest(o.status, o.returnRequestType)}
                               </span>
@@ -1218,7 +1219,7 @@ export default function AdminCustomerManagement() {
                 {(() => {
                   // Get orders for this company that have been returned and have inspection data
                   const inspectionOrders = customer.orders.filter(
-                    (o: Order) => o.status === "返却済" || (o.itemIssues && o.itemIssues.length > 0)
+                    (o: Order) => isFullyReturned(o.status) || (o.itemIssues && o.itemIssues.length > 0)
                   );
                   if (inspectionOrders.length === 0) {
                     return (
@@ -1381,7 +1382,7 @@ export default function AdminCustomerManagement() {
                     customer.orders.forEach(o => {
                       const siteKey = o.siteName || o.constructionNumber || o.deliveryLocation || "未登録";
                       const existing = sitesMap.get(siteKey);
-                      const isOrderActive = !["返却済み", "完了", "キャンセル"].includes(o.status);
+                      const isOrderActive = !isClosedOrder(o.status);
 
                       if (existing) {
                         existing.ordersCount += 1;

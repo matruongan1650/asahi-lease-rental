@@ -1,15 +1,22 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
+import { useUser } from "../context/UserContext";
 
 export default function ReturnItems() {
   const navigate = useNavigate();
   const { orderId } = useParams();
   const { orders } = useOrders();
+  const { currentUser } = useUser();
   const [returnType, setReturnType] = useState<"all" | "partial">("all");
   const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
 
-  const order = orders.find(o => o.id === orderId);
+  // アクセス制御: 自分が発注した注文のみ返却操作できる（他社注文の URL 直打ちを防ぐ）。
+  const foundOrder = orders.find(o => o.id === orderId);
+  const order =
+    foundOrder && foundOrder.userId && foundOrder.userId !== currentUser?.id
+      ? undefined
+      : foundOrder;
 
   useEffect(() => {
     if (order) {

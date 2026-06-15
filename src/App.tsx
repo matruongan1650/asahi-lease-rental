@@ -27,6 +27,8 @@ import Profile from "./pages/Profile";
 import PersonalInfo from "./pages/PersonalInfo";
 import RoleSwitcher from "./components/RoleSwitcher";
 import ErrorBoundary from "./components/ErrorBoundary";
+import StaffAuthGate from "./components/staff/StaffAuthGate";
+import AdminAuthGate from "./components/AdminAuthGate";
 import { CartProvider } from "./context/CartContext";
 import { OrderProvider } from "./context/OrderContext";
 import { FeaturedProvider } from "./context/FeaturedContext";
@@ -66,11 +68,11 @@ export default function App() {
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/personal-info" element={<PersonalInfo />} />
               </Route>
-              <Route path="/staff" element={<StaffDashboard />} />
-              <Route path="/staff/vehicle/:id" element={<StaffVehicleDetail />} />
-              <Route path="/staff/:role" element={<StaffDashboard />} />
-              <Route path="/staff/:role/job/:orderId" element={<StaffDashboard />} />
-              <Route path="/admin" element={<AdminDataProvider><AdminDashboard /></AdminDataProvider>} />
+              <Route path="/staff" element={<StaffAuthGate><StaffDashboard /></StaffAuthGate>} />
+              <Route path="/staff/vehicle/:id" element={<StaffAuthGate><StaffVehicleDetail /></StaffAuthGate>} />
+              <Route path="/staff/:role" element={<StaffAuthGate><StaffJobList /></StaffAuthGate>} />
+              <Route path="/staff/:role/job/:orderId" element={<StaffAuthGate><StaffJobDetail /></StaffAuthGate>} />
+              <Route path="/admin" element={<AdminAuthGate><AdminDataProvider><AdminDashboard /></AdminDataProvider></AdminAuthGate>} />
             </Routes>
           </BrowserRouter>
             </CartProvider>

@@ -19,6 +19,124 @@ import {
   Truck,
   Store,
 } from "lucide-react";
+import { isFullyReturned } from "../utils/orderStatus";
+
+type WalkinReturnRecord = {
+  id?: string;
+  orderId?: string;
+  firestoreId?: string;
+  orderNumber?: string;
+  source?: string;
+  returningEverything?: boolean;
+};
+
+function hasPhotoValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function firstPhotoUrl(value: unknown): string {
+  if (Array.isArray(value)) {
+    const first = value.find(Boolean);
+    if (typeof first === "string") return first;
+    if (first && typeof first === "object" && "url" in first) {
+      return String((first as { url?: unknown }).url || "");
+    }
+    return "";
+  }
+  return typeof value === "string" ? value : "";
+}
+
+function getMatchingWalkinReturn(order: Order, walkinReturns: WalkinReturnRecord[]) {
+  return walkinReturns.find((w) => {
+    if (!w) return false;
+    return (
+      w.orderId === order.id ||
+      w.orderId === order.firestoreId ||
+      w.firestoreId === order.firestoreId ||
+      (!!w.orderNumber && w.orderNumber === order.orderNumber)
+    );
+  });
+}
+
+function getRecoveryModeInfo(order: Order, walkinReturns: WalkinReturnRecord[]) {
+  const walkin = getMatchingWalkinReturn(order, walkinReturns);
+  const status = String(order.status || "");
+  const staffStatus = String(order.staffStatus || "");
+  const isPartial =
+    order.returnRequestType === "partial" ||
+    status === "一部返却" ||
+    String(order.orderNumber || "").includes("-R-");
+  const isFull =
+    order.returnRequestType === "full" ||
+    ["返却済", "返却済み", "完了"].includes(status);
+
+  if (walkin?.source === "customer_direct_return") {
+    return {
+      label: `直接持込・${walkin.returningEverything ? "一括返却" : "一部返却"}`,
+      icon: Store,
+      className: "bg-purple-50 text-purple-700",
+    };
+  }
+
+  if (walkin?.source === "field_recovery") {
+    return {
+      label: `現場回収・${walkin.returningEverything === false ? "一部返却" : "一括返却"}`,
+      icon: Truck,
+      className: "bg-blue-50 text-blue-700",
+    };
+  }
+
+  if (isPartial) {
+    return {
+      label: "一部返却",
+      icon: Store,
+      className: "bg-amber-50 text-amber-700",
+    };
+  }
+
+  if (isFull) {
+    return {
+      label: "一括返却",
+      icon: Truck,
+      className: "bg-emerald-50 text-emerald-700",
+    };
+  }
+
+  if (
+    hasPhotoValue(order.collectionPhotos) ||
+    hasPhotoValue(order.collectionPhoto) ||
+    !!order.collectionSignature ||
+    staffStatus.includes("回収") ||
+    ["回収予定", "回収中", "回収完了"].includes(status)
+  ) {
+    return {
+      label: "現場回収",
+      icon: Truck,
+      className: "bg-blue-50 text-blue-700",
+    };
+  }
+
+  if (
+    hasPhotoValue(order.warehousePhotos) ||
+    hasPhotoValue(order.warehousePhoto) ||
+    !!order.warehouseSignature ||
+    order.inspectedByWarehouse ||
+    status === "検品待ち"
+  ) {
+    return {
+      label: status === "検品待ち" ? "持込・検品待ち" : "倉庫検品",
+      icon: Store,
+      className: "bg-slate-100 text-slate-700",
+    };
+  }
+
+  return {
+    label: "未指定",
+    icon: Store,
+    className: "bg-slate-100 text-slate-500",
+  };
+}
 
 export default function AdminFieldReportManagement() {
   const { profile } = useUser();
@@ -32,6 +150,7 @@ export default function AdminFieldReportManagement() {
   // New states for incidents integration
   const { rows: fieldReports } = useAdminCollection("fieldReports");
   const { rows: vendors } = useAdminCollection("vendors");
+  const { rows: walkinReturns } = useAdminCollection("walkinReturns");
   
   const [mainTab, setMainTab] = useState<"verification" | "incidents">("verification");
   const [incidentTab, setIncidentTab] = useState<"all" | "pending" | "processing" | "completed">("pending");
@@ -115,9 +234,9 @@ export default function AdminFieldReportManagement() {
   );
 
   const pendingOrders = rentOrders.filter(
-    (o) => o.status !== "返却済" && o.status !== "新規",
+    (o) => !isFullyReturned(o.status) && o.status !== "新規",
   );
-  const completedOrders = rentOrders.filter((o) => o.status === "返却済");
+  const completedOrders = rentOrders.filter((o) => isFullyReturned(o.status));
 
   const filteredOrders = (
     activeTab === "pending" ? pendingOrders : completedOrders
@@ -243,6 +362,12 @@ export default function AdminFieldReportManagement() {
   // Inspect View
   if (selectedOrder) {
     const rentItems = selectedOrder.items?.filter((i) => i.type === "rent") || [];
+    const recoveryMode = getRecoveryModeInfo(selectedOrder, walkinReturns || []);
+    const RecoveryIcon = recoveryMode.icon;
+    const collectionPhotoUrl =
+      firstPhotoUrl(selectedOrder.collectionPhotos) || firstPhotoUrl(selectedOrder.collectionPhoto);
+    const warehousePhotoUrl =
+      firstPhotoUrl(selectedOrder.warehousePhotos) || firstPhotoUrl(selectedOrder.warehousePhoto);
 
     return (
       <div className="space-y-6 max-w-5xl mx-auto">
@@ -280,6 +405,10 @@ export default function AdminFieldReportManagement() {
                     <span className="bg-white px-2 py-0.5 rounded border border-slate-200">
                       {profile?.lastName} {profile?.firstName}
                     </span>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold ${recoveryMode.className}`}>
+                      <RecoveryIcon size={13} />
+                      {recoveryMode.label}
+                    </span>
                   </p>
                 </div>
                 <button
@@ -303,12 +432,12 @@ export default function AdminFieldReportManagement() {
                     <Truck size={16} className="text-blue-500" />
                     現場回収担当
                   </h3>
-                  {selectedOrder.collectionSignature || selectedOrder.collectionPhoto ? (
+                  {selectedOrder.collectionSignature || collectionPhotoUrl ? (
                     <div className="space-y-4">
-                      {selectedOrder.collectionPhoto && (
+                      {collectionPhotoUrl && (
                         <div>
                           <p className="text-xs font-bold text-slate-500 mb-1">現場写真</p>
-                          <img src={selectedOrder.collectionPhoto} alt="Collection" className="w-full h-32 object-cover rounded-lg border border-slate-200" />
+                          <img src={collectionPhotoUrl} alt="Collection" className="w-full h-32 object-cover rounded-lg border border-slate-200" />
                         </div>
                       )}
                       {selectedOrder.collectionSignature && (
@@ -329,12 +458,12 @@ export default function AdminFieldReportManagement() {
                     <Package size={16} className="text-purple-500" />
                     倉庫検品担当
                   </h3>
-                  {selectedOrder.warehouseSignature || selectedOrder.warehousePhoto ? (
+                  {selectedOrder.warehouseSignature || warehousePhotoUrl ? (
                     <div className="space-y-4">
-                      {selectedOrder.warehousePhoto && (
+                      {warehousePhotoUrl && (
                         <div>
                           <p className="text-xs font-bold text-slate-500 mb-1">検品写真</p>
-                          <img src={selectedOrder.warehousePhoto} alt="Warehouse Check" className="w-full h-32 object-cover rounded-lg border border-slate-200" />
+                          <img src={warehousePhotoUrl} alt="Warehouse Check" className="w-full h-32 object-cover rounded-lg border border-slate-200" />
                         </div>
                       )}
                       {selectedOrder.warehouseSignature && (
@@ -592,7 +721,7 @@ export default function AdminFieldReportManagement() {
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
                   <th className="p-4 font-bold text-xs">伝票番号 / 日付</th>
                   <th className="p-4 font-bold text-xs">顧客 / 現場名</th>
-                  <th className="p-4 font-bold text-xs w-32">回収形態</th>
+                  <th className="p-4 font-bold text-xs w-44">回収形態</th>
                   <th className="p-4 font-bold text-xs text-right pr-6">
                     アクション
                   </th>
@@ -600,7 +729,8 @@ export default function AdminFieldReportManagement() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredOrders.map((o) => {
-                  const isCollect = o.status === "配達中";
+                  const recoveryMode = getRecoveryModeInfo(o, walkinReturns || []);
+                  const RecoveryIcon = recoveryMode.icon;
                   return (
                     <tr
                       key={o.id}
@@ -622,17 +752,10 @@ export default function AdminFieldReportManagement() {
                         </p>
                       </td>
                       <td className="p-4">
-                        {isCollect ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-bold">
-                            <Truck size={12} />
-                            現場回収
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 text-xs font-bold">
-                            <Store size={12} />
-                            持ち込み
-                          </span>
-                        )}
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold whitespace-nowrap ${recoveryMode.className}`}>
+                          <RecoveryIcon size={12} />
+                          {recoveryMode.label}
+                        </span>
                       </td>
                       <td className="p-4 text-right pr-6">
                         {activeTab === "pending" ? (

@@ -1,5 +1,6 @@
 import { type Product, type CartItem, type Order, type MonthlyBreakdown, type InvoiceBlock, type ExtraCost } from "../types";
 import { isVehicleCategory } from "./productUtils";
+import { isFullyReturned } from "./orderStatus";
 
 export interface RentalPeriodDetailed {
   monthStr: string; // e.g. "2026-06"
@@ -191,7 +192,7 @@ export function calculateMonthlyInvoice(order: Order, monthStr: string): { subto
   items.forEach(item => {
     if (item.type === 'buy') {
       // Buy items are billed in the order month
-      const orderMonth = order.date.split('•')[0]?.trim().slice(0, 7) || "";
+      const orderMonth = order.date?.split('•')[0]?.trim().replace(/\//g, "-").slice(0, 7) || "";
       if (orderMonth === monthStr) {
         const itemPrice = (item.buyPrice || 0) * item.quantity;
         subtotal += itemPrice;
@@ -271,7 +272,31 @@ export function recalculateInvoiceBlock(block: InvoiceBlock): InvoiceBlock {
  */
 export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
   if (order.invoiceBlocks && order.invoiceBlocks.length > 0) {
-    return order.invoiceBlocks;
+    return order.invoiceBlocks.map((block) => {
+      const extraCosts = (block.extraCosts || []).map((cost) => ({
+        ...cost,
+        amount: Math.round(Number(cost.amount) || 0),
+        isTaxable: cost.isTaxable !== false,
+      }));
+      const extraTotal = extraCosts.reduce((sum, cost) => sum + cost.amount, 0);
+      const guaranteeFee = Math.round(Number(block.guaranteeFee) || 0);
+      const storedSubtotal = Math.round(Number(block.subtotal) || 0);
+      const baseSubtotal = Math.round(
+        Number(block.baseSubtotal ?? Math.max(0, storedSubtotal - guaranteeFee - extraTotal)) || 0,
+      );
+
+      return recalculateInvoiceBlock({
+        ...block,
+        actualDays: Number(block.actualDays) || 0,
+        chargeableDays: Number(block.chargeableDays) || 0,
+        guaranteeFee,
+        baseSubtotal,
+        subtotal: storedSubtotal,
+        tax: Math.round(Number(block.tax) || 0),
+        total: Math.round(Number(block.total) || 0),
+        extraCosts,
+      });
+    });
   }
 
   // breakdown が無い品目は補完してから月ブロックを構築（¥0 請求書の防止）
@@ -391,7 +416,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
       subtotal: baseSubtotal,
       tax: 0,
       total: 0,
-      status: order.status === "完了" || order.status === "返却済み" ? "paid" : (monthStr >= thisMonthStr ? "accumulating" : "pending"),
+      status: order.status === "完了" || isFullyReturned(order.status) ? "paid" : (monthStr >= thisMonthStr ? "accumulating" : "pending"),
       extraCosts: []
     };
 

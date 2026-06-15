@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
+import { useUser } from "../context/UserContext";
 import { isVehicleCategory } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
 import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../utils/billing";
 import OrderBus from "../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
+import { isFullyReturned } from "../utils/orderStatus";
 
 type CustomerPhoto = {
   src: string;
@@ -74,6 +76,7 @@ export default function OrderDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { orders, updateOrder } = useOrders();
+  const { currentUser } = useUser();
   const [viewingDoc, setViewingDoc] = useState<"納品書" | "請求書" | "回収書" | null>(null);
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
   const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
@@ -90,7 +93,15 @@ export default function OrderDetail() {
   const [newEndDate, setNewEndDate] = useState("");
   const [extendingError, setExtendingError] = useState("");
 
-  const order = orders.find(o => o.id === id);
+  const found = orders.find(o => o.id === id);
+
+  // アクセス制御: 顧客は自分が発注した注文しか開けない（URL 直打ちで他社の注文を覗けないようにする）。
+  // admin / staff は業務上すべて閲覧可。発注者未設定（過去データ）の注文は所有者判定できないため許可する。
+  const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
+  const order =
+    found && found.userId && !isPrivileged && found.userId !== currentUser?.id
+      ? undefined
+      : found;
 
   if (!order) {
     return (
@@ -145,14 +156,14 @@ export default function OrderDetail() {
     // 一部返却の持ち込み品を倉庫が検品中
     activeStep = 3;
     statusColor = "amber";
-  } else if (order.status === "返却済み" || order.status === "一部返却" || order.status === "完了") {
+  } else if (isFullyReturned(order.status) || order.status === "一部返却" || order.status === "完了") {
     activeStep = 4;
     statusColor = "green";
   }
 
-  const isRentalActive = 
-    order.status !== "キャンセル" && 
-    order.status !== "返却済み" && 
+  const isRentalActive =
+    order.status !== "キャンセル" &&
+    !isFullyReturned(order.status) &&
     order.status !== "完了";
 
   const hasRentItems = order.items.some(i => i.type === 'rent');
@@ -335,7 +346,7 @@ export default function OrderDetail() {
               <p className="text-xs text-slate-500 dark:text-slate-400 font-bold mb-1">レンタル期間 (予定)</p>
               <p className="text-sm font-medium">{order.rentalStartDate ? `${order.rentalStartDate.replace(/-/g, "/")} 〜 ${order.rentalEndDate?.replace(/-/g, "/") || ''}` : "指定なし"}</p>
             </div>
-            {(order.status === "返却済" || order.status === "一部返却") && order.actualReturnDate && (
+            {(isFullyReturned(order.status) || order.status === "一部返却") && order.actualReturnDate && (
               <div className="border-t border-dashed border-primary/30 pt-3 animate-pulse">
                 <p className="text-xs text-primary dark:text-blue-400 font-bold mb-1">実際の返却日</p>
                 <p className="text-sm font-bold text-primary dark:text-blue-400">{order.actualReturnDate.replace(/-/g, "/")}</p>
@@ -577,7 +588,7 @@ export default function OrderDetail() {
             </button>
             
             {/* 複数月レンタルでは月ごとの請求書（レンタル中でも各月分を表示できる） */}
-            {(order.status === "返却済" || order.status === "一部返却" || order.status === "完了" || (blocks && blocks.length > 0)) && (
+            {(isFullyReturned(order.status) || order.status === "一部返却" || order.status === "完了" || (blocks && blocks.length > 0)) && (
               <>
                 <button
                   onClick={() => {
@@ -601,7 +612,7 @@ export default function OrderDetail() {
                   <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
                 </button>
                 {/* 回収書は返却後のみ */}
-                {(order.status === "返却済" || order.status === "一部返却" || order.status === "完了") && (
+                {(isFullyReturned(order.status) || order.status === "一部返却" || order.status === "完了") && (
                 <button
                   onClick={() => setViewingDoc("回収書")}
                   className="flex items-center justify-between p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-primary dark:hover:border-primary/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all font-medium text-sm text-slate-700 dark:text-slate-200"
