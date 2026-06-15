@@ -1,10 +1,9 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
+import CustomerNotificationBell from "../components/CustomerNotificationBell";
 
 export default function Profile() {
   const { profile, logout } = useUser();
-  const [showNotifications, setShowNotifications] = useState(false);
 
   const handleLogout = () => {
     if (window.confirm("ログアウトしますか？")) {
@@ -18,27 +17,8 @@ export default function Profile() {
         <div className="flex items-center justify-between px-4 h-14">
           <div className="w-10"></div> 
           <h1 className="text-lg font-bold text-slate-900 dark:text-white">マイページ</h1>
-          <button onClick={() => setShowNotifications(!showNotifications)} className="relative p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group">
-            <span className="material-symbols-outlined text-slate-700 dark:text-slate-200 group-active:scale-95 transition-transform">notifications</span>
-            <span className="absolute top-2 right-2 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-background-light dark:border-background-dark animate-pulse"></span>
-          </button>
+          <CustomerNotificationBell />
         </div>
-        
-        {showNotifications && (
-          <div className="absolute top-14 right-4 w-72 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 p-4 z-50 animate-in fade-in slide-in-from-top-2">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-2 pb-2 border-b border-slate-100 dark:border-slate-700">お知らせ</h3>
-            <div className="flex flex-col gap-3">
-              <div className="text-sm">
-                <p className="text-primary font-bold text-xs mb-1">新着</p>
-                <p className="text-slate-700 dark:text-slate-300">新しい保安車両が入荷しました。</p>
-              </div>
-              <div className="text-sm">
-                <p className="text-slate-400 font-bold text-xs mb-1">システム</p>
-                <p className="text-slate-700 dark:text-slate-300">メンテナンス計画のお知らせ</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <main className="flex flex-col w-full h-auto px-4 pt-6">
@@ -71,12 +51,6 @@ export default function Profile() {
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-5">
           <ProfileMenuLink icon="settings" iconColor="slate" title="設定" />
           <ProfileMenuLink icon="help" iconColor="emerald" title="ヘルプ" />
-        </div>
-
-        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-5 border-l-4 border-l-purple-500">
-          <div className="p-3 text-xs font-bold text-slate-500 bg-slate-50 border-b border-slate-100 uppercase tracking-widest">テスト用 (スタッフ・管理者)</div>
-          <ProfileMenuLink icon="admin_panel_settings" iconColor="red" title="管理者ダッシュボード" subtitle="Admin Dashboard" to="/admin" />
-          <ProfileMenuLink icon="badge" iconColor="purple" title="スタッフポータル" subtitle="Staff Portal" to="/staff" />
         </div>
 
         <button onClick={handleLogout} className="w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center justify-center gap-2 mb-8 group active:scale-[0.98]">

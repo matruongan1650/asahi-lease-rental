@@ -25,7 +25,6 @@ import ReturnShipping from "./pages/ReturnShipping";
 import ReturnConfirmation from "./pages/ReturnConfirmation";
 import Profile from "./pages/Profile";
 import PersonalInfo from "./pages/PersonalInfo";
-import RoleSwitcher from "./components/RoleSwitcher";
 import ErrorBoundary from "./components/ErrorBoundary";
 import StaffAuthGate from "./components/staff/StaffAuthGate";
 import AdminAuthGate from "./components/AdminAuthGate";
@@ -48,7 +47,6 @@ export default function App() {
           <OrderProvider>
             <CartProvider>
             <BrowserRouter>
-              <RoleSwitcher />
               <Routes>
                 <Route element={<Layout />}>
                 <Route path="/" element={<Home />} />
