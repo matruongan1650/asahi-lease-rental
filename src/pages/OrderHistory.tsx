@@ -4,6 +4,7 @@ import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned } from "../utils/orderStatus";
+import { byOrderDateDesc } from "../utils/orderSort";
 
 export default function OrderHistory() {
   const { orders } = useOrders();
@@ -31,7 +32,8 @@ export default function OrderHistory() {
       );
     }
 
-    return filtered;
+    // 新しい注文を上に表示（管理サイトと一貫）。
+    return [...filtered].sort(byOrderDateDesc);
   }, [orders, currentUser, activeTab, searchQuery]);
 
   const getOrderDisplayProps = (order: Order) => {

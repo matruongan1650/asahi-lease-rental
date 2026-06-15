@@ -218,7 +218,12 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         status: "未着手",
         rawOrder: o,
       }))
-  ];
+  ].sort((a, b) => {
+    // 納品希望日が近い順（未定は最後）。急ぎの配送を上に表示。
+    const ta = a.rawOrder?.deliveryDate ? Date.parse(a.rawOrder.deliveryDate) : NaN;
+    const tb = b.rawOrder?.deliveryDate ? Date.parse(b.rawOrder.deliveryDate) : NaN;
+    return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
+  });
 
   // Derive Recoveries
   // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
@@ -270,7 +275,12 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         }),
         rawOrder: o,
       }))
-  ];
+  ].sort((a, b) => {
+    // 返却期限が近い順（未定は最後）。期限切れ・間近の回収を上に表示。
+    const ta = a.rawOrder?.rentalEndDate ? Date.parse(a.rawOrder.rentalEndDate) : NaN;
+    const tb = b.rawOrder?.rentalEndDate ? Date.parse(b.rawOrder.rentalEndDate) : NaN;
+    return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
+  });
 
   const isVehicle = (p: any) => {
     if (!p) return false;

@@ -24,6 +24,7 @@ import React, { createContext, useContext, useEffect, useRef, type ReactNode } f
 import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
 import { apiList, apiSync, apiUpsert, apiRemove } from "./backendSync";
 import { externalizeImages } from "./imageUpload";
+import { byOrderDateDesc } from "../utils/orderSort";
 
 
 // ---------------------------------------------------------------------------
@@ -670,6 +671,9 @@ export function deriveAdminData(rawOrders: BusRecord[]): AdminDerivedData {
       assignedStaff: (o.assignedStaff as string) || "",
     };
   });
+
+  // 新しい注文が先（顧客サイトと一貫）。rentals/sales/recentTx すべてこの順を継承する。
+  orders.sort(byOrderDateDesc);
 
   const rentals = orders.filter((o) =>
     o.items.some((i) => i.type === "rent")
