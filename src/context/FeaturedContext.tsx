@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useProducts } from "./ProductContext";
+import { safeSetJSON } from "../utils/safeStorage";
 
 interface FeaturedContextType {
   featuredIds: string[];
@@ -36,7 +37,7 @@ export const FeaturedProvider = ({ children }: { children: ReactNode }) => {
     if (isLoaded && featuredIds.length === 0 && !localStorage.getItem("featured_products_v1") && (products || []).length > 0) {
       const defaults = (products || []).filter(p => p?.featured).map(p => p?.id);
       setFeaturedIds(defaults);
-      localStorage.setItem("featured_products_v1", JSON.stringify(defaults));
+      safeSetJSON("featured_products_v1", defaults);
     }
   }, [isLoaded, products, featuredIds]);
 
@@ -48,7 +49,7 @@ export const FeaturedProvider = ({ children }: { children: ReactNode }) => {
       } else {
         next = [...prev, id];
       }
-      localStorage.setItem("featured_products_v1", JSON.stringify(next));
+      safeSetJSON("featured_products_v1", next);
       return next;
     });
   };

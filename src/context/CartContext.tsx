@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { calculateRentalPrice } from "../utils/billing";
 import { useProducts } from "./ProductContext";
 import { isVehicleCategory } from '../utils/productUtils';
+import { safeSetJSON } from "../utils/safeStorage";
 
 export interface CartItem {
   id: string;
@@ -119,7 +120,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const clearCart = useCallback(() => setItems([]), []);
 
   React.useEffect(() => {
-    localStorage.setItem("cart_v3", JSON.stringify(items));
+    safeSetJSON("cart_v3", items);
   }, [items]);
 
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);

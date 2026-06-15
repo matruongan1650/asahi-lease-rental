@@ -66,7 +66,24 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem("order_history_v3", JSON.stringify(orders));
+    // localStorage への保存はベストエフォート。サイン・写真の base64 で容量超過すると
+    // setItem が例外を投げ、未捕捉だと画面全体がクラッシュするため必ず握りつぶす。
+    try {
+      localStorage.setItem("order_history_v3", JSON.stringify(orders));
+    } catch {
+      // 容量超過時は重い base64（data: URL）を除いた軽量版で再試行。
+      // サーバー(MySQL)が正本なので、画像は次回ポーリングで取り直せる。
+      try {
+        localStorage.setItem(
+          "order_history_v3",
+          JSON.stringify(orders, (_k, v) =>
+            typeof v === "string" && v.length > 256 && v.startsWith("data:") ? undefined : v,
+          ),
+        );
+      } catch {
+        // それでも入らなければキャッシュは諦める（メモリ上の orders は保持され表示は継続）。
+      }
+    }
   }, [orders]);
 
   useEffect(() => {

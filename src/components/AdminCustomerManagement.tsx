@@ -25,6 +25,7 @@ import {
 import { Modal, Field, TextInput, Row, triggerToast, Btn } from "./AdminUI";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned, isClosedOrder } from "../utils/orderStatus";
+import { safeSetJSON } from "../utils/safeStorage";
 
 // --- Contract file types & helpers ---
 interface ContractFile {
@@ -45,7 +46,7 @@ function loadContracts(companyCode: string): ContractFile[] {
   } catch { return []; }
 }
 function saveContracts(companyCode: string, files: ContractFile[]) {
-  localStorage.setItem(getContractsKey(companyCode), JSON.stringify(files));
+  safeSetJSON(getContractsKey(companyCode), files);
 }
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
