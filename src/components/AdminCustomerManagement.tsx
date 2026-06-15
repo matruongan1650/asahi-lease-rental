@@ -250,8 +250,10 @@ export default function AdminCustomerManagement() {
       compUsers.find((u) => u.role === "customer") || compUsers[0];
     const code = `C-100${idx + 1}`;
 
-    // Compute stats from orders where personName belongs to this company or companyName matches
+    // Compute stats from orders. 第一に userId で確実に紐付け（会社名の表記揺れ・編集に強い）、
+    // 無い旧データは会社名／担当者名でフォールバック照合する。
     const companyOrders = orders.filter((o) =>
+      compUsers.some((u) => u.id && (o as any).userId && (o as any).userId === u.id) ||
       (o.companyName && o.companyName.trim() === companyName.trim()) ||
       compUsers.some(
         (u) =>

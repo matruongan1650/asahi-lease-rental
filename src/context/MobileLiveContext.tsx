@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from "react";
 import OrderBus from "../lib/orderBus";
-import { patchOrder } from "../lib/firebase";
 import { getProductQrCode } from "../utils/productQr";
 
 // ---------------------------------------------------------------------------
@@ -291,14 +290,15 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     // 保安車両: 貸出時の走行距離・車両状態の記録（満タンで貸出）
     if (extra && extra.vehicleCheckout) updates.vehicleCheckout = extra.vehicleCheckout;
     OrderBus.patch("orders", id, updates);
-    patchOrder(id, updates).catch(err => console.warn("Failed to sync to firebase:", err));
 
     // Decrement stock and add stock out move
     const ordersList = OrderBus.getAll<any>("orders");
     const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
     if (targetOrder && targetOrder.items) {
       targetOrder.items.forEach((item: any) => {
-        const prod = products.find(p => p && p.name === item.name);
+        // 商品の特定は id を優先（管理側で商品名を変更しても在庫調整が外れないように）。
+        // 名前一致は id 未設定の旧データ向けフォールバック。回収側（liveRecoveries）と同じ規則。
+        const prod = products.find(p => p && (p.id === item.id || p.name === item.name));
         const qty = item.quantity || 1;
         if (prod) {
           adjustStock(prod.id, -qty);
@@ -324,7 +324,6 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (signature) updates.collectionSignature = signature;
     if (photos && photos.length > 0) updates.collectionPhotos = photos;
     OrderBus.patch("orders", id, updates);
-    patchOrder(id, updates).catch(err => console.warn("Failed to sync to firebase:", err));
 
     // 倉庫の最終検品キューへ登録（stage: "recheck"）
     if (targetOrder) {
