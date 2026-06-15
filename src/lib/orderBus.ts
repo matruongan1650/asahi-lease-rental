@@ -230,6 +230,9 @@ function _write<T extends BusRecord = BusRecord>(store: BusStore, data: T[]): vo
   try {
     localStorage.setItem(_key(store), next);
   } catch {
+    // フル書き込みが失敗した時点でキャッシュは不完全（画像が間引かれる or 書けない）。
+    // 次回起動時にサーバーからフル再同期して画像を復元するためフラグを立てる。
+    try { localStorage.setItem(_SLIM_KEY, "1"); } catch { /* ignore */ }
     try {
       localStorage.setItem(_key(store), JSON.stringify(data, _slimReplacer));
     } catch (e2) {
@@ -311,6 +314,10 @@ let _firstPoll = false;
 let _lastRev = 0;
 const _REV_KEY = "asahi._rev";
 const _SYNCED_KEY = "asahi._synced_v1";
+// 容量超過でローカルキャッシュから base64（写真・サイン）を間引いた場合に立てるフラグ。
+// 次回起動時、増分同期では間引かれた画像が戻らない（サーバーの rev は進んでいないため）ので、
+// このフラグがあれば rev=0 でフル再同期し、サーバーから完全なレコード（画像つき）を取り直す。
+const _SLIM_KEY = "asahi._cache_slimmed_v1";
 
 function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; deleted: boolean; data: BusRecord | null }>): void {
   const cur = _read(store);
@@ -396,8 +403,17 @@ function _startApiPoller(): void {
   _apiPollerStarted = true;
   let established = false;
   try { established = localStorage.getItem(_SYNCED_KEY) === "1"; } catch { /* ignore */ }
-  if (established) {
+  let cacheSlimmed = false;
+  try { cacheSlimmed = localStorage.getItem(_SLIM_KEY) === "1"; } catch { /* ignore */ }
+
+  if (established && !cacheSlimmed) {
     try { _lastRev = Number(localStorage.getItem(_REV_KEY) || "0") || 0; } catch { _lastRev = 0; }
+    _firstPoll = false;
+  } else if (established && cacheSlimmed) {
+    // 前回、容量超過でキャッシュから画像/サインを間引いている。
+    // 増分同期（保存済み rev 以降）では戻らないので、rev=0 でフル再同期し
+    // サーバーから完全なレコード（画像つき）を取り直す。
+    _lastRev = 0;
     _firstPoll = false;
   } else {
     _lastRev = 0; // 初回はフル同期（since=0）でサーバー全件を取得しローカルとマージ
