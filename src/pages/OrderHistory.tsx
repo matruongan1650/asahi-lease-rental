@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
@@ -11,6 +11,10 @@ export default function OrderHistory() {
   const { currentUser } = useUser();
   const [activeTab, setActiveTab] = useState<"処理中" | "履歴">("処理中");
   const [searchQuery, setSearchQuery] = useState("");
+  // 注文が多い場合に一度に大量の DOM を描画して重くなるのを防ぐ（段階表示）。
+  const PAGE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE);
+  useEffect(() => { setVisibleCount(PAGE); }, [activeTab, searchQuery]);
 
   const filteredOrders = useMemo(() => {
     // 注文履歴はアカウントごとに分離（同じ会社の別ユーザーの注文は表示しない）。
@@ -127,7 +131,7 @@ export default function OrderHistory() {
             注文履歴がありません。
           </div>
         ) : (
-          filteredOrders.map((order: Order) => {
+          filteredOrders.slice(0, visibleCount).map((order: Order) => {
             const firstItem = order.items[0];
             const displayProps = getOrderDisplayProps(order);
             return (
@@ -152,12 +156,23 @@ export default function OrderHistory() {
           })
         )}
 
-        <div className="flex justify-center py-6 text-gray-400">
-          <span className="text-xs flex items-center gap-1">
-            <span className="material-symbols-outlined text-sm">check_circle</span>
-            すべての{activeTab}の注文が表示されています
-          </span>
-        </div>
+        {filteredOrders.length > visibleCount ? (
+          <div className="flex justify-center py-4">
+            <button
+              onClick={() => setVisibleCount((c) => c + PAGE)}
+              className="px-5 py-2.5 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold text-primary shadow-sm active:scale-95 transition"
+            >
+              もっと見る（残り {filteredOrders.length - visibleCount} 件）
+            </button>
+          </div>
+        ) : filteredOrders.length > 0 ? (
+          <div className="flex justify-center py-6 text-gray-400">
+            <span className="text-xs flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              すべての{activeTab}の注文が表示されています
+            </span>
+          </div>
+        ) : null}
       </div>
     </>
   );

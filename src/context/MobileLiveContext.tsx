@@ -198,7 +198,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   // 返却済・検品待ち・一部返却・配送済みの注文は「これから配送する」対象ではないため除外する
   // （-R 返却分注文などが staffStatus 未設定のまま配送予定に出る「幽霊タスク」を防ぐ）。
   const DELIVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "一部返却", "検品待ち", "配送済み"];
-  const liveDeliveries = [
+  // 注文が多いと毎レンダーでの再計算が重い。入力（rawOrders）が変わった時だけ再計算する。
+  const liveDeliveries = useMemo(() => [
     ...rawOrders
       .filter(o => o.status && !DELIVERY_EXCLUDED_STATUS.includes(o.status) && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
       .map(o => ({
@@ -223,14 +224,14 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const ta = a.rawOrder?.deliveryDate ? Date.parse(a.rawOrder.deliveryDate) : NaN;
     const tb = b.rawOrder?.deliveryDate ? Date.parse(b.rawOrder.deliveryDate) : NaN;
     return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
-  });
+  }), [rawOrders]);
 
   // Derive Recoveries
   // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   // 返却済・検品待ち・完了などの注文や、未返却のレンタル品が残っていない注文は
   // 回収対象ではないため除外（-R 返却分注文が回収予定に出る「幽霊タスク」を防ぐ）。
   const RECOVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "検品待ち"];
-  const liveRecoveries = [
+  const liveRecoveries = useMemo(() => [
     ...rawOrders
       .filter(o => {
         if (!o.rentalEndDate) return false;
@@ -280,7 +281,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const ta = a.rawOrder?.rentalEndDate ? Date.parse(a.rawOrder.rentalEndDate) : NaN;
     const tb = b.rawOrder?.rentalEndDate ? Date.parse(b.rawOrder.rentalEndDate) : NaN;
     return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
-  });
+  }), [rawOrders, products]);
 
   const isVehicle = (p: any) => {
     if (!p) return false;
@@ -428,10 +429,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     reports.forEach(r => OrderBus.push("fieldReports", { ...r, status: "未対応" }));
   };
 
-  const stockMoves = [
+  const stockMoves = useMemo(() => [
     ...stockInRows.map(r => ({ id: r.id, type: "入庫", item: r.item, qty: r.qty, time: (r.date || "").slice(-5), ref: r.src || r.type || "", icon: r.icon || "boxIn", seq: r.seq || 0 })),
     ...stockOutRows.map(r => ({ id: r.id, type: "出庫", item: r.item, qty: r.qty, time: (r.date || "").slice(-5), ref: r.dst || r.type || "", icon: r.icon || "boxOut", seq: r.seq || 0 })),
-  ].sort((a, b) => (b.seq || 0) - (a.seq || 0));
+  ].sort((a, b) => (b.seq || 0) - (a.seq || 0)), [stockInRows, stockOutRows]);
 
   return (
     <MobileLiveContext.Provider value={{

@@ -1,635 +1,277 @@
-import React, { useState, useMemo } from "react";
-import {
-  Panel,
-  Btn,
-  Table,
-  Badge,
-  KPI,
-  Tabs,
-  triggerToast
-} from "../../components/AdminUI";
-import AdminDocDrawer from "../../components/AdminDocDrawer";
-import DocumentViewer from "../../components/DocumentViewer";
+import React, { useMemo, useState, useEffect } from "react";
+import { Badge, Btn, triggerToast } from "../../components/AdminUI";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
+import DocumentViewer from "../../components/DocumentViewer";
 import { useAdminOrders } from "../../context/AdminDataContext";
-import B2BInvoiceViewer from "../../components/B2BInvoiceViewer";
-import AdminRentalInvoiceSection from "../../components/AdminRentalInvoiceSection";
-import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 
-export default function AdminRental() {
-  const [tab, setTab] = useState("contract");
-  const [drawer, setDrawer] = useState<{ kind: "rental-contract" | "rental-invoice" | "rental-delivery" | null; customer?: string } | null>(null);
-  const [viewingDoc, setViewingDoc] = useState<"納品書" | "請求書" | "回収書" | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  const [viewingOrderDrawer, setViewingOrderDrawer] = useState<any>(null);
-  const [viewingBlockId, setViewingBlockId] = useState<string | null>(null);
-  const [showInvoiceSelector, setShowInvoiceSelector] = useState(false);
-  
-  // Workspace split view state
-  const [activeWorkspaceOrder, setActiveWorkspaceOrder] = useState<any>(null);
+type RentalQueue = "new" | "arranged" | "active" | "closed";
 
-  // B2B Aggregation states
-  const [selectedCompany, setSelectedCompany] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState("");
-  const [b2bOpen, setB2bOpen] = useState(false);
-  const [b2bType, setB2bType] = useState<"summary" | "detailed">("summary");
+function orderKey(order: any) {
+  return order?.firestoreId || order?.id || order?.orderNumber;
+}
 
-  const liveOrders = useAdminOrders();
+function normalizeText(value: any) {
+  return String(value || "").toLowerCase();
+}
 
-  const getTodayStr = () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
+function queueFor(status: string): RentalQueue {
+  if (["処理中", "注文確認中", "未割当"].includes(status)) return "new";
+  if (["確認済み", "配送予定", "準備中", "配送中", "割当済み"].includes(status)) return "arranged";
+  if (["進行中", "レンタル中", "配送済み"].includes(status)) return "active";
+  return "closed";
+}
 
-  // Rental search & filter states
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [companyFilter, setCompanyFilter] = useState("");
-  // 既定は「全期間」: 返却済み・一部返却など過去の注文日の取引も含めて表示する。
-  // （注文日付での絞り込みは 本日 / 今月 / 注文日（開始/終了）で行える）
-  const [startDateFilter, setStartDateFilter] = useState("");
-  const [endDateFilter, setEndDateFilter] = useState("");
-
-  // Dynamically compute unique statuses and companies for the filter dropdowns from liveOrders.rentals
-  const rentalStatuses = useMemo(() => {
-    const statuses = new Set<string>();
-    liveOrders.rentals.forEach((r: any) => {
-      if (r.status) statuses.add(r.status);
-    });
-    return Array.from(statuses);
-  }, [liveOrders.rentals]);
-
-  const rentalCompanies = useMemo(() => {
-    const companies = new Set<string>();
-    liveOrders.rentals.forEach((r: any) => {
-      if (r.customer) companies.add(r.customer);
-    });
-    return Array.from(companies);
-  }, [liveOrders.rentals]);
-
-  // Apply filters to liveOrders.rentals
-  const filteredRentals = useMemo(() => {
-    return liveOrders.rentals.filter((r: any) => {
-      // 1. Text Search
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        const idMatch = (r.id || "").toLowerCase().includes(query);
-        const custMatch = (r.customer || "").toLowerCase().includes(query);
-        const siteMatch = (r.site || "").toLowerCase().includes(query);
-        if (!idMatch && !custMatch && !siteMatch) return false;
-      }
-      // 2. Status Filter
-      if (statusFilter && r.status !== statusFilter) return false;
-      // 3. Company Filter
-      if (companyFilter && r.customer !== companyFilter) return false;
-      // 4. 注文日付で絞り込み（注文日の年月日で比較）
-      if (startDateFilter || endDateFilter) {
-        if (!r.date) return false;
-        // r.date 例: "2026/6/9 • 10:00"（ゼロ埋めされていない）。
-        // input[type=date] は "2026-06-09"（ゼロ埋め）なので、比較前に ISO へ正規化する。
-        const datePart = (r.date.split(" • ")[0] || "").trim();
-        const m = datePart.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-        if (!m) return false;
-        const iso = `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-        if (startDateFilter && iso < startDateFilter) return false;
-        if (endDateFilter && iso > endDateFilter) return false;
-      }
-      return true;
-    });
-  }, [liveOrders.rentals, searchQuery, statusFilter, companyFilter, startDateFilter, endDateFilter]);
-
-  const uniqueCompanies = useMemo(() => {
-    const list = liveOrders.orders
-      .map((o: any) => o.companyName)
-      .filter(Boolean)
-      .map((c: string) => c.trim());
-    return Array.from(new Set(list)) as string[];
-  }, [liveOrders.orders]);
-
-  const uniqueMonths = useMemo(() => {
-    const monthsSet = new Set<string>();
-    liveOrders.orders.forEach((o: any) => {
-      const blocks = getOrGenerateInvoiceBlocks(o);
-      blocks.forEach((b) => monthsSet.add(b.monthPeriod));
-    });
-    return Array.from(monthsSet).sort().reverse(); // Show newest first
-  }, [liveOrders.orders]);
-
-  const cols = [
-    {
-      h: "契約番号 / 注文日時",
-      cell: (r: any) => (
-        <div>
-          <div className="font-mono text-blue-700 font-bold">{r.id}</div>
-          <div className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 font-mono bg-slate-100 border border-slate-200/60 font-medium">
-            {r.date || "—"}
-          </div>
-        </div>
-      )
-    },
-    {
-      h: "顧客 / 現場",
-      wrap: true,
-      cell: (r: any) => (
-        <div>
-          <div className="font-bold text-slate-800">{r.customer}</div>
-          <div className="text-[10px] text-slate-400 mt-0.5">{r.site}</div>
-        </div>
-      )
-    },
-    {
-      h: "期間",
-      cell: (r: any) => <span className="font-mono text-slate-500 text-xs">{r.start}〜{r.end}</span>
-    },
-    {
-      h: "品目",
-      align: "right" as const,
-      cell: (r: any) => <span className="font-mono text-slate-700 font-semibold">{r.items}</span>
-    },
-    {
-      h: "金額",
-      align: "right" as const,
-      cell: (r: any) => <span className="font-mono font-bold text-slate-800">¥{(r.amount || 0).toLocaleString()}</span>
-    },
-    {
-      h: "状態",
-      cell: (r: any) => (
-        <Badge tone={r.status === "処理中" ? "warning" : "default"}>
-          {formatStatusWithReturnRequest(r.status, r.returnRequestType)}
-        </Badge>
-      )
-    },
-    {
-      h: "アクション",
-      align: "right" as const,
-      cell: (r: any) => (
-        <div className="inline-flex gap-1.5 items-center" onClick={e => e.stopPropagation()}>
-          {r.status === "処理中" && (
-            <button
-              onClick={() => {
-                liveOrders.patchOrder(r.firestoreId, { status: "確認済み", staffStatus: "配送予定" });
-                triggerToast(`${r.id} を手配・スタッフに送信しました`, "ok");
-              }}
-              className="inline-flex items-center gap-1 h-[24px] px-2.5 rounded border border-blue-600 bg-blue-600 text-[10.5px] font-bold text-white shadow-sm hover:bg-blue-700 cursor-pointer active:scale-95 transition-transform"
-            >
-              <span className="material-symbols-outlined text-[14px]">send</span>
-              手配する
-            </button>
-          )}
-          <button
-            onClick={() => {
-              const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-              if (fullOrder) {
-                setSelectedOrder(fullOrder);
-                setViewingDoc("納品書");
-              } else triggerToast("データが見つかりません", "err");
-            }}
-            className="inline-flex items-center gap-1 h-[24px] px-2 rounded-sm border border-slate-200 bg-white hover:bg-slate-50 text-[10.5px] font-bold text-slate-500 cursor-pointer active:scale-95 transition-transform"
-          >
-            納品書
-          </button>
-          <button
-            onClick={() => {
-              const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-              if (fullOrder) {
-                setSelectedOrder(fullOrder);
-                const blocks = getOrGenerateInvoiceBlocks(fullOrder);
-                if (blocks && blocks.length > 1) {
-                  setShowInvoiceSelector(true);
-                } else if (blocks && blocks.length === 1) {
-                  setViewingBlockId(blocks[0].id);
-                  setViewingDoc("請求書");
-                } else {
-                  setViewingDoc("請求書");
-                }
-              } else triggerToast("データが見つかりません", "err");
-            }}
-            className="inline-flex items-center gap-1 h-[24px] px-2 rounded-sm border border-slate-200 bg-white hover:bg-slate-50 text-[10.5px] font-bold text-slate-500 cursor-pointer active:scale-95 transition-transform"
-          >
-            請求書
-          </button>
-        </div>
-      )
-    }
-  ];
-
-  const tabs = [
-    { id: "contract", label: "レンタル契約" },
-    { id: "invoice", label: "レンタル請求書" },
-    { id: "delivery", label: "レンタル納品書" }
-  ];
-
-  const getNewKind = () => {
-    if (tab === "invoice") return "rental-invoice";
-    if (tab === "delivery") return "rental-delivery";
-    return "rental-contract";
-  };
-
-  const newKind = getNewKind();
-  const ctaText = tab === "invoice" ? "請求書を発行" : tab === "delivery" ? "納品書を作成" : "契約を作成";
+function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: string; value: string | number; tone?: "blue" | "emerald" | "amber" | "rose" }) {
+  const toneClass = {
+    blue: "bg-blue-50 text-blue-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+    amber: "bg-amber-50 text-amber-700",
+    rose: "bg-rose-50 text-rose-700",
+  }[tone];
 
   return (
-    <div className="space-y-6">
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <KPI
-          label="進行中の契約"
-          value={liveOrders.rentals.filter((r: any) => r.status === "進行中").length + " 件"}
-          icon="autorenew"
-          accent="var(--brand-accent)"
-        />
-        <KPI
-          label="今月のレンタル売上"
-          value={"¥" + (liveOrders.kpis.rentalSales || 0).toLocaleString()}
-          icon="attach_money"
-        />
-        <KPI
-          label="延滞"
-          value={liveOrders.rentals.filter((r: any) => r.status === "延滞").length + " 件"}
-          icon="error"
-          accent="var(--color-danger)"
-        />
-        <KPI
-          label="未請求"
-          value="2 件"
-          icon="mail"
-          accent="var(--color-warning)"
-        />
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_4px_18px_rgba(15,23,42,0.04)]">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-black text-slate-500">{label}</div>
+          <div className="mt-1 text-[26px] font-black text-slate-900 tracking-tight">{value}</div>
+        </div>
+        <span className={`material-symbols-outlined flex h-10 w-10 items-center justify-center rounded-lg text-[20px] ${toneClass}`}>
+          {icon}
+        </span>
       </div>
+    </div>
+  );
+}
 
-      {/* Sub Tabs */}
-      <Tabs
-        tabs={tabs}
-        active={tab}
-        onChange={(next) => {
-          setViewingDoc(null);
-          setShowInvoiceSelector(false);
-          setB2bOpen(false);
-          setViewingBlockId(null);
-          setSearchQuery("");
-          setStatusFilter("");
-          setCompanyFilter("");
-          setStartDateFilter(getTodayStr());
-          setEndDateFilter(getTodayStr());
-          setActiveWorkspaceOrder(null);
-          setTab(next);
-        }}
-      />
+export default function AdminRental() {
+  const liveOrders = useAdminOrders();
+  const [queue, setQueue] = useState<RentalQueue>("new");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [viewingDocOrder, setViewingDocOrder] = useState<any>(null);
 
-      {/* B2B Aggregation Form */}
-      {tab === "invoice" && (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5 flex flex-col md:flex-row gap-4 items-end bg-gradient-to-r from-blue-50/20 to-indigo-50/20">
-          <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold text-slate-500 block mb-1">対象企業 (B2B Client Company)</label>
-              <select
-                value={selectedCompany}
-                onChange={(e) => setSelectedCompany(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg p-2.5 outline-none focus:border-blue-500 font-semibold text-sm cursor-pointer"
-              >
-                <option value="">-- 企業を選択 --</option>
-                {uniqueCompanies.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-slate-500 block mb-1">対象請求月 (Billing Period)</label>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg p-2.5 outline-none focus:border-blue-500 font-mono text-sm cursor-pointer"
-              >
-                <option value="">-- 対象月を選択 --</option>
-                {uniqueMonths.map((m) => (
-                  <option key={m} value={m}>{m}分</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex gap-2 flex-shrink-0">
-            <button
-              onClick={() => {
-                if (!selectedCompany || !selectedMonth) {
-                  triggerToast("企業と対象月を選択してください", "warn");
-                  return;
-                }
-                setB2bType("summary");
-                setB2bOpen(true);
-              }}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">receipt_long</span>
-              総合請求書を出力
-            </button>
-            <button
-              onClick={() => {
-                if (!selectedCompany || !selectedMonth) {
-                  triggerToast("企業と対象月を選択してください", "warn");
-                  return;
-                }
-                setB2bType("detailed");
-                setB2bOpen(true);
-              }}
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">list_alt</span>
-              内訳請求書を出力
-            </button>
+  const rentals = liveOrders.rentals || [];
+
+  const queueCounts = useMemo(() => {
+    return rentals.reduce((acc: Record<RentalQueue, number>, r: any) => {
+      acc[queueFor(String(r.status || ""))] += 1;
+      return acc;
+    }, { new: 0, arranged: 0, active: 0, closed: 0 });
+  }, [rentals]);
+
+  const filteredRentals = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return rentals.filter((r: any) => {
+      if (queueFor(String(r.status || "")) !== queue) return false;
+      if (!q) return true;
+      return [r.id, r.customer, r.site, r.status].some((v) => normalizeText(v).includes(q));
+    });
+  }, [rentals, queue, searchQuery]);
+
+  // 注文が多い時に全行を一度に描画して重くなるのを防ぐ（段階表示）。
+  const PAGE = 50;
+  const [visibleCount, setVisibleCount] = useState(PAGE);
+  useEffect(() => { setVisibleCount(PAGE); }, [queue, searchQuery]);
+
+  const fullOrderFor = (row: any) =>
+    liveOrders.orders.find((o: any) => o.firestoreId === row.firestoreId || o.id === row.firestoreId || o.orderNumber === row.id || o.id === row.id);
+
+  const handleAccept = (row: any) => {
+    const fullOrder = fullOrderFor(row);
+    const id = orderKey(fullOrder) || row.firestoreId;
+    if (!id) {
+      triggerToast("注文データが見つかりません", "err");
+      return;
+    }
+    liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "配送予定" });
+    triggerToast(`${row.id} を受注確定し、配送手配へ送りました`, "ok");
+  };
+
+  const handleMoveToActive = (row: any) => {
+    const fullOrder = fullOrderFor(row);
+    const id = orderKey(fullOrder) || row.firestoreId;
+    if (!id) {
+      triggerToast("注文データが見つかりません", "err");
+      return;
+    }
+    liveOrders.patchOrder(id, { status: "レンタル中", staffStatus: "完了" });
+    triggerToast(`${row.id} をレンタル中に更新しました`, "ok");
+  };
+
+  const openDetail = (row: any) => {
+    const fullOrder = fullOrderFor(row);
+    if (!fullOrder) {
+      triggerToast("詳細データが見つかりません", "err");
+      return;
+    }
+    setSelectedOrder(fullOrder);
+  };
+
+  const openDeliveryDoc = (row: any) => {
+    const fullOrder = fullOrderFor(row);
+    if (!fullOrder) {
+      triggerToast("注文データが見つかりません", "err");
+      return;
+    }
+    setViewingDocOrder(fullOrder);
+  };
+
+  const queues = [
+    { id: "new" as const, label: "受注待ち", icon: "inbox", count: queueCounts.new },
+    { id: "arranged" as const, label: "手配中", icon: "local_shipping", count: queueCounts.arranged },
+    { id: "active" as const, label: "稼働中", icon: "autorenew", count: queueCounts.active },
+    { id: "closed" as const, label: "完了・取消", icon: "task_alt", count: queueCounts.closed },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-[24px] font-black text-slate-900 tracking-tight">受注・レンタル</h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              実注文データ連携
+            </span>
+            <span>{filteredRentals.length} 件表示</span>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Main Grid Workspace Container */}
-      {tab === "invoice" ? (
-        <AdminRentalInvoiceSection
-          orders={liveOrders.orders}
-          monthPeriod={selectedMonth || undefined}
-          companyFilter={selectedCompany || undefined}
-        />
-      ) : (
-        <div className="flex flex-col lg:flex-row gap-6 items-start">
-          
-          {/* Left Layout Panel: Table List */}
-          <div className={`w-full transition-all duration-300 ${activeWorkspaceOrder ? "lg:w-[60%]" : "lg:w-full"}`}>
-            <Panel
-              title={tabs.find(t => t.id === tab)?.label}
-              icon="autorenew"
-              sub={liveOrders.live ? "🟢 OrderBus Split Workspace" : undefined}
-              action={
-                <Btn
-                  size="sm"
-                  variant="primary"
-                  icon="add"
-                  onClick={() => setDrawer({ kind: newKind })}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <StatCard icon="inbox" label="受注待ち" value={`${queueCounts.new}件`} tone="amber" />
+        <StatCard icon="local_shipping" label="手配中" value={`${queueCounts.arranged}件`} tone="blue" />
+        <StatCard icon="autorenew" label="稼働中" value={`${queueCounts.active}件`} tone="emerald" />
+        <StatCard icon="payments" label="レンタル売上" value={`¥${(liveOrders.kpis.rentalSales || 0).toLocaleString()}`} tone="blue" />
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white shadow-[0_6px_24px_rgba(15,23,42,0.05)] overflow-hidden">
+        <div className="border-b border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            <div className="inline-flex w-full rounded-lg border border-slate-200 bg-white p-1 xl:w-auto overflow-x-auto">
+              {queues.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setQueue(item.id)}
+                  className={`flex h-[38px] flex-1 items-center justify-center gap-2 rounded-md px-4 text-sm font-black transition-colors xl:flex-none ${
+                    queue === item.id ? "bg-[#1a1c9a] text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+                  }`}
                 >
-                  {ctaText}
-                </Btn>
-              }
-            >
-              {/* Dynamic Filter bar */}
-              {liveOrders.rentals.length > 0 && (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">契約番号・顧客・現場名</label>
-                    <div className="relative">
-                      <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[16px]">search</span>
-                      <input
-                        type="text"
-                        placeholder="検索..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8 pr-3 py-1.5 w-full bg-white border border-slate-200 rounded-lg text-xs outline-none font-medium focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">契約状態</label>
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-semibold cursor-pointer outline-none focus:border-blue-500"
-                    >
-                      <option value="">すべて</option>
-                      {rentalStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">取引先企業</label>
-                    <select
-                      value={companyFilter}
-                      onChange={(e) => setCompanyFilter(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-semibold cursor-pointer outline-none focus:border-blue-500"
-                    >
-                      <option value="">すべて</option>
-                      {rentalCompanies.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（開始）</label>
-                    <input
-                      type="date"
-                      value={startDateFilter}
-                      onChange={(e) => setStartDateFilter(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-xs cursor-pointer font-mono h-[32px] outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 block mb-1">注文日（終了）</label>
-                    <input
-                      type="date"
-                      value={endDateFilter}
-                      onChange={(e) => setEndDateFilter(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-xs cursor-pointer font-mono h-[32px] outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Clear Filter matches banner */}
-              {filteredRentals.length !== liveOrders.rentals.length && (
-                <div className="text-xs font-bold text-slate-500 mb-3 bg-blue-50/50 border border-blue-100 rounded-lg px-3 py-1.5 flex justify-between items-center">
-                  <span>結果: {filteredRentals.length}件 / 全体: {liveOrders.rentals.length}件</span>
-                  <button 
-                    onClick={() => {
-                      setSearchQuery(""); setStatusFilter(""); setCompanyFilter(""); setStartDateFilter(""); setEndDateFilter("");
-                    }}
-                    className="text-blue-600 font-bold flex items-center gap-0.5 text-[11px] bg-transparent border-0 cursor-pointer"
-                  >
-                    クリア
-                  </button>
-                </div>
-              )}
-
-              <Table
-                cols={cols}
-                rows={filteredRentals}
-                onRow={(r) => {
-                  const fullOrder = liveOrders.orders.find((o: any) => o.firestoreId === r.firestoreId || o.id === r.firestoreId || o.orderNumber === r.id);
-                  if (fullOrder) {
-                    setActiveWorkspaceOrder(fullOrder);
-                  } else {
-                    triggerToast("詳細データが見つかりません", "err");
-                  }
-                }}
-              />
-            </Panel>
-          </div>
-
-          {/* Right Layout Panel: Real-time Split Workspace Screen */}
-          {activeWorkspaceOrder && (
-            <div className="w-full lg:w-[40%] bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden sticky top-6 animate-[fadeIn_0.25s_ease-out]">
-              <div className="p-4 border-b border-slate-100 bg-slate-50/60 flex justify-between items-center">
-                <div>
-                  <span className="text-[10px] font-bold text-blue-600 tracking-wider block font-mono">LIVE SPLIT WORKSPACE</span>
-                  <h3 className="font-bold text-slate-800 text-sm mt-0.5 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[18px] text-slate-400">grid_view</span>
-                    {activeWorkspaceOrder.orderNumber || activeWorkspaceOrder.id}
-                  </h3>
-                </div>
-                <button 
-                  onClick={() => setActiveWorkspaceOrder(null)}
-                  className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center cursor-pointer transition-colors shadow-sm"
-                >
-                  <span className="material-symbols-outlined text-[16px]">close</span>
+                  <span className="material-symbols-outlined text-[17px]">{item.icon}</span>
+                  {item.label}
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${queue === item.id ? "bg-white/18 text-white" : "bg-slate-100 text-slate-500"}`}>
+                    {item.count}
+                  </span>
                 </button>
-              </div>
+              ))}
+            </div>
 
-              <div className="p-5 space-y-5">
-                {/* Order Summary Metadata */}
-                <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-100 text-xs space-y-2">
-                  <div className="flex justify-between"><span className="text-slate-400 font-bold">企業名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.companyName || "個人顧客"}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400 font-bold">現場名</span><span className="font-bold text-slate-800">{activeWorkspaceOrder.constructionSiteName || "—"}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400 font-bold">担当者</span><span className="font-semibold text-slate-700">{activeWorkspaceOrder.employeeName || activeWorkspaceOrder.customerName}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400 font-bold">状況</span><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold font-mono text-[10px]">{formatStatusWithReturnRequest(activeWorkspaceOrder.status, activeWorkspaceOrder.returnRequestType)}</span></div>
-                </div>
+            <div className="relative min-w-[280px]">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[19px]">search</span>
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="注文番号・顧客・現場を検索"
+                className="h-[38px] w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold outline-none focus:border-[#1a1c9a]/50 focus:ring-2 focus:ring-[#1a1c9a]/10"
+              />
+            </div>
+          </div>
+        </div>
 
-                {/* Real-time Document Quick Triggers */}
-                <div>
-                  <h4 className="text-[11px] font-black text-slate-400 tracking-wider uppercase mb-2">書類クイック発行</h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      onClick={() => { setSelectedOrder(activeWorkspaceOrder); setViewingDoc("納品書"); }}
-                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-blue-500 text-[18px]">local_shipping</span>納品書表示
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedOrder(activeWorkspaceOrder);
-                        const blocks = getOrGenerateInvoiceBlocks(activeWorkspaceOrder);
-                        if (blocks && blocks.length > 1) setShowInvoiceSelector(true);
-                        else if (blocks && blocks.length === 1) { setViewingBlockId(blocks[0].id); setViewingDoc("請求書"); }
-                        else setViewingDoc("請求書");
-                      }}
-                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-indigo-500 text-[18px]">receipt</span>請求書表示
-                    </button>
-                    <button
-                      onClick={() => { setSelectedOrder(activeWorkspaceOrder); setViewingDoc("回収書"); }}
-                      className="py-2 px-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-600 flex flex-col items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-emerald-500 text-[18px]">inventory_2</span>回収書表示
-                    </button>
-                  </div>
-                </div>
-
-                {/* Full Specification Overlay Drawer Trigger */}
-                <div className="pt-2 border-t border-slate-100 flex gap-2">
-                  <button
-                    onClick={() => setViewingOrderDrawer(activeWorkspaceOrder)}
-                    className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold text-center hover:bg-slate-800 transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
-                    詳細編集・追加費用 (ExtraCost)
-                  </button>
-                </div>
-              </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-slate-100 bg-white">
+                <th className="px-4 py-3 text-[11px] font-black text-slate-500">注文</th>
+                <th className="px-4 py-3 text-[11px] font-black text-slate-500">顧客 / 現場</th>
+                <th className="px-4 py-3 text-[11px] font-black text-slate-500">レンタル期間</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black text-slate-500">品目</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black text-slate-500">金額</th>
+                <th className="px-4 py-3 text-[11px] font-black text-slate-500">状態</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black text-slate-500">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredRentals.slice(0, visibleCount).map((row: any) => (
+                <tr key={row.firestoreId || row.id} className="hover:bg-slate-50/70">
+                  <td className="px-4 py-3">
+                    <div className="font-mono text-sm font-black text-blue-700">{row.id}</div>
+                    <div className="mt-1 font-mono text-[10px] font-bold text-slate-400">{row.date || "—"}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="max-w-[260px] truncate text-sm font-black text-slate-900">{row.customer || "—"}</div>
+                    <div className="mt-1 max-w-[260px] truncate text-xs font-bold text-slate-500">{row.site || "現場未設定"}</div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs font-bold text-slate-600">{row.start} - {row.end}</td>
+                  <td className="px-4 py-3 text-right font-mono text-sm font-black text-slate-800">{row.items}</td>
+                  <td className="px-4 py-3 text-right font-mono text-sm font-black text-slate-900">¥{(row.amount || 0).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <Badge tone={queue === "new" ? "warning" : queue === "active" ? "ok" : "default"}>
+                      {formatStatusWithReturnRequest(row.status, row.returnRequestType)}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="inline-flex items-center justify-end gap-2">
+                      {queue === "new" && (
+                        <Btn size="sm" variant="primary" icon="send" onClick={() => handleAccept(row)}>
+                          受注確定
+                        </Btn>
+                      )}
+                      {queue === "arranged" && (
+                        <Btn size="sm" variant="secondary" icon="play_arrow" onClick={() => handleMoveToActive(row)}>
+                          稼働開始
+                        </Btn>
+                      )}
+                      <button onClick={() => openDeliveryDoc(row)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 hover:bg-slate-50">
+                        <span className="material-symbols-outlined text-[16px]">description</span>
+                        納品書
+                      </button>
+                      <button onClick={() => openDetail(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50" title="詳細">
+                        <span className="material-symbols-outlined text-[17px]">edit_note</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filteredRentals.length === 0 && (
+            <div className="py-14 text-center">
+              <span className="material-symbols-outlined text-[42px] text-slate-300">inbox</span>
+              <div className="mt-2 text-sm font-black text-slate-700">該当するレンタル注文がありません</div>
+            </div>
+          )}
+          {filteredRentals.length > visibleCount && (
+            <div className="py-4 text-center border-t border-slate-100">
+              <button
+                onClick={() => setVisibleCount((c) => c + PAGE)}
+                className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700 active:scale-95 transition"
+              >
+                さらに表示（残り {filteredRentals.length - visibleCount} 件）
+              </button>
             </div>
           )}
         </div>
-      )}
-
-      <AdminDocDrawer
-        open={!!drawer}
-        kind={drawer?.kind || null}
-        presetCustomer={drawer?.customer}
-        onClose={() => setDrawer(null)}
-      />
+      </div>
 
       <AdminOrderDrawer
-        open={!!viewingOrderDrawer}
-        order={viewingOrderDrawer}
-        onClose={() => setViewingOrderDrawer(null)}
+        open={!!selectedOrder}
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          liveOrders.patchOrder(id, { status, staffStatus });
-          triggerToast("手配が完了しました", "ok");
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          triggerToast("ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {
           liveOrders.patchOrder(id, updates);
-          setViewingOrderDrawer(prev => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
-          if (activeWorkspaceOrder && (activeWorkspaceOrder.firestoreId === id || activeWorkspaceOrder.id === id)) {
-            setActiveWorkspaceOrder((prev: any) => ({ ...prev, ...updates }));
-          }
+          setSelectedOrder((prev: any) => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
         }}
       />
 
-      {viewingDoc && selectedOrder && (
-        <DocumentViewer
-          order={selectedOrder}
-          type={viewingDoc}
-          blockId={viewingBlockId || undefined}
-          onClose={() => {
-            setViewingDoc(null);
-            setViewingBlockId(null);
-          }}
-        />
-      )}
-
-      {/* Invoice Month Selector Modal */}
-      {showInvoiceSelector && selectedOrder && (
-        (() => {
-          const blocks = getOrGenerateInvoiceBlocks(selectedOrder);
-          return (
-            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4">
-              <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden p-5 text-sm animate-[scaleIn_0.2s_ease-out]">
-                <h3 className="font-bold text-slate-800 text-base mb-4 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-blue-600 text-[20px]">request_quote</span>
-                  対象月を選択してください
-                </h3>
-                <div className="flex flex-col gap-2">
-                  {blocks.map((block) => (
-                    <button
-                      key={block.id}
-                      onClick={() => {
-                        setViewingBlockId(block.id);
-                        setViewingDoc("請求書");
-                        setShowInvoiceSelector(false);
-                      }}
-                      className="w-full text-left p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 font-bold text-xs flex justify-between items-center transition-colors cursor-pointer text-slate-700"
-                    >
-                      <span>{block.monthPeriod}分 請求書</span>
-                      <span className="text-[10px] text-slate-400">({block.startDate} 〜 {block.endDate})</span>
-                    </button>
-                  ))}
-                  <div className="border-t border-slate-100 my-2"></div>
-                  <button
-                    onClick={() => {
-                      setViewingBlockId(null);
-                      setViewingDoc("請求書");
-                      setShowInvoiceSelector(false);
-                    }}
-                    className="w-full text-left p-3 rounded-xl border border-dashed border-slate-200 bg-white hover:bg-slate-50 font-bold text-xs text-slate-600 text-center transition-colors cursor-pointer"
-                  >
-                    全体合計の請求書を表示
-                  </button>
-                  <button
-                    onClick={() => { setShowInvoiceSelector(false); setSelectedOrder(null); }}
-                    className="w-full text-center py-2.5 text-xs text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-                  >
-                    キャンセル
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()
-      )}
-
-      {/* B2B Aggregated Invoice Viewer Modal */}
-      {b2bOpen && selectedCompany && selectedMonth && (
-        <B2BInvoiceViewer
-          companyName={selectedCompany}
-          monthPeriod={selectedMonth}
-          type={b2bType}
-          orders={liveOrders.orders}
-          onClose={() => setB2bOpen(false)}
-        />
+      {viewingDocOrder && (
+        <DocumentViewer order={viewingDocOrder} type="納品書" onClose={() => setViewingDocOrder(null)} />
       )}
     </div>
   );

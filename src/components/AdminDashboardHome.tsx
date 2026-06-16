@@ -12,12 +12,11 @@ import {
   Cell,
 } from "recharts";
 import { useAdminCollection, useAdminOrders } from "../context/AdminDataContext";
+import { byOrderDateDesc } from "../utils/orderSort";
 import { isVehicleCategory } from "../utils/productUtils";
 import AdminOrderDrawer from "./AdminOrderDrawer";
 import { Btn, Modal, triggerToast } from "./AdminUI";
 import {
-  Download,
-  Plus,
   Eye,
   TrendingUp,
   ChevronDown,
@@ -256,9 +255,9 @@ export default function AdminDashboardHome() {
     const maintPct = total > 0 ? Math.round((maintCount / total) * 100) : 0;
     const repairPct = total > 0 ? Math.max(0, 100 - inUsePct - maintPct) : 0;
     return [
-      { name: "稼働中 (In Use)", value: inUsePct, color: "#3B82F6" },
-      { name: "点検中 (Maint.)", value: maintPct, color: "#F59E0B" },
-      { name: "修理待ち (Repair)", value: repairPct, color: "#EF4444" },
+      { name: "稼働中", value: inUsePct, color: "#2BA8A2" },
+      { name: "点検中", value: maintPct, color: "#FFD23F" },
+      { name: "修理待ち", value: repairPct, color: "#EF6C4A" },
     ];
   }, [orders, products, vehicles, maintenance, repairs, fieldReports]);
   const donutTotalPct = donutData.reduce((sum, item) => sum + item.value, 0);
@@ -267,7 +266,7 @@ export default function AdminDashboardHome() {
   // Recent transactions
   // ══════════════════════════════════════
   const allRecentOrders = useMemo(() => {
-    return [...orders].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    return [...orders].sort(byOrderDateDesc);
   }, [orders]);
   const recentOrders = allRecentOrders.slice(0, 6);
 
@@ -492,26 +491,18 @@ export default function AdminDashboardHome() {
   // RENDER
   // ══════════════════════════════════════
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* ─── Page Header ─── */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-center justify-between rounded-lg border border-[#cfe6e3] bg-[#fffdf6] px-4 py-3 shadow-[0_4px_20px_rgba(43,168,162,0.08)]">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">
-            ダッシュボード概要
-          </h1>
-          <p className="text-sm text-blue-500 font-medium mt-1">
+          <p className="text-xs font-black text-[#1e8c86] tracking-[0.12em] uppercase">Today</p>
+          <h2 className="text-lg font-black text-[#173b38] tracking-tight">
             {new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })}の現在の状況
-          </p>
+          </h2>
         </div>
-        <div className="flex gap-3">
-          <button className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm flex items-center gap-2">
-            <Download size={16} />
-            レポート出力
-          </button>
-          <button className="px-4 py-2.5 bg-blue-600 rounded-xl text-sm font-bold text-white hover:bg-blue-700 transition-all shadow-sm flex items-center gap-2">
-            <Plus size={16} />
-            新規注文作成
-          </button>
+        <div className="hidden md:flex items-center gap-2 text-xs font-black text-[#46706c]">
+          <span className="rounded-full bg-[#e8f6f5] px-3 py-1.5">注文 {kpis.totalOrders.toLocaleString()}件</span>
+          <span className="rounded-full bg-[#fff8e7] px-3 py-1.5">在庫 {kpis.totalStock.toLocaleString()}点</span>
         </div>
       </div>
 
@@ -703,7 +694,7 @@ export default function AdminDashboardHome() {
         <div className="col-span-3 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
           <div className="flex items-start justify-between mb-1">
             <div>
-              <h3 className="font-bold text-slate-800 text-base">売上推移 (Sales Trends)</h3>
+              <h3 className="font-bold text-slate-800 text-base">売上推移</h3>
               <p className="text-xs text-slate-400 mt-1">過去30日間の収益パフォーマンス</p>
             </div>
             <div className="relative">
@@ -712,9 +703,9 @@ export default function AdminDashboardHome() {
                 onChange={(e) => setTrendRange(e.target.value as "daily" | "weekly" | "monthly")}
                 className="appearance-none pl-3 pr-8 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/20"
               >
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
+                <option value="daily">日別</option>
+                <option value="weekly">週別</option>
+                <option value="monthly">月別</option>
               </select>
               <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             </div>
@@ -724,15 +715,15 @@ export default function AdminDashboardHome() {
               <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0.02} />
+                    <stop offset="0%" stopColor="#2BA8A2" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#2BA8A2" stopOpacity={0.03} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} dy={10} interval={trendRange === "daily" ? 5 : "preserveStartEnd"} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} tickFormatter={(v) => v >= 1000000 ? `${(v / 1000000).toFixed(0)}M` : `${(v / 1000).toFixed(0)}K`} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#CFE6E3" />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#7CA39F" }} dy={10} interval={trendRange === "daily" ? 5 : "preserveStartEnd"} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#7CA39F" }} tickFormatter={(v) => v >= 1000000 ? `${(v / 1000000).toFixed(0)}M` : `${(v / 1000).toFixed(0)}K`} />
                 <Tooltip contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 8px 30px -4px rgb(0 0 0 / 0.12)", padding: "10px 14px", fontSize: "13px" }} formatter={(value: number) => [fmtYen(value), "売上"]} labelStyle={{ fontWeight: 700, marginBottom: 4 }} />
-                <Area type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={2.5} fill="url(#blueGradient)" dot={false} activeDot={{ r: 6, strokeWidth: 3, stroke: "#fff", fill: "#3B82F6" }} />
+                <Area type="monotone" dataKey="value" stroke="#2BA8A2" strokeWidth={2.5} fill="url(#blueGradient)" dot={false} activeDot={{ r: 6, strokeWidth: 3, stroke: "#fff", fill: "#2BA8A2" }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -753,7 +744,7 @@ export default function AdminDashboardHome() {
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-3xl font-extrabold text-slate-800 tracking-tight">{donutTotalPct}<span className="text-base font-bold text-slate-400">%</span></span>
-                <span className="text-xs text-slate-400 font-medium">Total Status</span>
+                <span className="text-xs text-slate-400 font-medium">稼働比率</span>
               </div>
             </div>
           </div>
@@ -944,8 +935,8 @@ export default function AdminDashboardHome() {
           <div className="flex items-center justify-center mb-5">
             <div className="relative w-36 h-36">
               <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                <circle cx="50" cy="50" r="40" fill="none" stroke="#E2E8F0" strokeWidth="12" />
-                <circle cx="50" cy="50" r="40" fill="none" stroke="#3B82F6" strokeWidth="12"
+                <circle cx="50" cy="50" r="40" fill="none" stroke="#D2E8E6" strokeWidth="12" />
+                <circle cx="50" cy="50" r="40" fill="none" stroke="#2BA8A2" strokeWidth="12"
                   strokeDasharray={`${vehicleStatus.inUsePct * 2.51} 251.2`} strokeLinecap="round" />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
