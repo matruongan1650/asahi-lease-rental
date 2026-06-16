@@ -2,7 +2,7 @@
  * ordersQuery.ts — サーバー側でフィルタ＋ページングした注文を取得する。
  * 注文が数万件あってもクライアントは 1 ページ分しか保持しない（メモリ・通信を一定に保つ）。
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { API_BASE } from "./dataBackend";
 
 export interface QueryOpts {
@@ -41,10 +41,11 @@ export async function queryStore(name: string, opts: QueryOpts): Promise<QueryRe
  */
 export function useServerQuery(
   name: string,
-  opts: { hasType?: string; statusIn?: string[]; q?: string; counts?: boolean; pageSize?: number },
+  opts: { hasType?: string; statusIn?: string[]; q?: string; counts?: boolean; pageSize?: number; autoRefreshMs?: number },
   resetKey?: unknown,
 ) {
   const pageSize = opts.pageSize ?? 50;
+  const pollMs = opts.autoRefreshMs ?? 8000; // 0 で自動更新オフ
   const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [sumTotal, setSumTotal] = useState(0);
@@ -80,6 +81,22 @@ export function useServerQuery(
   }, [name, opts.hasType, JSON.stringify(opts.statusIn), opts.q, rows.length, pageSize]);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  // 自動更新（near-realtime）: 現在表示中の範囲を一定間隔で再取得する。
+  // 他端末・スタッフの変更や新規注文が反映される。ページング状態（読込済み件数）は維持。
+  const liveRef = useRef({ name, opts, loaded: pageSize });
+  liveRef.current = { name, opts, loaded: rows.length || pageSize };
+  useEffect(() => {
+    if (!pollMs) return;
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return; // 非表示タブでは更新しない
+      const { name: n, opts: o, loaded } = liveRef.current;
+      queryStore(n, { hasType: o.hasType, statusIn: o.statusIn, q: o.q, counts: o.counts, limit: Math.max(pageSize, loaded), offset: 0 })
+        .then((r) => { setRows(r.rows); setTotal(r.total); setSumTotal(r.sumTotal); setStatusCounts(r.statusCounts); })
+        .catch(() => {});
+    }, pollMs);
+    return () => clearInterval(id);
+  }, [pollMs, pageSize]);
 
   return { rows, total, sumTotal, statusCounts, hasMore: rows.length < total, loading, loadMore, refresh };
 }
