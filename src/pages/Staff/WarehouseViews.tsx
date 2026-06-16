@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import Icon from "../../components/staff/Icon";
+import { usePagedList } from "../../hooks/usePagedList";
 import {
   TopBar,
   IconBtn,
@@ -422,6 +423,7 @@ export function WhStock({ moves, addMove, onReturn }: any) {
   const ml = useMobileLive();
   const liveProducts = ml.products || [];
   const list = moves.filter((m: any) => filter === "all" || m.type === filter);
+  const paged = usePagedList(list, 50, filter);
   const inQty = moves.filter((m: any) => m.type === "入庫").reduce((sum: number, m: any) => sum + Number(m.qty || 0), 0);
   const outQty = moves.filter((m: any) => m.type === "出庫").reduce((sum: number, m: any) => sum + Number(m.qty || 0), 0);
   const stockTotal = liveProducts.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
@@ -463,7 +465,7 @@ export function WhStock({ moves, addMove, onReturn }: any) {
             <Empty icon="layers" title="入出庫履歴はありません" sub="QRスキャンで入庫または出庫を登録できます" />
           ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {list.map((m: any) => {
+            {paged.shown.map((m: any) => {
               const isIn = m.type === "入庫";
               return (
                 <Card key={m.id} pad={13}>
@@ -482,6 +484,11 @@ export function WhStock({ moves, addMove, onReturn }: any) {
                 </Card>
               );
             })}
+            {paged.hasMore && (
+              <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                <button onClick={paged.showMore} style={{ padding: "10px 20px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--brand-strong)", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>さらに表示（残り {paged.remaining} 件）</button>
+              </div>
+            )}
           </div>
           )}
         </div>

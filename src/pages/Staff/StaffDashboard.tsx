@@ -34,6 +34,8 @@ import { useOrders } from "../../context/OrderContext";
 import { useUser, UserProfile } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { finalizePartialReturn } from "../../utils/returnProcessing";
+import { byOrderDateDesc } from "../../utils/orderSort";
+import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { buildStaffNotifications, AppNotification } from "../../utils/notifications";
 
@@ -342,6 +344,19 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
 // ---------------------------------------------------------------------------
 // Main Flow Views Wrapper
 // ---------------------------------------------------------------------------
+function StaffShowMore({ remaining, onClick }: { remaining: number; onClick: () => void }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "center", padding: "12px 0" }}>
+      <button
+        onClick={onClick}
+        style={{ padding: "10px 20px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--brand-strong)", fontWeight: 800, fontSize: 13, cursor: "pointer" }}
+      >
+        さらに表示（残り {remaining} 件）
+      </button>
+    </div>
+  );
+}
+
 function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   const ml = useMobileLive();
   const { orders } = useOrders();
@@ -355,7 +370,7 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   // 回収履歴: 回収完了済み（completeRecovery が staffStatus=回収完了 を設定）。
   const deliveryHistory = (orders || []).filter(
     (o: any) => o && (o.staffStatus === "配送完了" || o.signature || o.deliverySignature)
-  );
+  ).sort(byOrderDateDesc);
   const recoveryHistory = (orders || []).filter(
     (o: any) =>
       o &&
@@ -364,7 +379,13 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
         o.status === "完了" ||
         o.status === "返却済" ||
         o.status === "返却済み")
-  );
+  ).sort(byOrderDateDesc);
+
+  // 大量データでも重くならないよう各リストを段階表示（subTab 切替で先頭に戻す）。
+  const dlvPage = usePagedList(deliveries, 50, subTab);
+  const rtnPage = usePagedList(recoveries, 50, subTab);
+  const dlvHistPage = usePagedList(deliveryHistory, 50, subTab);
+  const rtnHistPage = usePagedList(recoveryHistory, 50, subTab);
 
   // 完了済み(doneDlv/doneRtn)はリストから外れるため、単純な引き算だと
   // 件数がマイナスになる。実際に残っているタスクを filter で数える。
@@ -395,18 +416,24 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
           deliveries.length === 0 ? (
             <Empty icon="truck" title="配送予定はありません" sub="admin が配送予定にした注文がここに表示されます" />
           ) : (
-            deliveries.map(o => (
-              <DeliveryCard key={o.id} o={o} done={doneDlv.includes(o.id)} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "dlv", order: o })} />
-            ))
+            <>
+              {dlvPage.shown.map(o => (
+                <DeliveryCard key={o.id} o={o} done={doneDlv.includes(o.id)} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "dlv", order: o })} />
+              ))}
+              {dlvPage.hasMore && <StaffShowMore remaining={dlvPage.remaining} onClick={dlvPage.showMore} />}
+            </>
           )
         )}
         {subTab === "kaishu" && (
           recoveries.length === 0 ? (
             <Empty icon="package" title="回収予定はありません" sub="返却期限が近い注文、または回収予定の注文が表示されます" />
           ) : (
-            recoveries.map(o => (
-              <RecoveryCard key={o.id} o={o} done={doneRtn.includes(o.id)} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "rtn", order: o })} />
-            ))
+            <>
+              {rtnPage.shown.map(o => (
+                <RecoveryCard key={o.id} o={o} done={doneRtn.includes(o.id)} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "rtn", order: o })} />
+              ))}
+              {rtnPage.hasMore && <StaffShowMore remaining={rtnPage.remaining} onClick={rtnPage.showMore} />}
+            </>
           )
         )}
         {subTab === "nouhin_hist" && (
@@ -414,9 +441,10 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
             <Empty icon="truck" title="納品履歴はありません" sub="配送を完了すると表示されます" />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {deliveryHistory.map((o: any) => (
+              {dlvHistPage.shown.map((o: any) => (
                 <HistoryCard key={o.id} order={o} kind="納品" date={o.deliveryDate || o.date} onViewDoc={() => setViewingDoc({ order: o, type: "納品書" })} />
               ))}
+              {dlvHistPage.hasMore && <StaffShowMore remaining={dlvHistPage.remaining} onClick={dlvHistPage.showMore} />}
             </div>
           )
         )}
@@ -425,9 +453,10 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
             <Empty icon="package" title="回収履歴はありません" sub="回収を完了すると表示されます" />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {recoveryHistory.map((o: any) => (
+              {rtnHistPage.shown.map((o: any) => (
                 <HistoryCard key={o.id} order={o} kind="回収" date={o.actualReturnDate || o.rentalEndDate || o.date} onViewDoc={() => setViewingDoc({ order: o, type: "回収書" })} />
               ))}
+              {rtnHistPage.hasMore && <StaffShowMore remaining={rtnHistPage.remaining} onClick={rtnHistPage.showMore} />}
             </div>
           )
         )}

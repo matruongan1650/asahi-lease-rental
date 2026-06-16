@@ -197,7 +197,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   // 配送タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   // 返却済・検品待ち・一部返却・配送済みの注文は「これから配送する」対象ではないため除外する
   // （-R 返却分注文などが staffStatus 未設定のまま配送予定に出る「幽霊タスク」を防ぐ）。
-  const DELIVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "一部返却", "検品待ち", "配送済み"];
+  const DELIVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "一部返却", "検品待ち", "配送済み", "レンタル中"];
   // 注文が多いと毎レンダーでの再計算が重い。入力（rawOrders）が変わった時だけ再計算する。
   const liveDeliveries = useMemo(() => [
     ...rawOrders
@@ -291,7 +291,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const completeDelivery = (id: string, signature?: string | null, photos?: any[], extra?: any) => {
-    const updates: any = { staffStatus: "配送完了", status: "配送済み" };
+    // 配送完了後はレンタル中（実際に貸出中）へ。顧客には「現在レンタル中」と表示される。
+    const updates: any = { staffStatus: "配送完了", status: "レンタル中" };
     // 受領サインは Order スキーマ上の deliverySignature と、既存表示が参照する signature の両方に保存
     if (signature) {
       updates.signature = signature;

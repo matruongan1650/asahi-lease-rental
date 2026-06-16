@@ -1,105 +1,93 @@
-import React, { useRef, useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import Icon from "../../components/staff/Icon";
+import {
+  Badge,
+  Btn,
+  Card,
+  Empty,
+  InfoRow,
+  ItemRow,
+  PhotoCaptureButton,
+  PhotoTile,
+  SectionLabel,
+  SignaturePad,
+  Stepper,
+  makePhoto,
+  statusVariant,
+  type Photo,
+} from "../../components/staff/StaffUI";
+import ProductQrScanner from "../../components/staff/ProductQrScanner";
 import { useOrders } from "../../context/OrderContext";
-import SignatureCanvas from "react-signature-canvas";
-import { ArrowLeft, User, MapPin, Package, Camera, PenTool, CheckCircle2, ChevronRight, X, AlertTriangle } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { useProducts } from "../../context/ProductContext";
+import { getProductQrCode } from "../../utils/productQr";
+
+type Step = "check" | "issue" | "sign";
+
+function isRecoveryRole(role?: string) {
+  return role === "collection" || role === "warehouse";
+}
 
 export default function StaffJobDetail() {
   const { role, orderId } = useParams<{ role: string; orderId: string }>();
   const navigate = useNavigate();
   const { orders, updateOrder } = useOrders();
-  const order = orders.find(o => o.id === orderId);
+  const { products } = useProducts();
+  const order = orders.find(o => o.id === orderId || (o as any).firestoreId === orderId || o.orderNumber === orderId);
 
-  const signatureRef = useRef<SignatureCanvas>(null);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [step, setStep] = useState<"check" | "issue" | "sign">("check");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const recovery = isRecoveryRole(role);
+  const [step, setStep] = useState<Step>("check");
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [signature, setSignature] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannedItems, setScannedItems] = useState<Record<string, boolean>>({});
+  const [issues, setIssues] = useState<Record<string, { type: "missing" | "broken"; quantity: number; notes: string }>>({});
 
-  // Issues tracking [itemId]: { missing: 0, broken: 0 }
-  const [issues, setIssues] = useState<Record<string, { type: "missing" | "broken", quantity: number, notes: string }>>({});
+  const steps = recovery ? ["確認", "問題", "サイン"] : ["確認", "サイン"];
+  const stepIndex = step === "check" ? 0 : step === "issue" ? 1 : recovery ? 2 : 1;
 
-  useEffect(() => {
-    if (order?.itemIssues) {
-      const existing: Record<string, { type: "missing" | "broken", quantity: number, notes: string }> = {};
-      order.itemIssues.forEach(i => {
-        existing[i.itemId] = { type: i.type, quantity: i.quantity, notes: i.notes };
-      });
-      setIssues(existing);
-    }
-  }, [order]);
-
-  if (!order) {
-    return <div className="p-4 text-center mt-10 text-slate-500">注文が存在しません。</div>;
-  }
-
-  const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setPhotoUrl(ev.target?.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const clearSignature = () => {
-    signatureRef.current?.clear();
-  };
-
-  const handleComplete = async () => {
-    setIsSubmitting(true);
-    let signatureData = null;
-    if (!signatureRef.current?.isEmpty()) {
-      signatureData = signatureRef.current?.getCanvas().toDataURL("image/png");
-    }
-
-    const updates: any = {};
-    
-    if (role === "delivery") {
-      updates.status = "配送済み"; // Delivered
-      updates.staffStatus = "配送完了";
-      updates.deliveryPhoto = photoUrl;
-      updates.deliverySignature = signatureData;
-    } else if (role === "collection" || role === "warehouse") {
-      updates.status = "返却済み"; // Returned
-      updates.staffStatus = "回収完了";
-      
-      const issueArray = Object.entries(issues).map(([itemId, val]) => ({
-        itemId, ...val
-      }));
-      updates.itemIssues = issueArray;
-
-      if (issueArray.length > 0 && updates.status === "返却済み") {
-        updates.status = "一部返却"; // Partially returned / Has issues
-      }
-
-      if (role === "collection") {
-        updates.collectionPhoto = photoUrl;
-        updates.collectionSignature = signatureData;
-      } else {
-        updates.warehousePhoto = photoUrl;
-        updates.warehouseSignature = signatureData;
-      }
-    }
-
-    await updateOrder(order.id, updates);
-    setIsSubmitting(false);
-    navigate(`/staff`);
-  };
-
-  const handleIssueChange = (itemId: string, field: "type" | "quantity" | "notes", value: any) => {
-    setIssues(prev => {
-      const current = prev[itemId] || { type: "missing", quantity: 1, notes: "" };
+  const totalQty = useMemo(
+    () => (order?.items || []).reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0),
+    [order],
+  );
+  const scanProducts = useMemo(() => {
+    return (order?.items || []).map((item: any, index: number) => {
+      const master = products.find((product: any) => product && (product.id === item.id || product.name === item.name));
+      const id = item.id || master?.id || `order-item-${index}`;
       return {
-        ...prev,
-        [itemId]: { ...current, [field]: value }
+        ...item,
+        id,
+        qr: master ? getProductQrCode(master) : getProductQrCode({ id } as any),
+        qrPayload: master?.qrPayload,
       };
     });
+  }, [order, products]);
+  const scannedCount = scanProducts.filter(item => scannedItems[item.id]).length;
+
+  if (!order) {
+    return (
+      <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--font-jp)" }}>
+        <div style={{ maxWidth: 430, margin: "0 auto" }}>
+          <Empty icon="clipboard" title="注文が存在しません" sub="一覧から業務を選択してください" />
+        </div>
+      </div>
+    );
+  }
+
+  const updateIssue = (itemId: string, updates: Partial<{ type: "missing" | "broken"; quantity: number; notes: string }>) => {
+    setIssues(prev => ({
+      ...prev,
+      [itemId]: {
+        type: prev[itemId]?.type || "missing",
+        quantity: prev[itemId]?.quantity || 1,
+        notes: prev[itemId]?.notes || "",
+        ...updates,
+      },
+    }));
   };
 
-  const handleRemoveIssue = (itemId: string) => {
+  const removeIssue = (itemId: string) => {
     setIssues(prev => {
       const next = { ...prev };
       delete next[itemId];
@@ -107,289 +95,157 @@ export default function StaffJobDetail() {
     });
   };
 
-  const currentStepIndex = step === "check" ? 1 : step === "issue" ? 2 : (role === "collection" || role === "warehouse" ? 3 : 2);
-  const totalSteps = (role === "collection" || role === "warehouse") ? 3 : 2;
+  const complete = async () => {
+    setSubmitting(true);
+    const photoUrls = photos.map(p => p.dataUrl).filter(Boolean);
+    const updates: any = {};
+
+    if (role === "delivery") {
+      updates.status = "レンタル中";
+      updates.staffStatus = "配送完了";
+      if (photoUrls.length) updates.deliveryPhotos = photos;
+      if (signature) {
+        updates.signature = signature;
+        updates.deliverySignature = signature;
+      }
+    } else {
+      const issueArray = Object.entries(issues).map(([itemId, value]) => ({ itemId, ...value }));
+      updates.status = issueArray.length > 0 ? "一部返却" : "返却済み";
+      updates.staffStatus = role === "warehouse" ? "検品完了" : "回収完了";
+      updates.itemIssues = issueArray;
+      if (photoUrls.length) updates[role === "warehouse" ? "warehousePhotos" : "collectionPhotos"] = photos;
+      if (signature) updates[role === "warehouse" ? "warehouseSignature" : "collectionSignature"] = signature;
+    }
+
+    await updateOrder(order.id, updates);
+    setSubmitting(false);
+    navigate("/staff");
+  };
 
   return (
-    <div className="bg-slate-50 min-h-screen text-slate-900 pb-24 font-sans">
-      <div className="bg-white shadow-sm sticky top-0 z-20 px-4 py-3 flex justify-between items-center border-b border-slate-100">
-        <button onClick={() => navigate(-1)} className="p-2 -ml-2 text-slate-500 hover:text-slate-800 transition-colors">
-          <ArrowLeft size={24} />
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="text-sm font-extrabold tracking-tight font-mono text-slate-800">{order.orderNumber}</h1>
-          <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full mt-0.5">
-            {role === 'delivery' ? '配達' : '回収'}
-          </span>
-        </div>
-        <div className="w-10"></div> {/* Spacer for center alignment */}
-      </div>
-
-      <div className="p-5 max-w-md mx-auto">
-        {/* Progress Steps Header */}
-        <div className="flex bg-slate-200/50 rounded-2xl p-1 mb-6 relative">
-          <div 
-            className="absolute top-1 bottom-1 bg-white rounded-xl shadow-sm transition-all duration-300 ease-out" 
-            style={{ 
-              width: `calc(${100/totalSteps}% - 4px)`, 
-              left: `calc(${(currentStepIndex - 1) * (100/totalSteps)}% + 2px)` 
-            }}
-          />
-          <button 
-            onClick={() => setStep("check")} 
-            className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "check" ? "text-blue-600" : "text-slate-500"}`}
-          >
-            <span>検品</span>
-          </button>
-          {(role === "collection" || role === "warehouse") && (
-            <button 
-              onClick={() => setStep("issue")} 
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "issue" ? "text-orange-600" : "text-slate-500"}`}
-            >
-              <span>問題報告</span>
+    <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--fg)", fontFamily: "var(--font-jp)" }}>
+      <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "var(--bg)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", minHeight: 56 }}>
+            <button onClick={() => navigate(-1)} style={{ width: 40, height: 40, borderRadius: 12, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--fg)", display: "grid", placeItems: "center", cursor: "pointer" }}>
+              <Icon name="chevronLeft" size={22} />
             </button>
-          )}
-          <button 
-            onClick={() => setStep("sign")} 
-            className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors flex flex-col items-center ${step === "sign" ? "text-emerald-600" : "text-slate-500"}`}
-          >
-            <span>受領サイン</span>
-          </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "var(--brand-accent)", fontFamily: "var(--font-mono)" }}>{recovery ? "RETURN JOB" : "DELIVERY JOB"}</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.orderNumber || order.id}</div>
+            </div>
+            <Badge variant={statusVariant(order.status)}>{order.status || "未設定"}</Badge>
+          </div>
+          <div style={{ padding: "0 16px 12px" }}><Stepper steps={steps} current={stepIndex} /></div>
         </div>
 
-        <AnimatePresence mode="wait">
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 16px" }}>
           {step === "check" && (
-            <motion.div key="check" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-              <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full blur-2xl opacity-60 -translate-y-1/2 translate-x-1/2"></div>
-                <h2 className="text-[10px] font-bold text-blue-500 mb-3 uppercase tracking-widest flex items-center gap-1.5 relative z-10">
-                  <User size={12} strokeWidth={3} /> 顧客情報
-                </h2>
-                <div className="relative z-10">
-                  <p className="font-extrabold text-lg text-slate-800">{order.personName}</p>
-                  {order.companyName && <p className="text-xs font-medium text-slate-500 mt-0.5">{order.companyName}</p>}
-                  
-                  <div className="bg-slate-50 rounded-2xl p-3.5 mt-4 border border-slate-100 flex items-start gap-2.5">
-                    <MapPin size={18} className="text-blue-400 mt-0.5 shrink-0" />
-                    <p className="text-sm font-medium text-slate-700 leading-relaxed">
-                      {order.deliveryLocation || "店舗受取"}
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <>
+              <SectionLabel>注文・現場情報</SectionLabel>
+              <Card pad={0} style={{ marginBottom: 14 }}>
+                <InfoRow icon="building" label="取引先" value={order.companyName || order.personName || "未設定"} last />
+                <InfoRow icon="mapPin" label="場所" value={order.deliveryLocation || order.siteName || "未設定"} />
+                {order.constructionNumber && <InfoRow icon="clipboard" label="工事番号" value={order.constructionNumber} />}
+                <InfoRow icon="calendar" label="レンタル期間" value={`${order.rentalStartDate || "未定"} 〜 ${order.rentalEndDate || "未定"}`} />
+              </Card>
 
-              <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
-                <h2 className="text-[10px] font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-1.5">
-                  <Package size={12} strokeWidth={3} /> 品目リスト
-                </h2>
-                <ul className="space-y-4">
-                  {order.items.map((item, idx) => (
-                    <li key={idx} className="flex justify-between items-center pb-4 border-b border-slate-50 last:border-0 last:pb-0">
-                      <div className="pr-3 flex-1">
-                        <p className="font-bold text-sm text-slate-800 leading-snug">{item.name}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1.5 bg-slate-100 inline-block px-1.5 py-0.5 rounded">
-                          {item.type === "rent" ? "レンタル" : "販売"}
-                        </p>
-                      </div>
-                      <div className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-700 rounded-xl font-bold border border-slate-100">
-                        x{item.quantity}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{totalQty}点</span>}>品目確認</SectionLabel>
+              <div style={{ marginBottom: 10 }}>
+                <Btn full icon="scan" variant="secondary" onClick={() => setScannerOpen(true)}>
+                  商品QRをスキャン（{scannedCount}/{scanProducts.length}）
+                </Btn>
               </div>
-              
-              <div className="pt-2 flex flex-col gap-3">
-                {role === "delivery" && order.status === "確認済み" && (
-                  <button 
-                    onClick={async () => {
-                      await updateOrder(order.id, { status: "配送中" });
-                    }}
-                    className="w-full bg-blue-50 text-blue-600 border border-blue-200 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-100 active:scale-[0.98] transition-all"
-                  >
-                    配達を開始する
-                  </button>
-                )}
-                <button 
-                  onClick={() => setStep((role === "collection" || role === "warehouse") ? "issue" : "sign")}
-                  disabled={role === "delivery" && order.status === "確認済み"}
-                  className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${role === "delivery" && order.status === "確認済み" ? "bg-slate-100 text-slate-400" : "bg-slate-900 text-white shadow-lg shadow-slate-200 hover:bg-slate-800"}`}
-                >
-                  確認して進む <ChevronRight size={18} />
-                </button>
-              </div>
-            </motion.div>
+              <Card pad={6}>
+                {scanProducts.map((item: any, index: number) => (
+                  <div key={item.id || index} style={{ padding: "0 10px", borderTop: index ? "1px solid var(--border)" : "none" }}>
+                    <ItemRow
+                      icon="package"
+                      image={item.image}
+                      name={item.name}
+                      sub={`${item.type === "rent" ? "レンタル" : "販売"} ・ ${item.qr}`}
+                      qty={item.quantity || 1}
+                      right={scannedItems[item.id] ? <Badge variant="success" icon="check">読取済</Badge> : undefined}
+                    />
+                  </div>
+                ))}
+              </Card>
+            </>
           )}
 
           {step === "issue" && (
-            <motion.div key="issue" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-              <div className="bg-gradient-to-br from-orange-50 to-amber-50 p-5 rounded-3xl border border-orange-100">
-                <div className="flex items-center gap-2 mb-2 text-orange-600">
-                  <AlertTriangle size={20} />
-                  <h2 className="text-sm font-bold">不足・破損の報告</h2>
-                </div>
-                <p className="text-orange-800/80 text-xs font-medium mb-5 leading-relaxed">回収時に不足・破損のある品目を記録します。</p>
-                
-                <div className="space-y-3">
-                  {order.items.map((item, idx) => {
-                    const hasIssue = !!issues[item.id];
-                    return (
-                      <div key={idx} className={`bg-white p-4 rounded-2xl transition-all border ${hasIssue ? 'border-orange-300 shadow-md shadow-orange-100/50' : 'border-slate-100'}`}>
-                        <div className="flex justify-between items-start gap-4">
-                          <div className="flex-1">
-                            <p className="font-bold text-sm text-slate-800 leading-snug">{item.name}</p>
-                            <p className="text-[10px] font-bold text-slate-500 mt-1">SL: {item.quantity}</p>
-                          </div>
-                          <button 
-                            onClick={() => hasIssue ? handleRemoveIssue(item.id) : handleIssueChange(item.id, "type", "missing")}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${hasIssue ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                          >
-                            {hasIssue ? <><X size={14} /> 修正</> : "問題あり"}
-                          </button>
+            <>
+              <SectionLabel>不足・破損の報告</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {(order.items || []).map((item: any, index: number) => {
+                  const issue = issues[item.id];
+                  return (
+                    <Card key={item.id || index} pad={14} style={{ borderColor: issue ? "var(--danger-bright)" : "var(--border)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                        <Icon name="package" size={22} color="var(--brand-accent)" />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14.5, fontWeight: 900, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                          <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>予定 {item.quantity || 1}点</div>
                         </div>
-                        
-                        <AnimatePresence>
-                          {hasIssue && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                              <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div>
-                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">不具合種別</label>
-                                    <select 
-                                      value={issues[item.id].type} 
-                                      onChange={e => handleIssueChange(item.id, "type", e.target.value)}
-                                      className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:ring-2 focus:ring-orange-200 focus:border-orange-400 outline-none transition-all"
-                                    >
-                                      <option value="missing">紛失・不足</option>
-                                      <option value="broken">破損</option>
-                                    </select>
-                                  </div>
-                                  <div>
-                                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">不具合数量</label>
-                                    <input 
-                                      type="number" 
-                                      min="1" 
-                                      max={item.quantity}
-                                      value={issues[item.id].quantity}
-                                      onChange={e => handleIssueChange(item.id, "quantity", parseInt(e.target.value))}
-                                      className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:ring-2 focus:ring-orange-200 focus:border-orange-400 outline-none transition-all"
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5 block">詳細・メモ</label>
-                                  <input 
-                                    type="text" 
-                                    placeholder="状況を入力してください..."
-                                    value={issues[item.id].notes}
-                                    onChange={e => handleIssueChange(item.id, "notes", e.target.value)}
-                                    className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-orange-200 focus:border-orange-400 outline-none transition-all"
-                                  />
-                                </div>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                        <button onClick={() => issue ? removeIssue(item.id) : updateIssue(item.id, {})} style={{ border: "none", borderRadius: 999, padding: "8px 12px", background: issue ? "var(--danger-tint)" : "var(--surface-2)", color: issue ? "var(--danger-bright)" : "var(--brand-accent)", fontSize: 12.5, fontWeight: 900, cursor: "pointer" }}>
+                          {issue ? "取消" : "問題あり"}
+                        </button>
                       </div>
-                    )
-                  })}
-                </div>
+                      {issue && (
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "grid", gap: 10 }}>
+                          <select value={issue.type} onChange={e => updateIssue(item.id, { type: e.target.value as any })} style={{ width: "100%", border: "1px solid var(--border-2)", borderRadius: 12, padding: "10px", fontWeight: 800 }}>
+                            <option value="missing">紛失・不足</option>
+                            <option value="broken">破損</option>
+                          </select>
+                          <input value={issue.quantity} type="number" min={1} max={item.quantity || 1} onChange={e => updateIssue(item.id, { quantity: Number(e.target.value) || 1 })} style={{ width: "100%", border: "1px solid var(--border-2)", borderRadius: 12, padding: "10px", fontWeight: 800, boxSizing: "border-box" }} />
+                          <input value={issue.notes} onChange={e => updateIssue(item.id, { notes: e.target.value })} placeholder="メモ" style={{ width: "100%", border: "1px solid var(--border-2)", borderRadius: 12, padding: "10px", fontWeight: 700, boxSizing: "border-box" }} />
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
               </div>
-              
-              <div className="pt-2 grid grid-cols-2 gap-3">
-                <button 
-                  onClick={() => setStep("check")}
-                  className="bg-white border border-slate-200 text-slate-600 py-4 rounded-2xl font-bold flex items-center justify-center gap-1 active:scale-[0.98] transition-all"
-                >
-                  <ArrowLeft size={18} /> 戻る
-                </button>
-                <button 
-                  onClick={() => setStep("sign")}
-                  className="bg-slate-900 text-white shadow-lg shadow-slate-200 py-4 rounded-2xl font-bold flex items-center justify-center gap-1 active:scale-[0.98] transition-all"
-                >
-                  次へ <ChevronRight size={18} />
-                </button>
-              </div>
-            </motion.div>
+            </>
           )}
 
           {step === "sign" && (
-            <motion.div key="sign" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
-              
-              {/* Photo Upload */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative">
-                <h2 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <Camera size={12} strokeWidth={3} /> 現場写真
-                  </div>
-                  <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">任意</span>
-                </h2>
-                {photoUrl ? (
-                  <div className="relative group rounded-2xl overflow-hidden border border-slate-200">
-                    <img src={photoUrl} alt="Captured" className="w-full h-44 object-cover" />
-                    <button 
-                      onClick={() => setPhotoUrl(null)} 
-                      className="absolute top-2 right-2 bg-black/50 text-white p-2 rounded-full backdrop-blur-md"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 text-slate-400 cursor-pointer active:bg-blue-50 active:border-blue-200 transition-colors">
-                    <Camera size={28} className="mb-2 opacity-50" />
-                    <span className="text-xs font-bold">写真を撮影 (カメラ起動)</span>
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoCapture} />
-                  </label>
-                )}
-              </div>
-
-              {/* Signature */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative">
-                <h2 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <PenTool size={12} strokeWidth={3} /> お客様のご署名
-                  </div>
-                  <span className="text-[9px] bg-red-50 text-red-600 font-extrabold px-2 py-0.5 rounded-full border border-red-100">必須</span>
-                </h2>
-                <div className="border border-slate-200 rounded-2xl bg-white overflow-hidden relative shadow-inner">
-                  <SignatureCanvas 
-                    ref={signatureRef} 
-                    penColor="#0f172a"
-                    canvasProps={{ width: 500, height: 180, className: 'w-full h-44 cursor-crosshair' }}
-                  />
-                  <div className="absolute top-0 bottom-0 left-0 right-0 pointer-events-none border-b border-dashed border-slate-200/50 translate-y-3/4 mx-4"></div>
-                  <button 
-                    onClick={clearSignature}
-                    className="absolute top-2 right-2 bg-slate-100 text-slate-500 px-2 py-1 rounded-lg text-[10px] font-extrabold active:bg-slate-200 transition-colors"
-                  >
-                    署名をクリア
-                  </button>
+            <>
+              <SectionLabel>現場写真</SectionLabel>
+              <PhotoCaptureButton
+                onCapture={(dataUrl) => setPhotos(prev => [...prev, makePhoto(prev.length, dataUrl)])}
+                style={{ width: "100%", borderRadius: 16, border: "1.5px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", padding: 18, display: "grid", placeItems: "center", marginBottom: 12 }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 900 }}><Icon name="camera" size={20} />写真を撮影</span>
+              </PhotoCaptureButton>
+              {photos.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
+                  {photos.map(photo => <PhotoTile key={photo.id} photo={photo} onRemove={() => setPhotos(prev => prev.filter(p => p.id !== photo.id))} />)}
                 </div>
-                <p className="text-[10px] text-center text-slate-400 mt-3 font-medium">上記の枠内にご署名ください</p>
-              </div>
+              )}
 
-              <div className="pt-2 grid grid-cols-3 gap-3">
-                <button 
-                  onClick={() => setStep((role === "collection" || role === "warehouse") ? "issue" : "check")}
-                  className="bg-white border border-slate-200 text-slate-600 py-4 rounded-2xl font-bold flex items-center justify-center active:scale-[0.98] transition-all"
-                >
-                  <ArrowLeft size={18} />
-                </button>
-                <button 
-                  onClick={handleComplete}
-                  disabled={isSubmitting}
-                  className="col-span-2 bg-emerald-500 text-white shadow-lg shadow-emerald-200/50 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100 relative overflow-hidden"
-                >
-                  {isSubmitting ? (
-                    <span className="animate-pulse">保存中...</span>
-                  ) : (
-                    <>完了 <CheckCircle2 size={18} /></>
-                  )}
-                </button>
-              </div>
-            </motion.div>
+              <SectionLabel>{recovery ? "回収確認サイン" : "受領サイン"}</SectionLabel>
+              <SignaturePad onChange={setSignature} />
+            </>
           )}
-        </AnimatePresence>
+        </div>
+
+        <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", display: "flex", gap: 10 }}>
+          {step !== "check" && <Btn variant="secondary" onClick={() => setStep(step === "sign" && recovery ? "issue" : "check")}>戻る</Btn>}
+          {step === "check" && <Btn full iconRight="arrowRight" onClick={() => setStep(recovery ? "issue" : "sign")}>確認して進む</Btn>}
+          {step === "issue" && <Btn full iconRight="arrowRight" onClick={() => setStep("sign")}>サインへ進む</Btn>}
+          {step === "sign" && <Btn full variant="success" icon="check" disabled={!signature || submitting} onClick={complete}>{submitting ? "保存中..." : "完了する"}</Btn>}
+        </div>
+        <ProductQrScanner
+          open={scannerOpen}
+          title="注文商品 QRスキャン"
+          products={scanProducts}
+          description="この注文に含まれる商品のQRだけを照合します。"
+          onClose={() => setScannerOpen(false)}
+          onMatch={(product) => {
+            setScannedItems(prev => ({ ...prev, [product.id]: true }));
+            setScannerOpen(false);
+          }}
+        />
       </div>
     </div>
   );
