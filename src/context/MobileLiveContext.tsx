@@ -427,10 +427,17 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const addStockMove = (type: string, { item, qty, ref, icon }: { item: string; qty: number; ref?: string; icon?: string }) => {
     const isIn = type === "入庫";
     const now = new Date();
-    const date = `2026/06/03 ${now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
+    // 実際の日時を記録する（以前は日付が固定値になっていた）。形式: YYYY/MM/DD HH:MM。
+    const date = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
     const id = `${isIn ? "IN" : "OUT"}-${Math.floor(9000 + Math.random() * 999)}`;
     const staffName = STAFF.souko.name;
-    const doc = { id, item, qty, date, type: "手動" + type, staff: staffName, seq: now.getTime(), icon: icon || "package" };
+    // 区分は発生元（ref）から推定: 配送→レンタル(出庫) / 回収・返却→回収戻し(入庫) / それ以外→手動。
+    const r = ref || "";
+    let category = "手動" + type;
+    if (!isIn && /配送|レンタル/.test(r)) category = "レンタル";
+    else if (!isIn && /販売/.test(r)) category = "販売";
+    else if (isIn && /回収|返却/.test(r)) category = "回収戻し";
+    const doc = { id, item, qty, date, type: category, staff: staffName, seq: now.getTime(), icon: icon || "package" };
     if (isIn) {
       (doc as any).src = ref || "手動入庫";
       OrderBus.push("stockIn", doc);

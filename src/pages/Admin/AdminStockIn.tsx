@@ -146,21 +146,36 @@ export default function AdminStockIn() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paged.shown.map((row: any) => (
-                <tr key={row.id} className="hover:bg-slate-50/70">
-                  <td className="px-4 py-3">
-                    <div className="font-mono text-sm font-black text-blue-700">{row.id}</div>
-                    <div className="mt-1 font-mono text-[10px] font-bold text-slate-400">{row.date}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-black text-slate-900">{row.item}</td>
-                  <td className="px-4 py-3 text-right font-mono text-sm font-black text-emerald-700">+{Number(row.qty || 0).toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <div className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{row.type}</div>
-                    <div className="mt-1 text-xs font-bold text-slate-500">{row.src || "—"}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-bold text-slate-700">{row.staff}</td>
-                </tr>
-              ))}
+              {(() => {
+                let lastDay = "";
+                return paged.shown.map((row: any) => {
+                  const day = String(row.date || "").split(" ")[0] || "日付なし";
+                  const showHeader = day !== lastDay;
+                  lastDay = day;
+                  return (
+                    <React.Fragment key={row.id}>
+                      {showHeader && (
+                        <tr className="bg-slate-50/80">
+                          <td colSpan={5} className="px-4 py-2 text-[11px] font-black text-slate-500 sticky left-0">📅 {day}</td>
+                        </tr>
+                      )}
+                      <tr className="hover:bg-slate-50/70">
+                        <td className="px-4 py-3">
+                          <div className="font-mono text-sm font-black text-blue-700">{row.id}</div>
+                          <div className="mt-1 font-mono text-[10px] font-bold text-slate-400">{row.date}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm font-black text-slate-900">{row.item}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm font-black text-emerald-700">+{Number(row.qty || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3">
+                          <div className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{row.type}</div>
+                          <div className="mt-1 text-xs font-bold text-slate-500">{row.src || "—"}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm font-bold text-slate-700">{row.staff}</td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                });
+              })()}
             </tbody>
           </table>
           {filteredRows.length === 0 && <div className="py-12 text-center text-sm font-bold text-slate-400">入庫履歴がありません</div>}
