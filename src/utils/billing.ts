@@ -149,11 +149,33 @@ export function calculateTotalPayment(subtotal: number): { subtotal: number; tax
  *   そのままだと請求書が ¥0 / 明細空欄になるため、注文の期間と単価から再計算する。）
  * 元の items は変更せず、補完済みのコピーを返す。
  */
+/**
+ * 課金の終了日（YYYY-MM-DD）。
+ * - 返却済み: 実際の返却日（スタッフ回収日）まで課金。
+ * - レンタル中で返却予定日を過ぎても未返却: 「本日」まで自動延長（= 自動で延長料金が発生）。
+ * - それ以外（処理中・キャンセル等）: 返却予定日のまま（延長しない）。
+ */
+const ACTIVE_RENTAL_STATUSES = ["配送済み", "レンタル中", "回収予定", "回収中"];
+export function billingEndDate(order: any): string | undefined {
+  if (order?.actualReturnDate) return order.actualReturnDate;
+  const end = order?.rentalEndDate;
+  if (!end) return end;
+  const isActive =
+    ACTIVE_RENTAL_STATUSES.includes(String(order?.status || "")) ||
+    order?.staffStatus === "配送完了";
+  if (!isActive) return end;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const endClean = String(end).replace(/\//g, "-").slice(0, 10);
+  // 返却予定日 < 本日（未返却） → 本日まで自動延長
+  return endClean >= todayStr ? end : todayStr;
+}
+
 export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
   const hasVehicle = (order.items || []).some(
     (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
   );
-  const endDate = (order as any).actualReturnDate || order.rentalEndDate;
+  const endDate = billingEndDate(order);
   return (order.items || []).map((item: any) => {
     if (
       item &&
@@ -346,11 +368,13 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
       startDate = orderDateClean;
     }
 
-    if (order.rentalEndDate) {
-      const endClean = order.rentalEndDate.replace(/\//g, "-");
+    // 課金終了日（返却済み=実返却日 / 未返却で期限超過=本日まで自動延長）。
+    const billEnd = billingEndDate(order);
+    if (billEnd) {
+      const endClean = String(billEnd).replace(/\//g, "-");
       const endLocal = parseDateLocal(endClean);
       if (endLocal.getFullYear() === year && (endLocal.getMonth() + 1) === month) {
-        endDate = order.rentalEndDate.replace(/-/g, "/");
+        endDate = String(billEnd).replace(/-/g, "/");
       } else {
         const lastDay = new Date(year, month, 0).getDate();
         endDate = `${year}/${String(month).padStart(2, "0")}/${String(lastDay).padStart(2, "0")}`;
@@ -361,7 +385,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
 
     // Calculate actual days in this block for rent items
     let actualDays = 0;
-    if (order.rentalStartDate && order.rentalEndDate) {
+    if (order.rentalStartDate && billEnd) {
       try {
         const blockStart = parseDateLocal(startDate.replace(/\//g, "-"));
         const blockEnd = parseDateLocal(endDate.replace(/\//g, "-"));

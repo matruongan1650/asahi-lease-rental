@@ -103,6 +103,15 @@ export default function StaffJobDetail() {
     if (role === "delivery") {
       updates.status = "レンタル中";
       updates.staffStatus = "配送完了";
+      // レンタル開始日 = 実際の納品完了日。課金スナップショットを破棄して納品日基準で再計算させる。
+      const now = new Date();
+      updates.rentalStartDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      if (Array.isArray(order.items)) {
+        updates.items = order.items.map((it: any) =>
+          it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
+        );
+      }
+      updates.invoiceBlocks = [];
       if (photoUrls.length) updates.deliveryPhotos = photos;
       if (signature) {
         updates.signature = signature;

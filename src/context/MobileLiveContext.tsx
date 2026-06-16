@@ -291,8 +291,22 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const completeDelivery = (id: string, signature?: string | null, photos?: any[], extra?: any) => {
+    const ordersList0 = OrderBus.getAll<any>("orders");
+    const target0 = ordersList0.find(o => o.id === id || o.firestoreId === id);
+
     // 配送完了後はレンタル中（実際に貸出中）へ。顧客には「現在レンタル中」と表示される。
-    const updates: any = { staffStatus: "配送完了", status: "レンタル中" };
+    const now = new Date();
+    const deliveredDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    // レンタル開始日 = 実際に納品が完了した日。課金はこの日から開始する。
+    const updates: any = { staffStatus: "配送完了", status: "レンタル中", rentalStartDate: deliveredDate };
+    // 開始日が変わるため、注文時に計算した請求スナップショットを破棄して再計算させる
+    //（getOrGenerateInvoiceBlocks / ensureMonthlyBreakdowns が納品日基準で作り直す）。
+    if (target0 && Array.isArray(target0.items)) {
+      updates.items = target0.items.map((it: any) =>
+        it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
+      );
+    }
+    updates.invoiceBlocks = [];
     // 受領サインは Order スキーマ上の deliverySignature と、既存表示が参照する signature の両方に保存
     if (signature) {
       updates.signature = signature;

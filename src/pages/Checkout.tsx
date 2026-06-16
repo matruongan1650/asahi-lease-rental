@@ -8,6 +8,7 @@ import { calculateRentalPrice } from "../utils/billing";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { isVehicleCategory } from '../utils/productUtils';
+import { isBusinessDay, nextBusinessDay, nonBusinessDayReason } from '../utils/jpHolidays';
 import React, { useEffect } from 'react';
 
 // 日付入力は 期間延長（注文詳細）と同じネイティブの <input type="date"> を使用する。
@@ -28,7 +29,18 @@ export default function Checkout() {
   const [notes, setNotes] = useState("");
   const [rentalStartDate, setRentalStartDate] = useState("");
   const [rentalEndDate, setRentalEndDate] = useState("");
-  
+  const [dateError, setDateError] = useState("");
+
+  // 土日・祝日は選択不可。営業日のみ受け付け、それ以外は理由を表示して反映しない。
+  const pickBusinessDate = (value: string, apply: (v: string) => void) => {
+    if (value && !isBusinessDay(value)) {
+      setDateError(`${nonBusinessDayReason(value)}は選択できません。営業日（平日）をお選びください。`);
+      return;
+    }
+    setDateError("");
+    apply(value);
+  };
+
   const [siteName, setSiteName] = useState("");
   const [constructionNumber, setConstructionNumber] = useState("");
   const [companyName, setCompanyName] = useState(profile.companyName);
@@ -43,7 +55,8 @@ export default function Checkout() {
     if (now.getHours() >= 14) {
       min.setDate(min.getDate() + 1);
     }
-    return toDateInputValue(min);
+    // 最短でも次の営業日（土日・祝日を飛ばす）。
+    return nextBusinessDay(toDateInputValue(min));
   })();
   const earliestRentalStartDate = earliestDeliveryDate;
 
@@ -111,7 +124,11 @@ export default function Checkout() {
     rentalStartDate >= earliestRentalStartDate &&
     deliveryDate &&
     deliveryDate >= earliestDeliveryDate &&
-    deliveryDate <= rentalStartDate
+    deliveryDate <= rentalStartDate &&
+    // すべて営業日（土日・祝日不可）
+    isBusinessDay(rentalStartDate) &&
+    isBusinessDay(rentalEndDate) &&
+    isBusinessDay(deliveryDate)
   );
   const isFormValid = siteName.trim() !== "" && constructionNumber.trim() !== "" && isDateRangeValid && deliveryLocation.trim() !== "";
 
@@ -286,15 +303,15 @@ export default function Checkout() {
                 type="date"
                 value={rentalStartDate || ""}
                 min={earliestRentalStartDate}
-                onChange={(e) => {
-                  setRentalStartDate(e.target.value);
-                  if (deliveryDate && e.target.value && deliveryDate > e.target.value) {
-                    setDeliveryDate(e.target.value);
+                onChange={(e) => pickBusinessDate(e.target.value, (v) => {
+                  setRentalStartDate(v);
+                  if (deliveryDate && v && deliveryDate > v) {
+                    setDeliveryDate(v);
                   }
-                  if (rentalEndDate && e.target.value && rentalEndDate < e.target.value) {
-                    setRentalEndDate(e.target.value);
+                  if (rentalEndDate && v && rentalEndDate < v) {
+                    setRentalEndDate(v);
                   }
-                }}
+                })}
                 className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
@@ -304,7 +321,7 @@ export default function Checkout() {
                 type="date"
                 value={rentalEndDate || ""}
                 min={rentalStartDate || undefined}
-                onChange={(e) => setRentalEndDate(e.target.value)}
+                onChange={(e) => pickBusinessDate(e.target.value, setRentalEndDate)}
                 className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
             </div>
@@ -318,7 +335,7 @@ export default function Checkout() {
                 value={deliveryDate || ""}
                 min={earliestDeliveryDate}
                 max={rentalStartDate || undefined}
-                onChange={(e) => setDeliveryDate(e.target.value)}
+                onChange={(e) => pickBusinessDate(e.target.value, setDeliveryDate)}
                 className="w-full min-w-0 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-900 dark:text-white px-2.5 py-3 text-[16px] outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm transition-all font-sans font-medium"
               />
               <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
@@ -326,6 +343,13 @@ export default function Checkout() {
               </p>
             </div>
           </div>
+
+          <p className="text-[11px] text-slate-500 -mt-1">※ 土曜・日曜・祝日は選択できません（営業日のみ）。</p>
+          {dateError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-3 py-2">
+              {dateError}
+            </div>
+          )}
           
           <label className="flex flex-col w-full">
             <div className="flex items-center pb-2">
