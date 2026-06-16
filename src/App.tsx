@@ -28,6 +28,7 @@ import PersonalInfo from "./pages/PersonalInfo";
 import ErrorBoundary from "./components/ErrorBoundary";
 import StaffAuthGate from "./components/staff/StaffAuthGate";
 import AdminAuthGate from "./components/AdminAuthGate";
+import { DialogHost } from "./components/AppDialog";
 import { CartProvider } from "./context/CartContext";
 import { OrderProvider } from "./context/OrderContext";
 import { FeaturedProvider } from "./context/FeaturedContext";
@@ -73,6 +74,7 @@ export default function App() {
               <Route path="/admin" element={<AdminAuthGate><AdminDataProvider><AdminDashboard /></AdminDataProvider></AdminAuthGate>} />
             </Routes>
           </BrowserRouter>
+            <DialogHost />
             </CartProvider>
           </OrderProvider>
           </VehicleProvider>

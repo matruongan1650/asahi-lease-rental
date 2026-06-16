@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { alertDialog } from "../components/AppDialog";
 import { useCart } from "../context/CartContext";
 import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
@@ -168,7 +169,7 @@ export default function Checkout() {
 
   const handleDownloadEstimate = async () => {
     if (!isFormValid) {
-      alert("必須項目をすべて入力してから見積書を発行してください。");
+      void alertDialog("必須項目をすべて入力してから見積書を発行してください。");
       return;
     }
     
@@ -222,7 +223,7 @@ export default function Checkout() {
       
     } catch (err) {
       console.error("PDF generation failed", err);
-      alert("見積書の作成に失敗しました。");
+      void alertDialog("見積書の作成に失敗しました。");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -623,7 +624,7 @@ export default function Checkout() {
               disabled={!isFormValid}
               onClick={() => {
                 if (!isDateRangeValid) {
-                  alert("日付を確認してください。14:00以降は本日のレンタル開始を選択できません。レンタル終了予定日はレンタル開始日以降を選択してください。");
+                  void alertDialog("日付を確認してください。14:00以降は本日のレンタル開始を選択できません。レンタル終了予定日はレンタル開始日以降を選択してください。");
                   return;
                 }
                 setProfile({ ...profile, companyName, firstName: personFirstName, lastName: personLastName, address: deliveryLocation });

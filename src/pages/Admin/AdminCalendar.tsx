@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { confirmDialog } from "../../components/AppDialog";
 import {
   Panel,
   Btn,
@@ -241,9 +242,9 @@ export default function AdminCalendar() {
   const prevMonth = () => setCurrentMonth(new Date(currentYearNum, currentMonthNum - 2, 1));
   const goToToday = () => setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
 
-  const handleDeleteCustomEvent = () => {
+  const handleDeleteCustomEvent = async () => {
     if (!selectedEvent || !selectedEvent.isCustom || !selectedEvent.dateStr || !selectedEvent.id) return;
-    if (window.confirm(`「${selectedEvent.x}」を削除しますか？`)) {
+    if (await confirmDialog(`「${selectedEvent.x}」を削除しますか？`, { danger: true, okText: "削除" })) {
       setCustomEvents(prev => {
         const dayEvs = prev[selectedEvent.dateStr] || [];
         return {

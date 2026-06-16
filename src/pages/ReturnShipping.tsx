@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 
@@ -6,6 +7,15 @@ function normalizeDateInput(value: any): string {
   const match = String(value || "").match(/(\d{4})[^\d](\d{1,2})[^\d](\d{1,2})/);
   if (!match) return "";
   return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+function readImageAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("image read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function ReturnShipping() {
@@ -33,17 +43,14 @@ export default function ReturnShipping() {
     ((returnMinDate && pickupDate < returnMinDate) || (returnMaxDate && pickupDate > returnMaxDate))
   );
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const fileUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (file) {
-          fileUrls.push(URL.createObjectURL(file));
-        }
-      }
-      setPhotos(prev => [...prev, ...fileUrls]);
+      const remainingSlots = Math.max(0, 5 - photos.length);
+      const selected = Array.from(files).slice(0, remainingSlots).filter((file) => file.type.startsWith("image/"));
+      const dataUrls = await Promise.all(selected.map(readImageAsDataUrl));
+      setPhotos(prev => [...prev, ...dataUrls.filter(Boolean)].slice(0, 5));
+      e.target.value = "";
     }
   };
 
@@ -80,32 +87,25 @@ export default function ReturnShipping() {
               </div>
             </label>
             
-            {returnType !== "partial" ? (
-              <label className={`flex items-start p-4 rounded-xl border-2 transition-all cursor-pointer ${method === "pickup" ? "border-primary bg-primary/5" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"}`}>
-                <input 
-                  type="radio" 
-                  name="returnMethod" 
-                  value="pickup"
-                  checked={method === "pickup"}
-                  onChange={() => setMethod("pickup")}
-                  className="mt-1 w-5 h-5 text-primary border-slate-300 focus:ring-primary"
-                />
-                <div className="ml-3 flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="material-symbols-outlined text-[20px] text-slate-600 dark:text-slate-300">local_shipping</span>
-                    <span className="font-bold text-sm">回収を依頼</span>
-                  </div>
-                  <p className="text-xs text-slate-500">回収者が指定の場所まで引取に伺います。</p>
+            <label className={`flex items-start p-4 rounded-xl border-2 transition-all cursor-pointer ${method === "pickup" ? "border-primary bg-primary/5" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"}`}>
+              <input
+                type="radio"
+                name="returnMethod"
+                value="pickup"
+                checked={method === "pickup"}
+                onChange={() => setMethod("pickup")}
+                className="mt-1 w-5 h-5 text-primary border-slate-300 focus:ring-primary"
+              />
+              <div className="ml-3 flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="material-symbols-outlined text-[20px] text-slate-600 dark:text-slate-300">local_shipping</span>
+                  <span className="font-bold text-sm">回収を依頼</span>
                 </div>
-              </label>
-            ) : (
-              <div className="rounded-xl bg-amber-50/50 p-4 border border-amber-100 text-xs text-amber-800 dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
-                <p className="font-bold mb-1">【一部返却における回収依頼制限】</p>
-                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  一部返却（レンタル商品の一部のみの返却）の場合、回収依頼はご利用いただけません。恐れ入りますが、倉庫まで直接お持ち込みをお願いいたします。全商品を返却される場合は、一括返却を選択してください。
+                <p className="text-xs text-slate-500">
+                  {returnType === "partial" ? "一部返却の対象品だけを指定場所まで引取に伺います。" : "回収者が指定の場所まで引取に伺います。"}
                 </p>
               </div>
-            )}
+            </label>
           </div>
         </section>
 
@@ -226,7 +226,7 @@ export default function ReturnShipping() {
           <button 
             onClick={() => {
               if (!pickupDate || isDateOutOfRange) {
-                alert("返却予定日はレンタル開始日からレンタル終了予定日の範囲で選択してください。");
+                void alertDialog("返却予定日はレンタル開始日からレンタル終了予定日の範囲で選択してください。");
                 return;
               }
               setProfile({ ...profile, address });

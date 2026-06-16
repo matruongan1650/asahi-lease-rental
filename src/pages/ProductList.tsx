@@ -1,4 +1,5 @@
 import React, { useState, FC, useEffect, useRef } from "react";
+import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
@@ -117,7 +118,7 @@ export default function ProductList() {
       }
     }
     setQuantities({});
-    alert("カートに追加しました");
+    void alertDialog("カートに追加しました");
   };
 
   return (

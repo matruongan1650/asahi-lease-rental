@@ -1,12 +1,13 @@
 import { Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
+import { confirmDialog } from "../components/AppDialog";
 
 export default function Profile() {
   const { profile, logout } = useUser();
 
-  const handleLogout = () => {
-    if (window.confirm("ログアウトしますか？")) {
+  const handleLogout = async () => {
+    if (await confirmDialog("ログアウトしますか？", { okText: "ログアウト", danger: true })) {
       logout();
     }
   };

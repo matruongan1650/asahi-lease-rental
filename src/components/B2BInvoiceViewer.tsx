@@ -1,4 +1,5 @@
 import React, { useRef, useState, useMemo, useEffect } from "react";
+import { alertDialog } from "./AppDialog";
 import { groupOrdersByCompany } from "../utils/rentalInvoiceGrouping";
 import {
   renderCompanyCoverPage,
@@ -120,7 +121,7 @@ export default function B2BInvoiceViewer({
       }
     } catch (err) {
       console.error("PDF export error:", err);
-      alert("PDFの生成中にエラーが発生しました。");
+      void alertDialog("PDFの生成中にエラーが発生しました。");
     } finally {
       setIsGenerating(false);
     }

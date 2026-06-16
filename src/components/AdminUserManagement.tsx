@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useUser, UserProfile } from "../context/UserContext";
+import { confirmDialog, alertDialog } from "./AppDialog";
 
 export default function AdminUserManagement() {
   const { users, addUser, updateUser, deleteUser } = useUser();
@@ -46,8 +47,8 @@ export default function AdminUserManagement() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (window.confirm("このアカウントを削除してもよろしいですか？")) {
+  const handleDelete = async (id: string) => {
+    if (await confirmDialog("このアカウントを削除してもよろしいですか？", { danger: true, okText: "削除" })) {
       deleteUser(id);
     }
   };
@@ -68,6 +69,11 @@ export default function AdminUserManagement() {
       email: formData.get("email"),
       phone: formData.get("phone"),
       address: formData.get("address"),
+      avatarUrl: formData.get("avatarUrl") || "",
+      position: formData.get("position") || "",
+      team: formData.get("team") || "",
+      employeeCode: formData.get("employeeCode") || "",
+      status: formData.get("status") || "active",
       role: roleVal,
       companyType: activeSubTab,
     };
@@ -84,12 +90,11 @@ export default function AdminUserManagement() {
       updateUser(editingUser.id, userData);
     } else {
       addUser({
-        id: "USR_" + Date.now(),
+        id: userData.employeeCode || "USR_" + Date.now(),
         ...userData,
-        avatarUrl: "",
       } as UserProfile);
       if (!passwordInput) {
-        alert(
+        void alertDialog(
           `${userData.lastName} ${userData.firstName} のログイン情報\n\nログインID: ${userData.email}\nパスワード: ${userData.password}\n\n必ず控えて本人に共有してください。`,
         );
       }
@@ -144,6 +149,9 @@ export default function AdminUserManagement() {
                   会社・所属
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b">
+                  Profile
+                </th>
+                <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b">
                   役割・権限
                 </th>
                 <th className="p-3 text-xs font-bold text-slate-500 uppercase tracking-wider border-b text-center">
@@ -167,6 +175,11 @@ export default function AdminUserManagement() {
                     <span className="text-sm font-medium text-slate-800">
                       {u.companyName}
                     </span>
+                    {u.team && <p className="text-xs text-slate-500 mt-0.5">{u.team}</p>}
+                  </td>
+                  <td className="p-3">
+                    <p className="text-sm font-bold text-slate-800">{u.position || "—"}</p>
+                    <p className="text-xs text-slate-500">{u.employeeCode || u.id}</p>
                   </td>
                   <td className="p-3 text-sm font-medium text-slate-700">
                     {u.role === "admin" ? (
@@ -209,7 +222,7 @@ export default function AdminUserManagement() {
               ))}
               {displayUsers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">
+                  <td colSpan={6} className="p-8 text-center text-slate-500">
                     データが存在しません。
                   </td>
                 </tr>
@@ -318,6 +331,57 @@ export default function AdminUserManagement() {
                 </div>
               )}
 
+              {activeSubTab === "our_company" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                      社員ID
+                    </label>
+                    <input
+                      defaultValue={editingUser.employeeCode || editingUser.id}
+                      name="employeeCode"
+                      placeholder="STF-001"
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                      ステータス
+                    </label>
+                    <select
+                      name="status"
+                      defaultValue={editingUser.status || "active"}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
+                    >
+                      <option value="active">有効</option>
+                      <option value="inactive">停止中</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                      拠点・チーム
+                    </label>
+                    <input
+                      defaultValue={editingUser.team || ""}
+                      name="team"
+                      placeholder="東京中央ベース"
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                      職種・担当
+                    </label>
+                    <input
+                      defaultValue={editingUser.position || ""}
+                      name="position"
+                      placeholder="配送・回収担当"
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">
                   メールアドレス
@@ -345,9 +409,32 @@ export default function AdminUserManagement() {
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">
+                  住所・拠点住所
+                </label>
+                <input
+                  defaultValue={editingUser.address}
+                  name="address"
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  プロフィール画像URL
+                </label>
+                <input
+                  defaultValue={editingUser.avatarUrl || ""}
+                  name="avatarUrl"
+                  placeholder="https://..."
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
                   パスワード{" "}
                   <span className="font-normal text-slate-400">
-                    （お客様サイトのログイン用）
+                    （ログイン用）
                   </span>
                 </label>
                 <input

@@ -1,4 +1,5 @@
 import { useNavigate, useParams, Link } from "react-router-dom";
+import { alertDialog } from "../components/AppDialog";
 import React, { useState, useEffect } from "react";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
@@ -224,7 +225,7 @@ export default function ProductDetail() {
                   rentalDays: 1, // default 1
                   category: product.category,
                 });
-                alert("カートに追加しました");
+                void alertDialog("カートに追加しました");
               }}
               className="flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors"
             >

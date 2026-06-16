@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { confirmDialog, alertDialog } from "./AppDialog";
 import { Link, useNavigate } from "react-router-dom";
 import { useUser, UserProfile } from "../context/UserContext";
 import { useOrders, Order } from "../context/OrderContext";
@@ -176,9 +177,9 @@ export default function AdminCustomerManagement() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [selectedCustomerId, contracts]);
 
-  const handleDeleteContract = useCallback((fileId: string, fileName: string) => {
+  const handleDeleteContract = useCallback(async (fileId: string, fileName: string) => {
     if (!selectedCustomerId) return;
-    if (window.confirm(`「${fileName}」を削除してもよろしいですか？`)) {
+    if (await confirmDialog(`「${fileName}」を削除してもよろしいですか？`, { danger: true, okText: "削除" })) {
       const updated = contracts.filter(f => f.id !== fileId);
       setContracts(updated);
       saveContracts(selectedCustomerId, updated);
@@ -403,7 +404,7 @@ export default function AdminCustomerManagement() {
     setSubPhone("");
     setIsAddSubUserModalOpen(false);
     triggerToast(`担当者 ${subLastName} を追加しました（パスワード: ${newPassword}）`, "ok");
-    alert(`${subLastName} ${subFirstName} の自動生成パスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
+    void alertDialog(`${subLastName} ${subFirstName} の自動生成パスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
   };
 
   const handleBulkAddSubUsers = (e: React.FormEvent, companyName: string) => {
@@ -481,20 +482,20 @@ export default function AdminCustomerManagement() {
     triggerToast(`担当者 ${editSubLastName} を更新しました`, "ok");
   };
 
-  const handleDeleteSubUser = (userId: string, userName: string) => {
-    if (window.confirm(`${userName} を削除してもよろしいですか？`)) {
+  const handleDeleteSubUser = async (userId: string, userName: string) => {
+    if (await confirmDialog(`${userName} を削除してもよろしいですか？`, { danger: true, okText: "削除" })) {
       deleteUser(userId);
       triggerToast(`${userName} を削除しました`, "ok");
     }
   };
 
-  const handleResetPassword = (userId: string, userName: string) => {
-    if (window.confirm(`${userName} のパスワードをリセットしますか？`)) {
+  const handleResetPassword = async (userId: string, userName: string) => {
+    if (await confirmDialog(`${userName} のパスワードをリセットしますか？`)) {
       const newPassword = Math.random().toString(36).slice(-8); // Generate 8 char random password
       updateUser(userId, { password: newPassword });
       triggerToast(`新しいパスワード: ${newPassword}`, "ok");
       // Displaying it as alert to make sure user sees it and copies it
-      alert(`${userName} の新しいパスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
+      void alertDialog(`${userName} の新しいパスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
     }
   };
 

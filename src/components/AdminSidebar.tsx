@@ -1,5 +1,6 @@
 import React from "react";
 import { useUser } from "../context/UserContext";
+import { confirmDialog } from "./AppDialog";
 
 export type AdminTab =
   | "dashboard"
@@ -43,8 +44,8 @@ export default function AdminSidebar({
   allowedTabs,
 }: AdminSidebarProps) {
   const { currentUser, logout } = useUser();
-  const handleLogout = () => {
-    if (window.confirm("ログアウトしますか？")) logout();
+  const handleLogout = async () => {
+    if (await confirmDialog("ログアウトしますか？", { okText: "ログアウト", danger: true })) logout();
   };
   const menuGroups: { title: string; items: SidebarItem[] }[] = [
     {

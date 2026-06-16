@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
+import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate } from "react-router-dom";
 import { useFeatured } from "../context/FeaturedContext";
 import { useCart } from "../context/CartContext";
 import { useUser } from "../context/UserContext";
 import { useProducts } from "../context/ProductContext";
 import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
+import CustomerNotificationBell from "../components/CustomerNotificationBell";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -25,7 +27,6 @@ export default function Home() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [activeTab, setActiveTab] = useState<'supplies' | 'vehicles'>('supplies');
   const [searchQuery, setSearchQuery] = useState("");
-  const [showNotifications, setShowNotifications] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -102,7 +103,7 @@ export default function Home() {
       }
     }
     setQuantities({});
-    alert("カートに追加しました");
+    void alertDialog("カートに追加しました");
   };
   
   return (
@@ -122,27 +123,8 @@ export default function Home() {
               <span className="text-base font-bold text-slate-900 dark:text-white leading-none">{profile.lastName} {profile.firstName}</span>
             </div>
           </div>
-          <button onClick={() => setShowNotifications(!showNotifications)} className="relative p-2.5 rounded-full bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 transition-colors group">
-            <span className="material-symbols-outlined text-slate-600 dark:text-slate-300 group-active:scale-95 transition-transform text-[22px]">notifications</span>
-            <span className="absolute top-2 right-2.5 h-2 w-2 bg-red-500 rounded-full border border-slate-50 dark:border-slate-800 animate-pulse"></span>
-          </button>
+          <CustomerNotificationBell />
         </div>
-        
-        {showNotifications && (
-          <div className="absolute top-16 right-4 w-72 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 p-4 z-50 animate-in fade-in slide-in-from-top-2">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-2 pb-2 border-b border-slate-100 dark:border-slate-700">お知らせ</h3>
-            <div className="flex flex-col gap-3">
-              <div className="text-sm">
-                <p className="text-primary font-bold text-xs mb-1">新着</p>
-                <p className="text-slate-700 dark:text-slate-300">新しい保安車両が入荷しました。</p>
-              </div>
-              <div className="text-sm">
-                <p className="text-slate-400 font-bold text-xs mb-1">システム</p>
-                <p className="text-slate-700 dark:text-slate-300">メンテナンス計画のお知らせ</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="px-5 pb-4" ref={searchContainerRef}>
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/50 rounded-2xl overflow-hidden h-12 transition-all focus-within:ring-2 focus-within:ring-primary/30 focus-within:bg-white dark:focus-within:bg-slate-800 shadow-sm border border-transparent focus-within:border-primary/20">

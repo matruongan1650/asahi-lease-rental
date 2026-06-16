@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { alertDialog } from "../components/AppDialog";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
@@ -32,6 +33,19 @@ function collectCustomerPhotos(label: string, ...values: any[]): CustomerPhoto[]
     .flatMap((value) => Array.isArray(value) ? value : value ? [value] : [])
     .map((photo) => normalizeCustomerPhoto(photo, label))
     .filter((photo): photo is CustomerPhoto => Boolean(photo));
+}
+
+function formatConfirmedAt(value: any): string {
+  if (!value) return "—";
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function CustomerPhotoTile({ photo, alt }: { photo: CustomerPhoto; alt: string }) {
@@ -250,7 +264,7 @@ export default function OrderDetail() {
       });
 
       setIsExtending(false);
-      alert("レンタル期間を延長しました。");
+      void alertDialog("レンタル期間を延長しました。");
     } catch (err) {
       console.error(err);
       setExtendingError("延長処理に失敗しました。");
@@ -360,6 +374,18 @@ export default function OrderDetail() {
               <p className="text-xs text-slate-500 dark:text-slate-400 font-bold mb-1">納品希望日</p>
               <p className="text-sm font-medium">{order.deliveryDate || "-"}</p>
             </div>
+            {(order as any).deliveryConfirmedAt && (
+              <div className="border-t border-emerald-100 dark:border-emerald-900/50 pt-3">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mb-1">納品確認時刻</p>
+                <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{formatConfirmedAt((order as any).deliveryConfirmedAt)}</p>
+              </div>
+            )}
+            {(order as any).collectionConfirmedAt && (
+              <div className="border-t border-blue-100 dark:border-blue-900/50 pt-3">
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-bold mb-1">回収確認時刻</p>
+                <p className="text-sm font-bold text-blue-700 dark:text-blue-300">{formatConfirmedAt((order as any).collectionConfirmedAt)}</p>
+              </div>
+            )}
           </div>
         </section>
 

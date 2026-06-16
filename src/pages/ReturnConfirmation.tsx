@@ -1,4 +1,5 @@
 import React from "react";
+import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { calculateRentalPrice, getOrGenerateInvoiceBlocks } from "../utils/billing";
@@ -106,6 +107,7 @@ export default function ReturnConfirmation() {
         status: "回収中",
         staffStatus: "回収予定",
         returnRequestType: returnReqType,
+        requestedReturn: returnQuantities,
         rentalEndDate: pickupDate || order.rentalEndDate,
         notes: `【回収リクエスト】希望日時: ${pickupDate} ${pickupTime}\n集荷場所: ${address}\n${order.notes || order.note || ''}`
       });
@@ -164,7 +166,7 @@ export default function ReturnConfirmation() {
       updateOrder(order.id, { status: "検品待ち", returnRequestType: returnReqType });
     }
 
-    alert(
+    void alertDialog(
       method === "direct"
         ? "返却を受け付けました。倉庫での検品後に内容が確定します。"
         : "返却リクエストを送信しました。"

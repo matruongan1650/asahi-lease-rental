@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
+import { alertDialog } from "./AppDialog";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { isVehicleCategory } from "../utils/productUtils";
@@ -13,6 +14,7 @@ interface DocumentViewerProps {
 
 // A4 (210mm) の CSS ピクセル幅（96dpi 換算）。スマホでの縮小率計算に使用。
 const A4_PX_WIDTH = 794;
+const formatYen = (value: number) => Math.round(Number(value) || 0).toLocaleString("ja-JP");
 
 export default function DocumentViewer({ order, type, blockId, onClose }: DocumentViewerProps) {
   const documentRef = useRef<HTMLDivElement>(null);
@@ -91,7 +93,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       pdf.save(`${type}_${order.orderNumber}.pdf`);
     } catch (err) {
       console.error("PDF生成エラー:", err);
-      alert("PDFの生成中にエラーが発生しました。");
+      void alertDialog("PDFの生成中にエラーが発生しました。");
     } finally {
       setIsGenerating(false);
     }
@@ -127,10 +129,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
   // 注文に invoiceBlocks が保存されていない場合でも生成して参照する。
   // （保存されていないと per-month 請求書がブロックを見つけられず、注文全体の合計に
   //  フォールバックして月別の金額がずれる）
-  const allBlocks =
-    order.invoiceBlocks && order.invoiceBlocks.length > 0
-      ? order.invoiceBlocks
-      : getOrGenerateInvoiceBlocks(order);
+  const allBlocks = getOrGenerateInvoiceBlocks(order);
   const block = blockId ? allBlocks.find((b: any) => b.id === blockId) : null;
 
   // Totals to display
@@ -158,7 +157,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     if (block.extraCosts) {
       block.extraCosts.forEach((cost: any) => {
         itemsToRender.push({
-          name: cost.itemName,
+          name: cost.itemName || cost.note || "追加費用",
           isExtraCost: true,
           quantity: 1,
           price: cost.amount,
@@ -268,8 +267,8 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                 <p className="mb-2 text-sm">{message}</p>
                 {type === "請求書" && (
                   <>
-                    <h2 className="font-bold text-xl mb-1 mt-4">ご請求金額： ¥{total.toLocaleString()} -</h2>
-                    <p className="text-xs text-slate-500">(消費税 10% ¥{tax.toLocaleString()} を含む)</p>
+                    <h2 className="font-bold text-xl mb-1 mt-4">ご請求金額： ¥{formatYen(total)} -</h2>
+                    <p className="text-xs text-slate-500">(消費税 10% ¥{formatYen(tax)} を含む)</p>
                   </>
                 )}
               </div>
@@ -354,8 +353,8 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                       </td>
                       {type === "請求書" && (
                         <>
-                          <td className="border border-slate-300 p-2 text-right">¥{price.toLocaleString()}</td>
-                          <td className="border border-slate-300 p-2 text-right">¥{calculatedPrice.toLocaleString()}</td>
+                          <td className="border border-slate-300 p-2 text-right">¥{formatYen(price)}</td>
+                          <td className="border border-slate-300 p-2 text-right">¥{formatYen(calculatedPrice)}</td>
                         </>
                       )}
                     </tr>
@@ -405,15 +404,15 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                   <tbody>
                     <tr>
                       <th className="border border-slate-400 bg-slate-100 p-2 text-left">小計</th>
-                      <td className="border border-slate-400 p-2 text-right">¥{subtotal.toLocaleString()}</td>
+                      <td className="border border-slate-400 p-2 text-right">¥{formatYen(subtotal)}</td>
                     </tr>
                     <tr>
                       <th className="border border-slate-400 bg-slate-100 p-2 text-left">消費税 (10%)</th>
-                      <td className="border border-slate-400 p-2 text-right">¥{tax.toLocaleString()}</td>
+                      <td className="border border-slate-400 p-2 text-right">¥{formatYen(tax)}</td>
                     </tr>
                     <tr>
                       <th className="border border-slate-400 bg-slate-100 p-2 text-left font-bold border-b-2">合計</th>
-                      <td className="border border-slate-400 p-2 text-right font-bold text-lg border-b-2">¥{total.toLocaleString()}</td>
+                      <td className="border border-slate-400 p-2 text-right font-bold text-lg border-b-2">¥{formatYen(total)}</td>
                     </tr>
                   </tbody>
                 </table>

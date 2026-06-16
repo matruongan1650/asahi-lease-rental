@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { alertDialog } from "../components/AppDialog";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 
@@ -26,7 +27,7 @@ export default function PersonalInfo() {
 
   const handleSave = () => {
     setProfile(formData);
-    alert("保存しました。");
+    void alertDialog("保存しました。");
     navigate(-1);
   };
 

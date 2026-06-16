@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { confirmDialog } from "../../components/AppDialog";
 import { useAdminCollection } from "../../context/AdminDataContext";
 import {
   Badge,
@@ -247,8 +248,8 @@ export default function AdminMaintenance() {
             )}
           </button>
           <button
-            onClick={() => {
-              if (window.confirm(`${r.name} を削除してもよろしいですか？`)) {
+            onClick={async () => {
+              if (await confirmDialog(`${r.name} を削除してもよろしいですか？`, { danger: true, okText: "削除" })) {
                 OrderBus.remove("maintenance", r.id);
                 triggerToast(`${r.name} を削除しました`, "ok");
               }
