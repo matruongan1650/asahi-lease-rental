@@ -1,4 +1,5 @@
 import React from "react";
+import { useUser } from "../context/UserContext";
 
 export type AdminTab =
   | "dashboard"
@@ -26,6 +27,7 @@ export type AdminTab =
 interface AdminSidebarProps {
   activeTab: AdminTab;
   setActiveTab: (tab: AdminTab) => void;
+  allowedTabs?: Set<AdminTab>;
 }
 
 type SidebarItem = {
@@ -38,7 +40,12 @@ type SidebarItem = {
 export default function AdminSidebar({
   activeTab,
   setActiveTab,
+  allowedTabs,
 }: AdminSidebarProps) {
+  const { currentUser, logout } = useUser();
+  const handleLogout = () => {
+    if (window.confirm("ログアウトしますか？")) logout();
+  };
   const menuGroups: { title: string; items: SidebarItem[] }[] = [
     {
       title: "業務",
@@ -109,13 +116,16 @@ export default function AdminSidebar({
       </div>
 
       <div className="flex-1 py-3 px-3">
-        {menuGroups.map((group, index) => (
+        {menuGroups.map((group, index) => {
+          const items = allowedTabs ? group.items.filter((item) => allowedTabs.has(item.id)) : group.items;
+          if (items.length === 0) return null;
+          return (
           <div key={index} className="mb-4">
             <h3 className="px-2.5 text-[10px] font-black text-[#7ca39f] mb-1.5 tracking-[0.12em] uppercase">
               {group.title}
             </h3>
             <ul className="space-y-0.5">
-              {group.items.map((item) => (
+              {items.map((item) => (
                 <li key={item.id}>
                   <button
                     onClick={() => setActiveTab(item.id)}
@@ -144,7 +154,23 @@ export default function AdminSidebar({
               ))}
             </ul>
           </div>
-        ))}
+        )})}
+      </div>
+
+      <div className="border-t border-[#cfe6e3] bg-[#fffdf6] p-3">
+        <div className="px-1 pb-2 min-w-0">
+          <div className="text-[12px] font-black text-[#173b38] truncate">
+            {currentUser ? `${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email : "—"}
+          </div>
+          <div className="text-[10px] font-bold text-[#7ca39f] truncate">{currentUser?.email || ""}</div>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-black text-red-600 hover:bg-red-50 transition-colors"
+        >
+          <span className="material-symbols-outlined text-[18px]">logout</span>
+          ログアウト
+        </button>
       </div>
     </aside>
   );
