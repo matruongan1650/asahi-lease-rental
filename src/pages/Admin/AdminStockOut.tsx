@@ -31,6 +31,11 @@ export default function AdminStockOut() {
   const [actionKind, setActionKind] = useState<"レンタル" | "販売">("レンタル");
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("すべて");
+  const [monthFilter, setMonthFilter] = useState("すべて");
+  const months = useMemo(
+    () => Array.from(new Set(rows.map((r: any) => String(r.date || "").slice(0, 7)).filter(Boolean))).sort().reverse(),
+    [rows],
+  );
 
   const [itemSelect, setItemSelect] = useState("");
   const [qty, setQty] = useState(10);
@@ -47,11 +52,12 @@ export default function AdminStockOut() {
     const q = query.trim().toLowerCase();
     return [...rows]
       .filter((row: any) => typeFilter === "すべて" || row.type === typeFilter)
+      .filter((row: any) => monthFilter === "すべて" || String(row.date || "").slice(0, 7) === monthFilter)
       .filter((row: any) => !q || [row.id, row.item, row.dst, row.staff, row.type].some((v) => String(v || "").toLowerCase().includes(q)))
       .sort((a: any, b: any) => String(b.date || "").localeCompare(String(a.date || "")));
-  }, [rows, query, typeFilter]);
+  }, [rows, query, typeFilter, monthFilter]);
 
-  const paged = usePagedList(filteredRows, 50, [query, typeFilter]);
+  const paged = usePagedList(filteredRows, 50, [query, typeFilter, monthFilter]);
 
   const handleOpenModal = (kind: "レンタル" | "販売") => {
     setActionKind(kind);
@@ -132,9 +138,15 @@ export default function AdminStockOut() {
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[19px]">search</span>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="出庫番号・品名・現場を検索" className="h-[38px] w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold outline-none focus:border-[#1a1c9a]/50" />
             </div>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-[38px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700">
-              {["すべて", "レンタル", "販売"].map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="h-[38px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700">
+                <option value="すべて">全期間</option>
+                {months.map((m) => <option key={m} value={m}>{m.replace("/", "年") + "月"}</option>)}
+              </select>
+              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-[38px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700">
+                {["すべて", "レンタル", "販売"].map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
           </div>
         </div>
 
