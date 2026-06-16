@@ -3,6 +3,7 @@ import { Badge, Btn, triggerToast } from "../../components/AdminUI";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import DocumentViewer from "../../components/DocumentViewer";
 import { useAdminOrders } from "../../context/AdminDataContext";
+import { useServerQuery } from "../../lib/ordersQuery";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 
 type RentalQueue = "new" | "arranged" | "active" | "closed";
@@ -45,78 +46,70 @@ function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: 
   );
 }
 
+const QUEUE_STATUS: Record<RentalQueue, string[]> = {
+  new: ["処理中", "注文確認中", "未割当"],
+  arranged: ["確認済み", "配送予定", "準備中", "配送中", "割当済み"],
+  active: ["進行中", "レンタル中", "配送済み"],
+  closed: ["返却済", "返却済み", "完了", "キャンセル", "検品待ち", "一部返却", "回収予定", "回収中"],
+};
+
+function toRentalRow(o: any) {
+  return {
+    _raw: o,
+    id: o.orderNumber || o.id,
+    firestoreId: o.firestoreId || o.id,
+    date: o.date || "",
+    customer: o.companyName || `${o.personLastName || ""} ${o.personFirstName || ""}`.trim() || o.personName || "ゲスト",
+    site: o.siteName || "—",
+    start: (o.rentalStartDate || "").replace(/-/g, "/") || "—",
+    end: (o.rentalEndDate || "").replace(/-/g, "/") || "—",
+    items: (o.items || []).length,
+    amount: o.total || 0,
+    status: o.status,
+    returnRequestType: o.returnRequestType,
+  };
+}
+
 export default function AdminRental() {
-  const liveOrders = useAdminOrders();
+  const liveOrders = useAdminOrders(); // KPI(レンタル売上) + patchOrder 用
   const [queue, setQueue] = useState<RentalQueue>("new");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [viewingDocOrder, setViewingDocOrder] = useState<any>(null);
 
-  const rentals = liveOrders.rentals || [];
+  // 数万件でも 1 ページのみ取得（サーバー側でフィルタ＋ページング）。
+  const { rows, total, statusCounts, hasMore, loading, loadMore, refresh } = useServerQuery(
+    "orders",
+    { hasType: "rent", statusIn: QUEUE_STATUS[queue], q: searchQuery, counts: true, pageSize: 50 },
+    queue,
+  );
+  const displayRows = useMemo(() => rows.map(toRentalRow), [rows]);
 
+  // キュー件数バッジ = サーバーの status 別件数をキューへ集約。
   const queueCounts = useMemo(() => {
-    return rentals.reduce((acc: Record<RentalQueue, number>, r: any) => {
-      acc[queueFor(String(r.status || ""))] += 1;
-      return acc;
-    }, { new: 0, arranged: 0, active: 0, closed: 0 });
-  }, [rentals]);
-
-  const filteredRentals = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return rentals.filter((r: any) => {
-      if (queueFor(String(r.status || "")) !== queue) return false;
-      if (!q) return true;
-      return [r.id, r.customer, r.site, r.status].some((v) => normalizeText(v).includes(q));
-    });
-  }, [rentals, queue, searchQuery]);
-
-  // 注文が多い時に全行を一度に描画して重くなるのを防ぐ（段階表示）。
-  const PAGE = 50;
-  const [visibleCount, setVisibleCount] = useState(PAGE);
-  useEffect(() => { setVisibleCount(PAGE); }, [queue, searchQuery]);
-
-  const fullOrderFor = (row: any) =>
-    liveOrders.orders.find((o: any) => o.firestoreId === row.firestoreId || o.id === row.firestoreId || o.orderNumber === row.id || o.id === row.id);
+    const acc: Record<RentalQueue, number> = { new: 0, arranged: 0, active: 0, closed: 0 };
+    for (const [st, c] of Object.entries(statusCounts)) acc[queueFor(String(st))] += Number(c) || 0;
+    return acc;
+  }, [statusCounts]);
 
   const handleAccept = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    const id = orderKey(fullOrder) || row.firestoreId;
-    if (!id) {
-      triggerToast("注文データが見つかりません", "err");
-      return;
-    }
+    const id = orderKey(row._raw);
+    if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
     liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "配送予定" });
     triggerToast(`${row.id} を受注確定し、配送手配へ送りました`, "ok");
+    setTimeout(refresh, 300);
   };
 
   const handleMoveToActive = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    const id = orderKey(fullOrder) || row.firestoreId;
-    if (!id) {
-      triggerToast("注文データが見つかりません", "err");
-      return;
-    }
+    const id = orderKey(row._raw);
+    if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
     liveOrders.patchOrder(id, { status: "レンタル中", staffStatus: "完了" });
     triggerToast(`${row.id} をレンタル中に更新しました`, "ok");
+    setTimeout(refresh, 300);
   };
 
-  const openDetail = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    if (!fullOrder) {
-      triggerToast("詳細データが見つかりません", "err");
-      return;
-    }
-    setSelectedOrder(fullOrder);
-  };
-
-  const openDeliveryDoc = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    if (!fullOrder) {
-      triggerToast("注文データが見つかりません", "err");
-      return;
-    }
-    setViewingDocOrder(fullOrder);
-  };
+  const openDetail = (row: any) => setSelectedOrder(row._raw);
+  const openDeliveryDoc = (row: any) => setViewingDocOrder(row._raw);
 
   const queues = [
     { id: "new" as const, label: "受注待ち", icon: "inbox", count: queueCounts.new },
@@ -135,7 +128,7 @@ export default function AdminRental() {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               実注文データ連携
             </span>
-            <span>{filteredRentals.length} 件表示</span>
+            <span>{total.toLocaleString()} 件{loading ? "（読込中…）" : ""}</span>
           </div>
         </div>
       </div>
@@ -194,7 +187,7 @@ export default function AdminRental() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredRentals.slice(0, visibleCount).map((row: any) => (
+              {displayRows.map((row: any) => (
                 <tr key={row.firestoreId || row.id} className="hover:bg-slate-50/70">
                   <td className="px-4 py-3">
                     <div className="font-mono text-sm font-black text-blue-700">{row.id}</div>
@@ -237,19 +230,20 @@ export default function AdminRental() {
               ))}
             </tbody>
           </table>
-          {filteredRentals.length === 0 && (
+          {total === 0 && !loading && (
             <div className="py-14 text-center">
               <span className="material-symbols-outlined text-[42px] text-slate-300">inbox</span>
               <div className="mt-2 text-sm font-black text-slate-700">該当するレンタル注文がありません</div>
             </div>
           )}
-          {filteredRentals.length > visibleCount && (
+          {hasMore && (
             <div className="py-4 text-center border-t border-slate-100">
               <button
-                onClick={() => setVisibleCount((c) => c + PAGE)}
-                className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700 active:scale-95 transition"
+                onClick={loadMore}
+                disabled={loading}
+                className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700 active:scale-95 transition disabled:opacity-50"
               >
-                さらに表示（残り {filteredRentals.length - visibleCount} 件）
+                さらに表示（残り {(total - displayRows.length).toLocaleString()} 件）
               </button>
             </div>
           )}
@@ -263,10 +257,12 @@ export default function AdminRental() {
         onUpdateStatus={(id, status, staffStatus) => {
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
           triggerToast("ステータスを更新しました", "ok");
+          setTimeout(refresh, 300);
         }}
         onUpdateOrder={(id, updates) => {
           liveOrders.patchOrder(id, updates);
           setSelectedOrder((prev: any) => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
+          setTimeout(refresh, 300);
         }}
       />
 

@@ -17,6 +17,21 @@ export interface ChangeRow {
   rev: number;
 }
 
+export interface QueryOpts {
+  hasType?: string;        // "rent" | "buy"
+  statusIn?: string[];     // OR over statuses
+  q?: string;              // full-text contains
+  limit: number;
+  offset: number;
+  counts?: boolean;        // also return status-grouped counts (over hasType+q range)
+}
+export interface QueryResult {
+  rows: any[];
+  total: number;
+  sumTotal: number;
+  statusCounts: Record<string, number>;
+}
+
 export interface Db {
   init(): Promise<void>;
   list(store: string): Promise<Array<{ id: string; data: unknown }>>;
@@ -24,6 +39,7 @@ export interface Db {
   remove(store: string, id: string): Promise<void>;
   setAll(store: string, items: Array<{ id: string; data: unknown }>): Promise<void>;
   changesSince(since: number): Promise<{ rows: ChangeRow[]; rev: number }>;
+  queryRecords(store: string, opts: QueryOpts): Promise<QueryResult>;
   kind: "neon" | "memory";
 }
 
@@ -87,6 +103,30 @@ function createMemoryDb(): Db {
       rows.sort((a, b) => a.rev - b.rev);
       const rev = rows.length ? rows[rows.length - 1].rev : since;
       return { rows, rev };
+    },
+    async queryRecords(store, opts) {
+      const m = getStore(store);
+      const all = Array.from(m.entries())
+        .filter(([, v]) => !v.deleted)
+        .sort((a, b) => b[1].rev - a[1].rev)
+        .map(([id, v]) => ({ id, ...(v.data as any) }));
+      let base = all;
+      if (opts.hasType) base = base.filter((o: any) => Array.isArray(o.items) && o.items.some((i: any) => i?.type === opts.hasType));
+      if (opts.q) {
+        const ql = opts.q.toLowerCase();
+        base = base.filter((o: any) => JSON.stringify(o).toLowerCase().includes(ql));
+      }
+      const statusCounts: Record<string, number> = {};
+      if (opts.counts) for (const o of base) { const s = String((o as any).status || ""); statusCounts[s] = (statusCounts[s] || 0) + 1; }
+      let filtered = base;
+      if (opts.statusIn && opts.statusIn.length) {
+        const set = new Set(opts.statusIn);
+        filtered = base.filter((o: any) => set.has(String(o.status || "")));
+      }
+      const total = filtered.length;
+      const sumTotal = filtered.reduce((s: number, o: any) => s + (Number(o.total) || 0), 0);
+      const rows = filtered.slice(opts.offset, opts.offset + opts.limit);
+      return { rows, total, sumTotal, statusCounts };
     },
   };
 }
@@ -172,6 +212,33 @@ function createNeonDb(connectionString: string): Db {
       }));
       const rev = mapped.length ? mapped[mapped.length - 1].rev : since;
       return { rows: mapped, rev };
+    },
+    async queryRecords(store, opts) {
+      const sql = await getSql();
+      // jsonb 上でフィルタ。種別は items 配列内の type、検索は data 全文。
+      const typeCond = opts.hasType
+        ? sql`AND EXISTS (SELECT 1 FROM jsonb_array_elements(data->'items') it WHERE it->>'type' = ${opts.hasType})`
+        : sql``;
+      const qCond = opts.q ? sql`AND data::text ILIKE ${"%" + opts.q + "%"}` : sql``;
+      const statusCond =
+        opts.statusIn && opts.statusIn.length ? sql`AND (data->>'status') = ANY(${opts.statusIn})` : sql``;
+      const totalRows = await sql`SELECT COUNT(*)::int AS c, COALESCE(SUM((data->>'total')::numeric),0) AS s FROM records WHERE store = ${store} AND deleted = false ${typeCond} ${qCond} ${statusCond}`;
+      const total = Number(totalRows[0]?.c || 0);
+      const sumTotal = Number(totalRows[0]?.s || 0);
+      const pageRows = await sql`
+        SELECT data FROM records
+        WHERE store = ${store} AND deleted = false ${typeCond} ${qCond} ${statusCond}
+        ORDER BY rev DESC LIMIT ${opts.limit} OFFSET ${opts.offset}`;
+      const rows = pageRows.map((r: any) => r.data);
+      const statusCounts: Record<string, number> = {};
+      if (opts.counts) {
+        const cRows = await sql`
+          SELECT (data->>'status') AS st, COUNT(*)::int AS c FROM records
+          WHERE store = ${store} AND deleted = false ${typeCond} ${qCond}
+          GROUP BY (data->>'status')`;
+        for (const r of cRows) statusCounts[String(r.st || "")] = Number(r.c || 0);
+      }
+      return { rows, total, sumTotal, statusCounts };
     },
   };
 }

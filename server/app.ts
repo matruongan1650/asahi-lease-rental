@@ -131,6 +131,21 @@ app.put("/api/store", (req: Request, res: Response) => {
   });
 });
 
+// サーバー側フィルタ＋ページング照会（数万件でもクライアントは 1 ページのみ受信）。
+app.get("/api/query", (req: Request, res: Response) => {
+  const name = req.query.name;
+  if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 50) || 50));
+  const offset = Math.max(0, Number(req.query.offset ?? 0) || 0);
+  const hasType = typeof req.query.hasType === "string" ? req.query.hasType : "";
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const statusIn = typeof req.query.statusIn === "string" && req.query.statusIn
+    ? req.query.statusIn.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const counts = req.query.counts === "1";
+  withDb(res, async () => getDb().queryRecords(name, { hasType, statusIn, q, limit, offset, counts }));
+});
+
 app.get("/api/sync", (req: Request, res: Response) => {
   const since = Number(req.query.since ?? 0) || 0;
   withDb(res, async () => {
