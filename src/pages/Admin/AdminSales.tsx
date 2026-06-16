@@ -3,6 +3,7 @@ import { Badge, Btn, triggerToast } from "../../components/AdminUI";
 import AdminDocDrawer from "../../components/AdminDocDrawer";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminOrders } from "../../context/AdminDataContext";
+import { useServerQuery } from "../../lib/ordersQuery";
 
 type SalesView = "all" | "pending" | "confirmed" | "closed";
 
@@ -31,58 +32,55 @@ function viewFor(status: string): SalesView {
   return "closed";
 }
 
+const SALES_VIEW_STATUS: Record<Exclude<SalesView, "all">, string[]> = {
+  pending: ["処理中", "注文確認中"],
+  confirmed: ["確認済み", "準備中", "配送中"],
+  closed: ["配送済み", "完了", "キャンセル", "返却済", "返却済み"],
+};
+
+function toSalesRow(o: any) {
+  return {
+    _raw: o,
+    id: o.orderNumber || o.id,
+    firestoreId: o.firestoreId || o.id,
+    date: o.date || "",
+    customer: o.companyName || `${o.personLastName || ""} ${o.personFirstName || ""}`.trim() || o.personName || "ゲスト",
+    site: o.siteName || "—",
+    items: (o.items || []).length,
+    amount: o.total || 0,
+    status: o.status,
+  };
+}
+
 export default function AdminSales() {
-  const liveOrders = useAdminOrders();
+  const liveOrders = useAdminOrders(); // KPI(販売売上) + patchOrder 用
   const [view, setView] = useState<SalesView>("all");
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState<{ kind: "sale-contract" | "sale-invoice" | null; customer?: string } | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
 
-  const sales = liveOrders.sales || [];
+  const { rows, total, statusCounts, hasMore, loading, loadMore, refresh } = useServerQuery(
+    "orders",
+    { hasType: "buy", statusIn: view === "all" ? undefined : SALES_VIEW_STATUS[view], q: query, counts: true, pageSize: 50 },
+    view,
+  );
+  const displayRows = useMemo(() => rows.map(toSalesRow), [rows]);
+
   const counts = useMemo(() => {
-    return sales.reduce((acc: Record<SalesView, number>, row: any) => {
-      acc.all += 1;
-      acc[viewFor(String(row.status || ""))] += 1;
-      return acc;
-    }, { all: 0, pending: 0, confirmed: 0, closed: 0 });
-  }, [sales]);
-
-  const filteredSales = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return sales.filter((row: any) => {
-      if (view !== "all" && viewFor(String(row.status || "")) !== view) return false;
-      if (!q) return true;
-      return [row.id, row.customer, row.site, row.status].some((v) => String(v || "").toLowerCase().includes(q));
-    });
-  }, [sales, view, query]);
-
-  // 大量データ時に全行描画で重くなるのを防ぐ（段階表示）。
-  const PAGE = 50;
-  const [visibleCount, setVisibleCount] = useState(PAGE);
-  useEffect(() => { setVisibleCount(PAGE); }, [view, query]);
-
-  const fullOrderFor = (row: any) =>
-    liveOrders.orders.find((o: any) => o.firestoreId === row.firestoreId || o.id === row.firestoreId || o.orderNumber === row.id || o.id === row.id);
+    const acc: Record<SalesView, number> = { all: 0, pending: 0, confirmed: 0, closed: 0 };
+    for (const [st, c] of Object.entries(statusCounts)) { acc.all += Number(c) || 0; acc[viewFor(String(st))] += Number(c) || 0; }
+    return acc;
+  }, [statusCounts]);
 
   const handleConfirm = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    const id = fullOrder?.firestoreId || fullOrder?.id || row.firestoreId;
-    if (!id) {
-      triggerToast("注文データが見つかりません", "err");
-      return;
-    }
+    const id = row._raw?.firestoreId || row._raw?.id;
+    if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
     liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "出庫予定" });
     triggerToast(`${row.id} を販売受注として確定しました`, "ok");
+    setTimeout(refresh, 300);
   };
 
-  const openDetail = (row: any) => {
-    const fullOrder = fullOrderFor(row);
-    if (!fullOrder) {
-      triggerToast("詳細データが見つかりません", "err");
-      return;
-    }
-    setSelectedOrder(fullOrder);
-  };
+  const openDetail = (row: any) => setSelectedOrder(row._raw);
 
   const views = [
     { id: "all" as const, label: "すべて", icon: "list", count: counts.all },
@@ -103,7 +101,7 @@ export default function AdminSales() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <StatCard icon="payments" label="販売売上" value={`¥${(liveOrders.kpis.productSales || 0).toLocaleString()}`} />
-        <StatCard icon="shopping_cart" label="販売件数" value={`${sales.length}件`} tone="emerald" />
+        <StatCard icon="shopping_cart" label="販売件数" value={`${counts.all}件`} tone="emerald" />
         <StatCard icon="inbox" label="受注待ち" value={`${counts.pending}件`} tone="amber" />
         <StatCard icon="inventory_2" label="出庫準備" value={`${counts.confirmed}件`} tone="blue" />
       </div>
@@ -148,7 +146,7 @@ export default function AdminSales() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredSales.slice(0, visibleCount).map((row: any) => (
+              {displayRows.map((row: any) => (
                 <tr key={row.firestoreId || row.id} className="hover:bg-slate-50/70">
                   <td className="px-4 py-3">
                     <div className="font-mono text-sm font-black text-blue-700">{row.id}</div>
@@ -179,11 +177,11 @@ export default function AdminSales() {
               ))}
             </tbody>
           </table>
-          {filteredSales.length === 0 && <div className="py-14 text-center text-sm font-bold text-slate-400">該当する販売注文がありません</div>}
-          {filteredSales.length > visibleCount && (
+          {total === 0 && !loading && <div className="py-14 text-center text-sm font-bold text-slate-400">該当する販売注文がありません</div>}
+          {hasMore && (
             <div className="py-4 text-center border-t border-slate-100">
-              <button onClick={() => setVisibleCount((c) => c + PAGE)} className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700 active:scale-95 transition">
-                さらに表示（残り {filteredSales.length - visibleCount} 件）
+              <button onClick={loadMore} disabled={loading} className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700 active:scale-95 transition disabled:opacity-50">
+                さらに表示（残り {(total - displayRows.length).toLocaleString()} 件）
               </button>
             </div>
           )}
@@ -198,10 +196,12 @@ export default function AdminSales() {
         onUpdateStatus={(id, status, staffStatus) => {
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
           triggerToast("ステータスを更新しました", "ok");
+          setTimeout(refresh, 300);
         }}
         onUpdateOrder={(id, updates) => {
           liveOrders.patchOrder(id, updates);
           setSelectedOrder((prev: any) => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
+          setTimeout(refresh, 300);
         }}
       />
     </div>
