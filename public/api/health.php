@@ -6,5 +6,7 @@ try {
     db();
     json_out(['ok' => true, 'backend' => 'php-mysql']);
 } catch (Throwable $e) {
-    json_out(['ok' => false, 'error' => $e->getMessage()], 500);
+    // DB 接続情報など内部詳細をレスポンスに出さない（情報漏えい防止）。詳細はサーバーログへ。
+    error_log('[health] ' . $e->getMessage());
+    json_out(['ok' => false], 500);
 }

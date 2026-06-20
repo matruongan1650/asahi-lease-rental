@@ -11,9 +11,11 @@ declare(strict_types=1);
  *   → 200 { "url": "https://<host>/api/uploads/<sha1>.<ext>" }
  */
 
+require_once __DIR__ . '/db.php'; // CORS/OPTIONS 処理と require_api_token() を共有
+
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Api-Token');
 header('Content-Type: application/json; charset=utf-8');
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
@@ -25,6 +27,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     echo json_encode(['error' => 'POST only']);
     exit;
 }
+require_api_token();
 
 $raw = file_get_contents('php://input');
 $body = json_decode($raw, true);
@@ -42,13 +45,14 @@ if (!preg_match('#^data:image/([a-zA-Z0-9.+-]+);base64,(.+)$#s', $dataUrl, $m)) 
     exit;
 }
 $subtype = strtolower($m[1]);
+// svg+xml は意図的に除外: 同一オリジンで配信される SVG は JavaScript を実行でき、
+// 保管型 XSS の原因になる。写真・サインは png/jpg/webp 等のラスタ画像のみを許可する。
 $extMap = [
     'png' => 'png',
     'jpeg' => 'jpg',
     'jpg' => 'jpg',
     'webp' => 'webp',
     'gif' => 'gif',
-    'svg+xml' => 'svg',
     'bmp' => 'bmp',
 ];
 if (!isset($extMap[$subtype])) {
@@ -96,7 +100,10 @@ $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
     || (($_SERVER['SERVER_PORT'] ?? '') === '443')
     || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
 $scheme = $https ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? 'shuyei.online';
+// Host ヘッダーはクライアント任意で偽装可能。許可済みホストのみ採用し、それ以外は正規ホストへ固定。
+$allowedHosts = ['shuyei.online', 'www.shuyei.online'];
+$reqHost = $_SERVER['HTTP_HOST'] ?? '';
+$host = in_array($reqHost, $allowedHosts, true) ? $reqHost : 'shuyei.online';
 $url = $scheme . '://' . $host . '/api/uploads/' . $fname;
 
 echo json_encode(['ok' => true, 'url' => $url], JSON_UNESCAPED_SLASHES);

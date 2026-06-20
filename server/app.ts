@@ -12,7 +12,7 @@
  */
 
 import express, { type Request, type Response } from "express";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDb, ensureInit } from "./db";
@@ -23,8 +23,10 @@ app.use(express.json({ limit: "20mb" }));
 
 // 画像アップロード保存先（開発用）。本番(XServer)は public/api/upload.php が同等処理。
 const UPLOAD_DIR = join(process.cwd(), ".dev-uploads");
+// svg+xml は意図的に除外: 同一オリジン配信の SVG は JavaScript を実行でき保管型 XSS の原因になる
+// （upload.php と同じ方針。写真・サインは png/jpg/webp 等のラスタ画像のみ許可する）。
 const EXT_MAP: Record<string, string> = {
-  png: "png", jpeg: "jpg", jpg: "jpg", webp: "webp", gif: "gif", "svg+xml": "svg", bmp: "bmp",
+  png: "png", jpeg: "jpg", jpg: "jpg", webp: "webp", gif: "gif", bmp: "bmp",
 };
 
 // 開発時のクロスオリジン保険（Vercel/Vite proxy では同一オリジンなので通常不要）。
@@ -39,6 +41,24 @@ app.use((_req, res, next) => {
 const STORE_RE = /^[a-zA-Z0-9_]+$/;
 function validStore(name: unknown): name is string {
   return typeof name === "string" && STORE_RE.test(name) && name.length <= 64;
+}
+
+/**
+ * データ系エンドポイント(store/sync/query/upload)の共有トークン認証（PHP の require_api_token() と同等）。
+ * 環境変数 API_TOKEN が設定されている場合のみ有効。空なら後方互換でスキップ（本番では必ず設定すること）。
+ * クライアントはビルド時の VITE_API_TOKEN を X-Api-Token ヘッダで送る。
+ */
+const API_TOKEN = (process.env.API_TOKEN || "").trim();
+function checkApiToken(req: Request, res: Response): boolean {
+  if (!API_TOKEN) return true; // 未設定 → 認証無効（本番では必ず設定）
+  const given = String(req.header("x-api-token") || "");
+  const a = Buffer.from(given);
+  const b = Buffer.from(API_TOKEN);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    res.status(401).json({ error: "unauthorized" });
+    return false;
+  }
+  return true;
 }
 
 async function withDb<T>(res: Response, fn: () => Promise<T>): Promise<void> {
@@ -61,6 +81,7 @@ app.use("/api/uploads", express.static(UPLOAD_DIR));
 
 // 画像アップロード: base64 → ファイル保存 → URL を返す（upload.php と同等）。
 app.post("/api/upload", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const dataUrl = req.body && typeof req.body.dataUrl === "string" ? req.body.dataUrl : "";
   const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUrl);
   if (!m) return res.status(400).json({ error: "invalid image data URL" });
@@ -84,6 +105,7 @@ app.post("/api/upload", (req: Request, res: Response) => {
 });
 
 app.get("/api/store", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const name = req.query.name;
   if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
   withDb(res, async () => {
@@ -94,6 +116,7 @@ app.get("/api/store", (req: Request, res: Response) => {
 });
 
 app.post("/api/store", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const name = req.query.name;
   if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
   const record = req.body;
@@ -107,6 +130,7 @@ app.post("/api/store", (req: Request, res: Response) => {
 });
 
 app.delete("/api/store", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const name = req.query.name;
   const id = req.query.id;
   if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
@@ -118,6 +142,7 @@ app.delete("/api/store", (req: Request, res: Response) => {
 });
 
 app.put("/api/store", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const name = req.query.name;
   if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
   const items = req.body;
@@ -133,6 +158,7 @@ app.put("/api/store", (req: Request, res: Response) => {
 
 // サーバー側フィルタ＋ページング照会（数万件でもクライアントは 1 ページのみ受信）。
 app.get("/api/query", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const name = req.query.name;
   if (!validStore(name)) return res.status(400).json({ error: "invalid store name" });
   const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 50) || 50));
@@ -147,6 +173,7 @@ app.get("/api/query", (req: Request, res: Response) => {
 });
 
 app.get("/api/sync", (req: Request, res: Response) => {
+  if (!checkApiToken(req, res)) return;
   const since = Number(req.query.since ?? 0) || 0;
   withDb(res, async () => {
     const { rows, rev } = await getDb().changesSince(since);

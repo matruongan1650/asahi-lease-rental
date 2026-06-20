@@ -2,6 +2,8 @@
 declare(strict_types=1);
 require __DIR__ . '/db.php';
 
+require_api_token();
+
 /**
  * query.php — サーバー側でフィルタ＋ページングする照会 API。
  * 注文が数万件になってもクライアントは 1 ページ分しか受け取らない。
@@ -42,8 +44,11 @@ try {
         $baseParams[] = '%"type":"' . $hasType . '"%';
     }
     if ($q !== '') {
-        $base[] = 'data LIKE ?';
-        $baseParams[] = '%' . $q . '%';
+        // LIKE のワイルドカード(% _)と \ をエスケープ。ユーザー入力の % / _ が
+        // 意図せず全件マッチ/探索に使われるのを防ぐ（ESCAPE 文字は \）。
+        $qEsc = addcslashes($q, '\\%_');
+        $base[] = "data LIKE ? ESCAPE '\\\\'";
+        $baseParams[] = '%' . $qEsc . '%';
     }
     $baseSql = implode(' AND ', $base);
 
@@ -95,5 +100,6 @@ try {
 
     json_out(['rows' => $rows, 'total' => $total, 'sumTotal' => $sumTotal, 'statusCounts' => $statusCounts]);
 } catch (Throwable $e) {
-    json_out(['error' => $e->getMessage()], 500);
+    error_log('[query] ' . $e->getMessage());
+    json_out(['error' => 'internal error'], 500);
 }
