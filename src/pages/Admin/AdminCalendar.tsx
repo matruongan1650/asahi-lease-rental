@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { confirmDialog } from "../../components/AppDialog";
+import OrderBus from "../../lib/orderBus";
+import { useOrderBusStore } from "../../lib/useOrderBus";
 import {
   Panel,
   Btn,
@@ -15,6 +17,7 @@ import { useAdminData } from "../../context/AdminDataContext";
 import { CAL_TYPES } from "../../data/adminMockData";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
+import { deductOrderStock, settleReturnStock } from "../../utils/stockLedger";
 
 type CalEvent = {
   t: string;
@@ -70,34 +73,40 @@ export default function AdminCalendar() {
     return `${y}-${m}-${d}`;
   });
 
-  // Local storage calendar events state
-  const [customEvents, setCustomEvents] = useState<Record<string, Array<{ t: string; x: string }>>>(() => {
-    const saved = localStorage.getItem("asahi.custom_calendar_events_v2");
-    if (saved) {
-      return JSON.parse(saved);
-    }
-    // Migration from v1
-    const oldSaved = localStorage.getItem("asahi.custom_calendar_events");
-    if (oldSaved) {
-      try {
-        const parsed = JSON.parse(oldSaved);
-        const migrated: Record<string, any> = {};
-        Object.entries(parsed).forEach(([day, evs]) => {
-          const paddedDay = String(day).padStart(2, '0');
-          migrated[`2026-06-${paddedDay}`] = evs;
-        });
-        localStorage.setItem("asahi.custom_calendar_events_v2", JSON.stringify(migrated));
-        return migrated;
-      } catch (e) {
-        return {};
-      }
-    }
-    return {};
-  });
+  // カレンダーのカスタム予定はサーバー同期する（以前は localStorage のみ＝他端末・APK に
+  // 反映されずキャッシュ削除で消えていた）。OrderBus の "calendarEvents" ストアを正本とする。
+  const [calEventRows] = useOrderBusStore<any>("calendarEvents");
+  const customEvents = useMemo(() => {
+    const map: Record<string, Array<{ id: string; t: string; x: string }>> = {};
+    (calEventRows || []).forEach((ev: any) => {
+      const date = ev?.date;
+      if (!date) return;
+      (map[date] ||= []).push({ id: String(ev.id), t: ev.t, x: ev.x });
+    });
+    return map;
+  }, [calEventRows]);
 
+  // 旧 localStorage の予定を一度だけサーバーへ移行（端末ごとに1回）。
   useEffect(() => {
-    localStorage.setItem("asahi.custom_calendar_events_v2", JSON.stringify(customEvents));
-  }, [customEvents]);
+    const MIG = "asahi.calendar_events_migrated_to_bus";
+    if (localStorage.getItem(MIG)) return;
+    try {
+      const saved = localStorage.getItem("asahi.custom_calendar_events_v2");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, Array<any>>;
+        Object.entries(parsed).forEach(([date, evs]) => {
+          (evs || []).forEach((ev: any) => {
+            OrderBus.push("calendarEvents", { id: ev?.id, date, t: ev?.t, x: ev?.x });
+          });
+        });
+      }
+    } catch { /* ignore */ }
+    try {
+      localStorage.setItem(MIG, "1");
+      localStorage.removeItem("asahi.custom_calendar_events_v2");
+      localStorage.removeItem("asahi.custom_calendar_events");
+    } catch { /* ignore */ }
+  }, []);
 
   const toggle = (k: string) => {
     setFilter(f => f.includes(k) ? f.filter(x => x !== k) : [...f, k]);
@@ -227,11 +236,7 @@ export default function AdminCalendar() {
       return;
     }
 
-    const newEvent = { id: Date.now().toString(), t: newEvKind, x: newEvTitle };
-    setCustomEvents(prev => {
-      const dayEvs = prev[newEvDate] ? [...prev[newEvDate]] : [];
-      return { ...prev, [newEvDate]: [...dayEvs, newEvent] };
-    });
+    OrderBus.push("calendarEvents", { date: newEvDate, t: newEvKind, x: newEvTitle });
 
     triggerToast("予定を追加しました", "ok");
     setIsAddModalOpen(false);
@@ -245,13 +250,7 @@ export default function AdminCalendar() {
   const handleDeleteCustomEvent = async () => {
     if (!selectedEvent || !selectedEvent.isCustom || !selectedEvent.dateStr || !selectedEvent.id) return;
     if (await confirmDialog(`「${selectedEvent.x}」を削除しますか？`, { danger: true, okText: "削除" })) {
-      setCustomEvents(prev => {
-        const dayEvs = prev[selectedEvent.dateStr] || [];
-        return {
-          ...prev,
-          [selectedEvent.dateStr]: dayEvs.filter((e: any) => e.id !== selectedEvent.id)
-        };
-      });
+      OrderBus.remove("calendarEvents", String(selectedEvent.id));
       triggerToast("予定を削除しました", "ok");
       setSelectedEvent(null);
     }
@@ -534,7 +533,11 @@ export default function AdminCalendar() {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
+          // （他画面 AdminRental/AdminWarehouse と同じく在庫台帳を必ず通す）
+          const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || selectedOrder;
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

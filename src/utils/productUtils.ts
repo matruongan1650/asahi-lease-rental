@@ -1,5 +1,14 @@
 export const VEHICLE_CATEGORIES = ['軽トラック', '軽バン', '2tノーマル', '2tロング', '2t Wキャブノーマル'];
 
+/** よく使う数量の単位（数え方）。商品マスタで選択/自由入力できる。 */
+export const UNIT_OPTIONS = ['点', '個', '本', '台', '枚', '組', 'セット', '箱', 'm', '巻', '式'];
+
+/** 数量の単位を取得（商品/明細の unit、未設定なら既定 "点"）。 */
+export function getItemUnit(x: { unit?: string } | null | undefined): string {
+  const u = x && typeof x.unit === 'string' ? x.unit.trim() : '';
+  return u || '点';
+}
+
 export function isVehicleCategory(category: string | undefined): boolean {
   if (!category) return false;
   // Also support '保安車両' just in case it's used somewhere

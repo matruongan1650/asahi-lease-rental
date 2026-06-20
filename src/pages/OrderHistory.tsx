@@ -3,10 +3,16 @@ import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
-import { isFullyReturned } from "../utils/orderStatus";
+import { isClosedOrder } from "../utils/orderStatus";
 import { byOrderDateDesc } from "../utils/orderSort";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import OrderHistoryDesktop from "./desktop/OrderHistoryDesktop";
 
 export default function OrderHistory() {
+  return useIsDesktop() ? <OrderHistoryDesktop /> : <OrderHistoryMobile />;
+}
+
+function OrderHistoryMobile() {
   const { orders } = useOrders();
   const { currentUser } = useUser();
   const [activeTab, setActiveTab] = useState<"処理中" | "履歴">("処理中");
@@ -23,9 +29,11 @@ export default function OrderHistory() {
     );
 
     if (activeTab === "処理中") {
-      filtered = filtered.filter(o => !isFullyReturned(o.status));
+      // クローズ済み(返却済/完了/キャンセル)と一部返却は履歴側へ。完了/キャンセルが処理中に
+      // 残り続ける不具合を解消（isFullyReturned は完了/キャンセルを含まないため isClosedOrder を使う）。
+      filtered = filtered.filter(o => !isClosedOrder(o.status) && o.status !== "一部返却");
     } else {
-      filtered = filtered.filter(o => isFullyReturned(o.status) || o.status === "一部返却");
+      filtered = filtered.filter(o => isClosedOrder(o.status) || o.status === "一部返却");
     }
 
     if (searchQuery.trim()) {

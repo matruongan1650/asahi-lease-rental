@@ -1,106 +1,77 @@
 import React from "react";
-import { Link, useParams, useNavigate } from "react-router-dom";
-import { useOrders, Order } from "../../context/OrderContext";
-import { ArrowLeft, Inbox, MapPin, Calendar, Package, ChevronRight } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import Icon from "../../components/staff/Icon";
+import { Badge, Card, Empty, InfoRow, MetricCard, SectionLabel, TopBar, statusVariant } from "../../components/staff/StaffUI";
+import { useOrders, type Order } from "../../context/OrderContext";
+
+function roleConfig(role?: string) {
+  if (role === "collection") return { title: "回収指示", sub: "COLLECTION", icon: "package", statuses: ["回収予定", "回収中", "レンタル中", "一部返却"] };
+  if (role === "warehouse") return { title: "倉庫返却対応", sub: "WAREHOUSE RETURN", icon: "warehouse", statuses: ["検品待ち", "回収完了", "一部返却"] };
+  return { title: "配送指示", sub: "DELIVERY", icon: "truck", statuses: ["確認済み", "確認済", "配送中", "配送予定"] };
+}
+
+function isOrderMatched(order: Order, statuses: string[]) {
+  const staffStatus = String((order as any).staffStatus || "");
+  return statuses.includes(order.status) || statuses.includes(staffStatus);
+}
 
 export default function StaffJobList() {
   const { role } = useParams<{ role: string }>();
   const navigate = useNavigate();
   const { orders } = useOrders();
+  const config = roleConfig(role);
 
-  let title = "";
-  let filteredOrders: Order[] = [];
-
-  if (role === "delivery") {
-    title = "配達指示";
-    // Orders confirmed by admin ready for delivery, or currently delivering
-    filteredOrders = orders.filter(o => o.status === "確認済み" || o.status === "配送中");
-  } else if (role === "collection") {
-    title = "回収指示";
-    // Orders delivered and needing collection
-    filteredOrders = orders.filter(o => o.status === "配達完了" || o.status === "回収中");
-  } else if (role === "warehouse") {
-    title = "倉庫返却対応";
-    // Similar to collection but maybe showing all delivered or searching
-    filteredOrders = orders.filter(o => o.status === "配達完了" || o.status === "回収中");
-  }
+  const filteredOrders = orders.filter(order => isOrderMatched(order, config.statuses));
+  // 要注意 = 期限が近い/超過。実 Order に priority は無いので日付から判定する
+  // （配送系は納品希望日、回収系は返却期限を基準に「本日・明日・超過」を急ぎとみなす）。
+  const isRecoveryRole = role === "collection" || role === "warehouse";
+  const _now = new Date();
+  const dueSoon = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate() + 1).getTime();
+  const urgentCount = filteredOrders.filter((o: any) => {
+    const raw = isRecoveryRole ? o.rentalEndDate : (o.deliveryDate || o.rentalStartDate);
+    if (!raw) return false;
+    const t = new Date(String(raw).replace(/\//g, "-").slice(0, 10) + "T00:00:00").getTime();
+    return !isNaN(t) && t <= dueSoon;
+  }).length;
 
   return (
-    <div className="bg-slate-50 min-h-screen text-slate-900 pb-20 font-sans">
-      <div className="bg-white shadow-sm sticky top-0 z-20 px-4 py-3 flex items-center justify-between border-b border-slate-100">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="p-2 -ml-2 text-slate-500 hover:text-slate-800 transition-colors">
-            <ArrowLeft size={24} />
-          </button>
-          <div className="flex flex-col">
-            <h1 className="text-[17px] font-extrabold tracking-tight text-slate-800 leading-tight">{title}</h1>
-            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{filteredOrders.length} 件</span>
-          </div>
-        </div>
-      </div>
+    <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--fg)", fontFamily: "var(--font-jp)" }}>
+      <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <TopBar title={config.title} sub={config.sub} onBack={() => navigate("/staff")} />
 
-      <div className="p-5 max-w-sm mx-auto space-y-4">
-        {filteredOrders.length === 0 ? (
-          <div className="text-center py-16 bg-white border border-slate-100 rounded-3xl shadow-sm">
-            <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100">
-              <Inbox size={32} className="text-slate-300" />
-            </div>
-            <p className="font-extrabold text-slate-700">タスクがありません</p>
-            <p className="text-xs font-medium text-slate-500 mt-1">対象の注文はありません。</p>
+        <div style={{ padding: "0 16px 18px", overflowY: "auto", flex: 1 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+            <MetricCard label="対象業務" value={filteredOrders.length} unit="件" icon={config.icon} tone="brand" />
+            <MetricCard label="要注意" value={urgentCount} unit="件" icon="alert" tone={urgentCount ? "danger" : "neutral"} />
           </div>
-        ) : (
-          filteredOrders.map(order => (
-            <Link 
-              key={order.id} 
-              to={`/staff/${role}/job/${order.id}`}
-              className="block bg-white p-5 rounded-3xl shadow-sm border border-slate-100 hover:border-blue-200 hover:shadow-md transition-all active:scale-[0.98] group relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-blue-50 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              
-              <div className="flex justify-between items-start mb-4 relative z-10">
-                <div className="flex flex-col">
-                  <span className="font-extrabold text-[17px] text-slate-800 font-mono tracking-tight">{order.orderNumber}</span>
-                  <span className="text-xs font-bold text-slate-500 mt-0.5 max-w-[180px] truncate">{order.personName || "N/A"}</span>
-                </div>
-                <span className={`text-[10px] px-2.5 py-1 rounded-full font-extrabold tracking-widest uppercase border ${
-                  order.status === "確認済み" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                  order.status === "配送中" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                  order.status === "配送済み" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                  order.status === "回収中" ? "bg-orange-50 text-orange-700 border-orange-200" :
-                  "bg-slate-50 text-slate-700 border-slate-200"
-                }`}>
-                  {order.status}
-                </span>
-              </div>
-              
-              <div className="space-y-2.5 relative z-10">
-                <p className="text-xs text-slate-600 flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                  <MapPin size={16} className="text-blue-400 shrink-0 mt-0.5" />
-                  <span className="font-medium leading-relaxed line-clamp-2">{order.deliveryLocation || "店舗受取"}</span>
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
-                    <Calendar size={14} className="text-slate-400" />
-                    <span className="truncate">{order.rentalStartDate}</span>
-                  </p>
-                  <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 p-2 rounded-lg bg-slate-50 border border-slate-100">
-                    <Package size={14} className="text-slate-400" />
-                    <span>{order.items.length} 品目</span>
-                  </p>
-                </div>
-              </div>
-              
-              <div className="mt-4 pt-3 flex items-center justify-between border-t border-slate-50 relative z-10">
-                  <span className="text-[11px] font-extrabold text-blue-500 uppercase tracking-widest">
-                    {role === "delivery" ? "配達詳細を表示" : "回収詳細を表示"}
-                  </span>
-                 <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
-                   <ChevronRight size={16} />
-                 </div>
-              </div>
-            </Link>
-          ))
-        )}
+
+          <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{filteredOrders.length}件</span>}>業務一覧</SectionLabel>
+          {filteredOrders.length === 0 ? (
+            <Empty icon={config.icon} title="対象の業務はありません" sub="admin でステータスが更新されるとここに表示されます" />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filteredOrders.map(order => {
+                const itemCount = (order.items || []).reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0);
+                return (
+                  <Link key={order.id} to={`/staff/${role || "delivery"}/job/${order.id}`} style={{ color: "inherit", textDecoration: "none" }}>
+                    <Card pad={0} style={{ borderLeft: "5px solid var(--brand)" }}>
+                      <div style={{ padding: "13px 13px 0", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, fontWeight: 900, color: "var(--brand-accent)" }}>{order.orderNumber || order.id}</div>
+                          <div style={{ marginTop: 3, fontSize: 16, fontWeight: 900, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{order.siteName || order.deliveryLocation || "現場未設定"}</div>
+                          <div style={{ marginTop: 3, fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 700 }}>{order.companyName || order.personName || "顧客未設定"}</div>
+                        </div>
+                        <Badge variant={statusVariant(order.status)}>{order.status || "未設定"}</Badge>
+                      </div>
+                      <InfoRow icon="mapPin" label="納品・回収場所" value={order.deliveryLocation || "未設定"} />
+                      <InfoRow icon="package" label="品目" value={`${itemCount}点 / ${(order.items || []).length}品目`} action={<Icon name="chevronRight" size={17} color="var(--brand-accent)" />} />
+                    </Card>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

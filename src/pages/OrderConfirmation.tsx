@@ -1,9 +1,15 @@
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useEffect } from "react";
 import { useCart } from "../context/CartContext";
 import { isVehicleCategory } from '../utils/productUtils';
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import OrderConfirmationDesktop from "./desktop/OrderConfirmationDesktop";
 
 export default function OrderConfirmation() {
+  return useIsDesktop() ? <OrderConfirmationDesktop /> : <OrderConfirmationMobile />;
+}
+
+function OrderConfirmationMobile() {
   const navigate = useNavigate();
   const location = useLocation();
   const { clearCart } = useCart();
@@ -13,9 +19,15 @@ export default function OrderConfirmation() {
   const { orderNumber = "-", items = [], total = 0, subtotal = 0, tax = 0, deliveryLocation = "-", deliveryDate = "-", siteName = "-", constructionNumber = "-", companyName = "-", personName = "-" } = order;
 
   useEffect(() => {
-    // Clear the cart when entering confirmation page
-    clearCart();
-  }, [clearCart]);
+    // 実際に注文を持って遷移してきた時だけカートを空にする
+    // （リロードで state が消えた際にカートを誤って空にしないため）。
+    if (state.order) clearCart();
+  }, [clearCart, state.order]);
+
+  // リロード／直接アクセスで注文情報が無い場合は、空（¥0・-）の確認画面を見せず注文履歴へ。
+  if (!state.order) {
+    return <Navigate to="/orders" replace />;
+  }
 
   return (
     <div className="relative flex h-full min-h-screen w-full flex-col overflow-x-hidden pb-24">
@@ -60,7 +72,8 @@ export default function OrderConfirmation() {
                 minChargeableDays = hasVehicle ? 3 : 10;
               }
               const chargeableDays = Math.max(item.rentalDays || 1, minChargeableDays);
-              price = item.type === 'rent' ? (item.rentPrice * chargeableDays) : item.buyPrice;
+              // 単価未設定(0/undefined)でも NaN/クラッシュしないよう 0 にフォールバック。
+              price = item.type === 'rent' ? ((item.rentPrice || 0) * chargeableDays) : (item.buyPrice || 0);
             }
             
             return (
@@ -76,7 +89,7 @@ export default function OrderConfirmation() {
                     </div>
                     <div className="flex items-end justify-between">
                       <p className="text-sm text-slate-500 dark:text-slate-400">数量: {item.quantity}</p>
-                      <p className="font-bold text-base">¥{price.toLocaleString()}</p>
+                      <p className="font-bold text-base">¥{((price || 0) * (item.quantity || 1)).toLocaleString()}</p>
                     </div>
                   </div>
                 </div>

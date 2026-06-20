@@ -200,10 +200,13 @@ export default function AdminInvoices() {
       return;
     }
 
-    const nextBlocks = getOrGenerateInvoiceBlocks(row.order).map((block) => ({
-      ...block,
-      status: block.id === row.block.id ? nextStatus : block.status,
-    }));
+    // 入金時は入金日(paidAt)を記録し、未入金へ戻す時はクリアする（AR 追跡用メタデータ）。
+    const stamp = new Date().toISOString();
+    const nextBlocks = getOrGenerateInvoiceBlocks(row.order).map((block) =>
+      block.id === row.block.id
+        ? ({ ...block, status: nextStatus, paidAt: nextStatus === "paid" ? stamp : undefined } as any)
+        : block,
+    );
 
     liveOrders.patchOrder(id, { invoiceBlocks: nextBlocks });
     triggerToast(nextStatus === "paid" ? "入金済みに更新しました" : "未入金に戻しました", "ok");

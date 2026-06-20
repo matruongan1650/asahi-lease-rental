@@ -4,8 +4,17 @@ import React, { useState, useEffect } from "react";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
 import { useProducts } from "../context/ProductContext";
+import { SALES_ENABLED } from "../config/features";
+import { LONG_TERM_THRESHOLD_DAYS } from "../utils/billing";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ProductDetailDesktop from "./desktop/ProductDetailDesktop";
 
+// PC とスマホでお客様サイトを分岐。スマホは従来のモバイルアプリ、PC は専用デスクトップサイト。
 export default function ProductDetail() {
+  return useIsDesktop() ? <ProductDetailDesktop /> : <ProductDetailMobile />;
+}
+
+function ProductDetailMobile() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { products } = useProducts();
@@ -19,8 +28,20 @@ export default function ProductDetail() {
   useEffect(() => {
     window.scrollTo(0, 0);
     setQuantity(1);
-    setActionType(product.rentPrice ? 'rent' : 'buy');
+    // 販売無効時はレンタル固定。
+    setActionType(!SALES_ENABLED ? 'rent' : (product?.rentPrice ? 'rent' : 'buy'));
   }, [id, product]);
+
+  // 商品リストが空（クラウド同期前など）でも product が undefined になり得る。
+  // 全フックの後で早期 return し、以降の product.* アクセスによるクラッシュを防ぐ。
+  if (!product) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center">
+        <p className="text-slate-500 font-bold">商品が見つかりませんでした</p>
+        <button onClick={() => navigate(-1)} className="px-4 py-2 rounded-lg bg-slate-100 font-bold text-slate-700">戻る</button>
+      </div>
+    );
+  }
   
   const relatedProducts = (products || []).filter(p => p?.category === product?.category && p?.id !== product?.id).slice(0, 5);
   // もし同じカテゴリの商品が少ない場合は、他の商品を追加する
@@ -42,6 +63,7 @@ export default function ProductDetail() {
       type: actionType,
       rentalDays: 1, // default 1
       category: product.category,
+      unit: product.unit,
     });
     navigate("/cart");
   };
@@ -73,7 +95,15 @@ export default function ProductDetail() {
         <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 text-center truncate px-2">
           製品詳細
         </h1>
-        <button className="flex size-10 shrink-0 items-center justify-center rounded-full active:bg-slate-200 dark:active:bg-slate-700 text-slate-900 dark:text-white transition-colors">
+        <button
+          onClick={() => {
+            const url = window.location.href;
+            const nav = navigator as any;
+            if (nav.share) { void nav.share({ title: product.name, url }).catch(() => {}); }
+            else if (nav.clipboard?.writeText) { void nav.clipboard.writeText(url); void alertDialog("リンクをコピーしました"); }
+          }}
+          className="flex size-10 shrink-0 items-center justify-center rounded-full active:bg-slate-200 dark:active:bg-slate-700 text-slate-900 dark:text-white transition-colors"
+        >
           <span className="material-symbols-outlined text-[24px]">share</span>
         </button>
       </div>
@@ -98,17 +128,6 @@ export default function ProductDetail() {
               <span className={`material-symbols-outlined transition-colors ${isFeatured(product.id) ? "text-red-500 fill-1" : "text-slate-400 group-hover:text-red-500"}`}>favorite</span>
             </button>
           </div>
-          <div className="flex items-center gap-2 mb-4">
-            <div className="flex text-amber-400">
-              <span className="material-symbols-outlined text-[18px] fill-1">star</span>
-              <span className="material-symbols-outlined text-[18px] fill-1">star</span>
-              <span className="material-symbols-outlined text-[18px] fill-1">star</span>
-              <span className="material-symbols-outlined text-[18px] fill-1">star</span>
-              <span className="material-symbols-outlined text-[18px] fill-1 text-slate-200 dark:text-slate-600">star_half</span>
-            </div>
-            <span className="text-sm font-bold">4.5</span>
-            <span className="text-sm text-slate-400">(128件)</span>
-          </div>
           <div className="flex gap-3">
             {product.rentPrice !== undefined && (
               <div 
@@ -123,7 +142,7 @@ export default function ProductDetail() {
                   </div>
                   {product.rentPriceLongTerm !== undefined && (
                     <div className="flex items-baseline gap-1">
-                      <span className="text-xs font-medium text-slate-500">長期(&gt;15日):</span>
+                      <span className="text-xs font-medium text-slate-500">長期({LONG_TERM_THRESHOLD_DAYS}日〜):</span>
                       <span className={`text-sm font-bold ${actionType === 'rent' ? 'text-primary/80' : 'text-slate-600 dark:text-slate-400'}`}>¥{product.rentPriceLongTerm.toLocaleString()}</span>
                       <span className="text-xs font-medium text-slate-500">/ 日</span>
                     </div>
@@ -131,8 +150,8 @@ export default function ProductDetail() {
                 </div>
               </div>
             )}
-            {product.buyPrice !== undefined && (
-              <div 
+            {SALES_ENABLED && product.buyPrice !== undefined && (
+              <div
                 onClick={() => setActionType('buy')}
                 className={`flex-1 p-3 rounded-xl border cursor-pointer transition-colors ${actionType === 'buy' ? 'bg-blue-50 dark:bg-blue-900/20 border-primary shadow-[0_0_0_1px_rgba(var(--primary-color),1)]' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-100 dark:border-slate-700'}`}
               >
@@ -210,8 +229,13 @@ export default function ProductDetail() {
               </button>
             </div>
           </div>
+          {(() => {
+            // 在庫0の品目はレンタル不可（販売のみ）。ProductList の「在庫なし (販売のみ)」と整合させる。
+            const outOfStockRent = actionType === "rent" && Number(product.stock || 0) <= 0;
+            return (
           <div className="flex gap-3">
-            <button 
+            <button
+              disabled={outOfStockRent}
               onClick={() => {
                 addToCart({
                   id: product.id,
@@ -224,51 +248,24 @@ export default function ProductDetail() {
                   type: actionType,
                   rentalDays: 1, // default 1
                   category: product.category,
+                  unit: product.unit,
                 });
                 void alertDialog("カートに追加しました");
               }}
-              className="flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors"
+              className={`flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors ${outOfStockRent ? "opacity-40 cursor-not-allowed" : ""}`}
             >
                 カートに入れる
             </button>
-            <button 
+            <button
+              disabled={outOfStockRent}
               onClick={handleAddToCart}
-              className="flex-1 py-3.5 px-4 rounded-xl bg-primary text-white font-bold text-sm shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform"
+              className={`flex-1 py-3.5 px-4 rounded-xl bg-primary text-white font-bold text-sm shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform ${outOfStockRent ? "opacity-40 cursor-not-allowed" : ""}`}
             >
-                今すぐ{actionType === 'rent' ? 'レンタル' : '購入'}
+                {outOfStockRent ? (SALES_ENABLED ? "在庫なし（販売のみ）" : "在庫なし") : `今すぐ${actionType === 'rent' ? 'レンタル' : '購入'}`}
             </button>
           </div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-slate-800 mb-2">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-base font-bold flex items-center gap-2">
-              <span className="w-1 h-5 rounded-full bg-slate-200 dark:bg-slate-600"></span>
-              レビュー (128)
-            </h3>
-            <button className="text-xs font-bold text-primary">すべて見る</button>
-          </div>
-          <div className="space-y-4">
-            <div className="flex gap-3">
-              <div className="size-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-xs font-bold">YM</div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start">
-                  <span className="text-xs font-bold">山田 太郎</span>
-                  <span className="text-[10px] text-slate-400">2023/11/02</span>
-                </div>
-                <div className="flex text-amber-400 my-1">
-                  <span className="material-symbols-outlined text-[14px] fill-1">star</span>
-                  <span className="material-symbols-outlined text-[14px] fill-1">star</span>
-                  <span className="material-symbols-outlined text-[14px] fill-1">star</span>
-                  <span className="material-symbols-outlined text-[14px] fill-1">star</span>
-                  <span className="material-symbols-outlined text-[14px] fill-1">star</span>
-                </div>
-                <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                  現場での使い勝手がとても良いです。軽くて持ち運びも楽でした。
-                </p>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
 
         <div className="p-4 bg-white dark:bg-slate-800">
@@ -288,9 +285,9 @@ export default function ProductDetail() {
                   <h4 className="text-xs font-bold line-clamp-2 leading-tight mb-1 group-hover:text-primary transition-colors">{relatedP.name}</h4>
                   {relatedP.rentPrice ? (
                     <span className="text-xs font-bold text-primary">¥{relatedP.rentPrice.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">/日</span></span>
-                  ) : (
+                  ) : SALES_ENABLED ? (
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-300">¥{relatedP.buyPrice?.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">(購入)</span></span>
-                  )}
+                  ) : null}
                 </div>
               </Link>
             ))}

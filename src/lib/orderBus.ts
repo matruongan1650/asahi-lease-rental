@@ -51,7 +51,12 @@ export type BusStore =
   | "stocktake"
   | "repairs"
   | "purchaseOrders"
-  | "users";
+  | "users"
+  | "roles"
+  | "calendarEvents"
+  | "contracts"
+  | "issuedInvoices"
+  | "systemSettings";
 
 /** Every record stored in the bus must at least have an `id` */
 export interface BusRecord {
@@ -138,6 +143,19 @@ export interface IOrderBus {
 
   /** Clear a store entirely */
   clear(store: BusStore): void;
+
+  /** Number of local writes not yet confirmed by the server (offline/in-flight). */
+  pendingCount(): number;
+
+  /**
+   * Resolve when all pending writes have been confirmed by the server (`true`),
+   * or `false` on the first sync error / after `timeoutMs`. Lets field flows
+   * confirm a completion actually reached admin before clearing the job.
+   */
+  flush(timeoutMs?: number): Promise<boolean>;
+
+  /** Subscribe to backend write failures (offline / server error). Returns unsubscribe. */
+  onSyncError(cb: (info: { store: BusStore; id: string; error: unknown }) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +184,11 @@ const BUS_STORES: readonly BusStore[] = [
   "repairs",
   "purchaseOrders",
   "users",
+  "roles",
+  "calendarEvents",
+  "contracts",
+  "issuedInvoices",
+  "systemSettings",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -299,7 +322,10 @@ if (_bc) {
 }
 
 /** Fallback: listen for localStorage storage events (fires in other tabs only) */
-if (typeof window !== "undefined") {
+// window レベルのフラグで多重登録を防ぐ。モジュールが HMR 等で再評価されても window は永続するため、
+// storage リスナーが重複登録されて各イベントが複数回処理される（重複再描画・重複副作用）のを防ぐ。
+if (typeof window !== "undefined" && !(window as unknown as Record<string, unknown>).__asahiOrderBusStorageBound) {
+  (window as unknown as Record<string, unknown>).__asahiOrderBusStorageBound = true;
   window.addEventListener("storage", (ev: StorageEvent) => {
     const store = BUS_STORES.find((s) => ev.key === _key(s));
     if (store) {
@@ -327,6 +353,42 @@ function _generateId(): string {
 let _applyingRemote = false;
 let _apiPollerStarted = false;
 let _firstPoll = false;
+
+// 未同期（サーバー upsert 未確定）のローカルレコードを追跡する。
+// 権威スナップショット再読込（_reloadAuthoritativeSnapshot）でローカル追加分が
+// 消えるのを防ぐために使う。削除済みは対象外（remove で除外）なので復活しない。
+const _pendingUpserts = new Set<string>();
+// 現在サーバへ送信中(in-flight)のキー。同一レコードの二重 upsert（遅い回線でのリトライ嵐）を防ぐ。
+const _inFlightUpserts = new Set<string>();
+const _pk = (store: string, id: string) => store + " " + id;
+// バックエンド書き込み失敗（オフライン/サーバーエラー）の購読者。
+// スタッフ現場アプリが「保存に失敗」を即座にユーザへ提示するために使う。
+type SyncErrorListener = (info: { store: BusStore; id: string; error: unknown }) => void;
+const _syncErrorListeners: SyncErrorListener[] = [];
+function _emitSyncError(store: BusStore, id: string, error: unknown): void {
+  for (const cb of _syncErrorListeners) {
+    try { cb({ store, id, error }); } catch { /* listener error must not break sync */ }
+  }
+}
+
+// オンライン復帰時、未送信(pending)のローカル変更を再送する。
+// オフライン中に行った現場の完了（配送/回収/棚卸/在庫調整）をサーバーへ確実に届ける。
+function _retryPendingUpserts(): void {
+  if (_pendingUpserts.size === 0) return;
+  for (const key of Array.from(_pendingUpserts)) {
+    const sp = key.indexOf("\u0000");
+    if (sp < 0) { _pendingUpserts.delete(key); continue; }
+    const store = key.slice(0, sp) as BusStore;
+    const id = key.slice(sp + 1);
+    // レコードがまだローカルに存在する場合のみ再送（削除済みは pending から外れている）。
+    if (_read(store).some((r) => String(r.id) === id)) {
+      void _upsertExternalized(store, id);
+    } else {
+      _pendingUpserts.delete(key);
+    }
+  }
+}
+
 let _lastRev = 0;
 const _REV_KEY = "asahi._rev";
 const _SYNCED_KEY = "asahi._synced_v1";
@@ -339,6 +401,10 @@ function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; delet
   const cur = _read(store);
   const map = new Map<string, BusRecord>(cur.map((r) => [String(r.id), r]));
   for (const ch of changes) {
+    // サーバー upsert がまだ確定していないローカル編集（in-flight）は、増分同期で返ってくる
+    // 「古いサーバー状態のエコー」で上書きしない。_reloadAuthoritativeSnapshot と同じ保護を増分側にも適用し、
+    // 直近のローカル編集が一瞬で巻き戻る事象を防ぐ（upsert 確定で pending から外れれば以後は通常通り反映）。
+    if (_pendingUpserts.has(_pk(store, String(ch.id)))) continue;
     if (ch.deleted) map.delete(String(ch.id));
     else if (ch.data) map.set(String(ch.id), ch.data);
   }
@@ -355,11 +421,20 @@ function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; delet
 
 async function _reloadAuthoritativeSnapshot(): Promise<number> {
   let maxRev = 0;
+  const toRepush: Array<[BusStore, string]> = [];
   _applyingRemote = true;
   try {
     for (const store of BUS_STORES) {
-      const rows = await apiList(store);
-      _write(store, rows as BusRecord[]);
+      const before = _read(store);
+      const rows = (await apiList(store)) as BusRecord[];
+      // 未同期のローカル追加分（pending かつサーバー snapshot に無い）は権威上書きで消さずに保持する。
+      // 削除済みは pending から除外済みのため、ここで「復活」することはない。
+      const serverIds = new Set(rows.map((r) => String(r.id)));
+      const pendingLocal = before.filter(
+        (r) => _pendingUpserts.has(_pk(store, String(r.id))) && !serverIds.has(String(r.id)),
+      );
+      _write(store, pendingLocal.length ? [...pendingLocal, ...rows] : rows);
+      pendingLocal.forEach((r) => toRepush.push([store, String(r.id)]));
     }
     const fresh = await apiSync(0);
     if (fresh && typeof fresh.rev === "number") {
@@ -368,6 +443,8 @@ async function _reloadAuthoritativeSnapshot(): Promise<number> {
   } finally {
     _applyingRemote = false;
   }
+  // 保持した未同期レコードをサーバーへ再送（次回読込で確実に同期されるように）。
+  toRepush.forEach(([store, id]) => { void _upsertExternalized(store, id); });
   _firstPoll = false;
   try { localStorage.setItem(_SYNCED_KEY, "1"); } catch { /* ignore */ }
   try { localStorage.setItem(_REV_KEY, String(maxRev)); } catch { /* ignore */ }
@@ -407,6 +484,9 @@ async function _apiTick(): Promise<void> {
       _lastRev = res.rev;
       try { localStorage.setItem(_REV_KEY, String(_lastRev)); } catch { /* ignore */ }
     }
+
+    // 同期成功 → 未送信(pending)の現場変更を再送（オフライン復帰時の取りこぼし防止）。
+    _retryPendingUpserts();
   } catch {
     // サーバー未起動 / オフライン → ローカルのみで継続（次回再試行）。
   } finally {
@@ -445,31 +525,57 @@ function _startApiPoller(): void {
  * 画像が無いレコードは即 upsert（高速パス）。
  */
 async function _upsertExternalized(store: BusStore, recordId: string): Promise<void> {
-  let data = _read(store);
-  let idx = data.findIndex((r) => String(r.id) === String(recordId));
-  if (idx < 0) return;
-  const original = data[idx];
-
-  let ext: BusRecord = original;
+  const pk = _pk(store, String(recordId));
+  _pendingUpserts.add(pk); // 同期確定まで未同期として保持
+  // 同一レコードの送信が既に進行中なら二重送信しない。
+  // （遅い回線で画像アップロードが SYNC_POLL_MS を超えると、毎 tick の再送が重なってリトライ嵐になる。
+  //   完了後も pending が残っていれば次の tick が確実に再送するので取りこぼさない。）
+  if (_inFlightUpserts.has(pk)) return;
+  _inFlightUpserts.add(pk);
   try {
-    ext = await externalizeImages(original);
-  } catch {
-    ext = original;
-  }
+    let data = _read(store);
+    let idx = data.findIndex((r) => String(r.id) === String(recordId));
+    if (idx < 0) { _pendingUpserts.delete(pk); return; }
+    const original = data[idx];
 
-  // 画像をアップロードして URL 化した場合のみローカルを書き換える。
-  if (ext !== original) {
-    data = _read(store);
-    idx = data.findIndex((r) => String(r.id) === String(recordId));
-    if (idx >= 0) {
-      data[idx] = ext;
-      _write(store, data);
+    let ext: BusRecord = original;
+    try {
+      ext = await externalizeImages(original);
+    } catch {
+      ext = original;
     }
-  }
 
-  apiUpsert(store, ext as any).catch((e) =>
-    console.warn(`[OrderBus] backend upsert failed "${store}/${recordId}":`, e)
-  );
+    // 画像をアップロードして URL 化した場合のみローカルを書き換える。
+    if (ext !== original) {
+      data = _read(store);
+      idx = data.findIndex((r) => String(r.id) === String(recordId));
+      if (idx >= 0) {
+        // 共有配列(_mem)を直接 mutate せず新配列で書き込む（push/patch と同じ不変性規約）。
+        _write(store, data.map((r, i) => (i === idx ? ext : r)));
+      }
+    }
+
+    // 画像アップロード待ち（await）の間にレコードが削除された場合、サーバへ再 upsert して
+    // 復活（resurrection）させない。削除は _mem へ即時反映されるので存在確認で判定する。
+    if (!_read(store).some((r) => String(r.id) === String(recordId))) {
+      return;
+    }
+    try {
+      await apiUpsert(store, ext as any);
+      _pendingUpserts.delete(pk); // 同期確定 → 未同期解除
+    } catch (e) {
+      console.warn(`[OrderBus] backend upsert failed "${store}/${recordId}":`, e);
+      _emitSyncError(store, String(recordId), e);
+      // 4xx（権限拒否など非リトライ）の場合は pending を諦めて外す。さもないと永久リトライし続け、
+      // かつ _applyRemoteChanges が当該レコードへの正当なリモート更新を恒久的に無視してしまう。
+      // 5xx/ネットワーク等の一時エラーは pending のまま保持し、次 tick で再送する。
+      if (/→ 4\d\d /.test(String((e as { message?: string })?.message ?? e))) {
+        _pendingUpserts.delete(pk);
+      }
+    }
+  } finally {
+    _inFlightUpserts.delete(pk);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -518,9 +624,8 @@ export const OrderBus: IOrderBus = {
       record.createdAt = new Date().toISOString();
     }
 
-    // Prepend (newest first)
-    data.unshift(record);
-    _write(store, data);
+    // Prepend (newest first)。共有配列(_mem)を直接 mutate せず新しい配列で書き込む。
+    _write(store, [record, ...data]);
 
     if (DATA_BACKEND === "api" && !_applyingRemote) {
       void _upsertExternalized(store, String(record.id));
@@ -537,19 +642,42 @@ export const OrderBus: IOrderBus = {
       const firestoreId = data[idx].firestoreId;
       const targetDocId = (firestoreId || targetId) as string;
 
-      data[idx] = {
-        ...data[idx],
-        ...updates,
-        updatedAt: new Date().toISOString(),
-      };
-      _write(store, data);
+      // 共有配列(_mem)を直接 mutate せず新しい配列で書き込む。
+      const next = data.map((d, i) =>
+        i === idx ? { ...d, ...updates, updatedAt: new Date().toISOString() } : d
+      );
+      _write(store, next);
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         // マージ後のレコード全体を upsert（base64 画像はアップロードして URL 化）。
         void _upsertExternalized(store, String(targetId));
       }
     } else {
-      console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
+      // ローカル未キャッシュ（作成直後で未同期 等）。黙って捨てると更新が永久に失われるため、
+      // サーバーから取得→マージ→upsert で取りこぼしを防ぐ（部分 upsert はサーバーが data 全置換のため不可）。
+      if (DATA_BACKEND === "api" && !_applyingRemote) {
+        void (async () => {
+          try {
+            const rows = await apiList(store);
+            const found = (rows || []).find(
+              (r) => String(r.id) === String(id) || String((r as any).firestoreId) === String(id),
+            );
+            if (!found) {
+              console.warn(`[OrderBus] patch: "${id}" not in local store "${store}" nor on server — update dropped.`);
+              return;
+            }
+            const merged = { ...found, ...updates, updatedAt: new Date().toISOString() } as BusRecord;
+            const cur = _read(store);
+            const has = cur.some((d) => String(d.id) === String((found as any).id));
+            _write(store, has ? cur.map((d) => (String(d.id) === String((found as any).id) ? merged : d)) : [merged, ...cur]);
+            void _upsertExternalized(store, String((found as any).id));
+          } catch (e) {
+            console.warn(`[OrderBus] patch reconcile failed for "${id}" in "${store}":`, e);
+          }
+        })();
+      } else {
+        console.warn(`[OrderBus] patch: record with id "${id}" not found in store "${store}".`);
+      }
     }
   },
 
@@ -563,6 +691,9 @@ export const OrderBus: IOrderBus = {
 
       const filtered = data.filter((d) => d.id !== id && d.firestoreId !== id);
       _write(store, filtered);
+
+      // 削除されたので未同期保持の対象から外す（再読込で復活させない）。
+      _pendingUpserts.delete(_pk(store, String(targetId)));
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         apiRemove(store, String(targetId)).catch((e) =>
@@ -633,7 +764,57 @@ export const OrderBus: IOrderBus = {
     } catch (e) {
       console.error(`[OrderBus] Failed to clear store "${store}":`, e);
     }
+    // メモリ上の正本(_mem)と差分ガード(_lastSerialized)も消す。
+    // さもないと _read が _mem の旧データを返し、クリアしたはずのストアが読み込みやポーリングで復活する。
+    _mem[store] = [];
+    delete _lastSerialized[store];
     _notify(store, []);
+  },
+
+  pendingCount(): number {
+    return _pendingUpserts.size;
+  },
+
+  onSyncError(cb: (info: { store: BusStore; id: string; error: unknown }) => void): () => void {
+    _syncErrorListeners.push(cb);
+    return () => {
+      const i = _syncErrorListeners.indexOf(cb);
+      if (i >= 0) _syncErrorListeners.splice(i, 1);
+    };
+  },
+
+  flush(timeoutMs = 8000): Promise<boolean> {
+    // 呼び出し時点で未送信のキーだけを対象にする。グローバルな pending/エラーを見ると、
+    // 無関係なレコード（別の失敗中 fieldReport 等）のエラーや保留で false になり、
+    // 実際には成功した今回の完了が「送信待ち」と誤表示される。
+    const watch = new Set(Array.from(_pendingUpserts));
+    if (watch.size === 0) return Promise.resolve(true);
+    // 未送信を即座に再送して確定を早める（オフライン→直後オンラインのケース）。
+    _retryPendingUpserts();
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      let iv: ReturnType<typeof setInterval> | undefined;
+      let to: ReturnType<typeof setTimeout> | undefined;
+      const drained = () => {
+        for (const k of watch) { if (_pendingUpserts.has(k)) return false; }
+        return true;
+      };
+      const onErr: SyncErrorListener = (info) => {
+        if (watch.has(_pk(info.store, String(info.id)))) finish(false);
+      };
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        if (iv) clearInterval(iv);
+        if (to) clearTimeout(to);
+        const i = _syncErrorListeners.indexOf(onErr);
+        if (i >= 0) _syncErrorListeners.splice(i, 1);
+        resolve(ok);
+      };
+      _syncErrorListeners.push(onErr);
+      iv = setInterval(() => { if (drained()) finish(true); }, 200);
+      to = setTimeout(() => finish(false), timeoutMs);
+    });
   },
 };
 
@@ -686,6 +867,8 @@ export function deriveAdminData(rawOrders: BusRecord[]): AdminDerivedData {
   let productSales = 0;
 
   orders.forEach((o) => {
+    // キャンセル注文は売上(KPI)に計上しない（実現売上のみを集計する）。
+    if (String(o.status) === "キャンセル") return;
     let orderRentSub = 0;
     let orderBuySub = 0;
     o.items?.forEach((item) => {

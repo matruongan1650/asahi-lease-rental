@@ -4,13 +4,25 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
 import { useProducts } from "../context/ProductContext";
+import { isVehicleCategory } from "../utils/productUtils";
+import { SALES_ENABLED } from "../config/features";
+import { LONG_TERM_THRESHOLD_DAYS } from "../utils/billing";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ProductListDesktop from "./desktop/ProductListDesktop";
 
+// PC はデスクトップ専用 UI、スマホは従来のモバイル UI。
 export default function ProductList() {
+  return useIsDesktop() ? <ProductListDesktop /> : <ProductListMobile />;
+}
+
+function ProductListMobile() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const categoryParam = searchParams.get("category");
   const isFeaturedList = searchParams.get("featured") === "true";
   const searchParam = searchParams.get("search");
+  // group: "supplies"（保安用品＝車両以外）/ "vehicles"（保安車両）。ホームの すべて見る から渡る。
+  const groupParam = searchParams.get("group");
   const { addToCart } = useCart();
   const { isFeatured, toggleFeatured, featuredIds } = useFeatured();
   const { products } = useProducts();
@@ -82,20 +94,30 @@ export default function ProductList() {
   }
 
   // Decide which list to render
-  const title = searchParam 
-    ? `検索: ${searchParam}` 
-    : isFeaturedList 
-      ? "注目商品" 
-      : (categoryParam || "すべての商品");
+  const title = searchParam
+    ? `検索: ${searchParam}`
+    : isFeaturedList
+      ? "注目商品"
+      : categoryParam
+        ? categoryParam
+        : groupParam === "supplies"
+          ? "保安用品"
+          : groupParam === "vehicles"
+            ? "保安車両"
+            : "すべての商品";
   
   const safeProducts = products || [];
   const filteredProducts = isFeaturedList
     ? safeProducts.filter(p => featuredIds.includes(p?.id))
     : searchParam
       ? safeProducts.filter(p => p?.name?.toLowerCase().includes(searchParam.toLowerCase()) || p?.category?.toLowerCase().includes(searchParam.toLowerCase()))
-      : categoryParam 
+      : categoryParam
         ? safeProducts.filter(p => p?.category === categoryParam)
-        : safeProducts;
+        : groupParam === "supplies"
+          ? safeProducts.filter(p => p && !isVehicleCategory(p.category))
+          : groupParam === "vehicles"
+            ? safeProducts.filter(p => p && isVehicleCategory(p.category))
+            : safeProducts;
 
   const handleAddToCart = () => {
     for (const id in quantities) {
@@ -110,9 +132,10 @@ export default function ProductList() {
             rentPriceLongTerm: product.rentPriceLongTerm,
             buyPrice: product.buyPrice,
             quantity: quantities[id],
-            type: product.rentPrice ? 'rent' : 'buy', // Default to rent if available
+            type: (!SALES_ENABLED || product.rentPrice) ? 'rent' : 'buy', // 販売無効時はレンタル固定
             rentalDays: 1, // Default 1 day maybe?
             category: product.category,
+            unit: product.unit,
           });
         }
       }
@@ -192,7 +215,7 @@ export default function ProductList() {
         </button>
       </div>
 
-      <div className={`grid grid-cols-2 gap-3 p-4 ${totalItems > 0 ? 'pb-24' : ''}`}>
+      <div className={`grid grid-cols-2 gap-3 p-4 ${totalItems > 0 ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : ''}`}>
         {filteredProducts.map(product => (
           <ProductListItem 
             key={product.id}
@@ -258,7 +281,7 @@ const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?:
               </div>
               {rentPriceLongTerm && (
                 <div className="flex items-baseline gap-1">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">長期(&gt;15日):</span>
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">長期({LONG_TERM_THRESHOLD_DAYS}日〜):</span>
                   <span className="text-sm font-bold text-primary">¥{rentPriceLongTerm.toLocaleString()}<span className="text-xs font-normal text-slate-400">/日</span></span>
                 </div>
               )}
@@ -270,16 +293,18 @@ const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?:
             </div>
           )}
           
-          <div className="flex items-baseline gap-1">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">購入:</span>
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">¥{buyPrice?.toLocaleString()}</span>
-          </div>
+          {SALES_ENABLED && (
+            <div className="flex items-baseline gap-1">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">購入:</span>
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">¥{buyPrice?.toLocaleString()}</span>
+            </div>
+          )}
         </div>
         <div className="mt-1 flex flex-col gap-2">
           {stock > 0 ? (
             <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">在庫数: {stock}</p>
           ) : (
-            <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">在庫なし (販売のみ)</p>
+            <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">{SALES_ENABLED ? "在庫なし (販売のみ)" : "在庫なし"}</p>
           )}
           <div className="flex items-center gap-1">
             <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>

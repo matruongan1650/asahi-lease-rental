@@ -12,6 +12,15 @@ export interface VehicleAlert {
   icon: string;
 }
 
+export interface VehicleFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  uploadedAt: string;
+  dataUrl: string;
+}
+
 export interface VehicleDetail {
   id: string; // The product id
   productId: string;
@@ -45,6 +54,7 @@ export interface VehicleDetail {
   maintenanceHistory: { date: string; item: string; mileage: string }[];
   repairHistory: { title: string; shop: string; date: string; price: string; receipt: string }[];
   documents: string[];
+  vehicleFiles?: VehicleFile[];
   photos?: string[];
 }
 

@@ -3,7 +3,7 @@
  * 注文が数万件あってもクライアントは 1 ページ分しか保持しない（メモリ・通信を一定に保つ）。
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "./dataBackend";
+import { API_BASE, apiHeaders } from "./dataBackend";
 
 export interface QueryOpts {
   hasType?: string;       // "rent" | "buy"
@@ -29,7 +29,7 @@ export async function queryStore(name: string, opts: QueryOpts): Promise<QueryRe
   p.set("limit", String(opts.limit ?? 50));
   p.set("offset", String(opts.offset ?? 0));
   if (opts.counts) p.set("counts", "1");
-  const res = await fetch(`${API_BASE}/query?${p.toString()}`);
+  const res = await fetch(`${API_BASE}/query?${p.toString()}`, { headers: apiHeaders() });
   if (!res.ok) throw new Error("query " + res.status);
   const j = await res.json();
   return { rows: Array.isArray(j.rows) ? j.rows : [], total: Number(j.total) || 0, sumTotal: Number(j.sumTotal) || 0, statusCounts: j.statusCounts || {} };
@@ -55,27 +55,34 @@ export function useServerQuery(
 
   const filterKey = JSON.stringify({ name, hasType: opts.hasType, statusIn: opts.statusIn, q: opts.q, resetKey, tick });
 
+  // 適用世代トークン。フィルタ変更/loadMore のたびに進め、古い in-flight（特にポーリング）の応答が
+  // 新しい正しい結果を上書きしないようにする。
+  const applyGenRef = useRef(0);
+
   useEffect(() => {
+    const myGen = ++applyGenRef.current;
     let cancelled = false;
     setLoading(true);
     queryStore(name, { hasType: opts.hasType, statusIn: opts.statusIn, q: opts.q, counts: opts.counts, limit: pageSize, offset: 0 })
       .then((r) => {
-        if (cancelled) return;
+        if (cancelled || myGen !== applyGenRef.current) return;
         setRows(r.rows);
         setTotal(r.total);
         setSumTotal(r.sumTotal);
         setStatusCounts(r.statusCounts);
       })
-      .catch(() => { if (!cancelled) { setRows([]); setTotal(0); } })
+      .catch(() => { if (!cancelled && myGen === applyGenRef.current) { setRows([]); setTotal(0); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey]);
 
   const loadMore = useCallback(() => {
+    const myGen = ++applyGenRef.current; // 追記中に古いポーリング応答が上書きしないよう世代を進める
     setLoading(true);
     queryStore(name, { hasType: opts.hasType, statusIn: opts.statusIn, q: opts.q, limit: pageSize, offset: rows.length })
-      .then((r) => setRows((prev) => [...prev, ...r.rows]))
+      .then((r) => { if (myGen === applyGenRef.current) setRows((prev) => [...prev, ...r.rows]); })
+      .catch(() => { /* ページング失敗は黙殺（未処理 rejection を防ぐ）。次のポーリングで復帰する。 */ })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, opts.hasType, JSON.stringify(opts.statusIn), opts.q, rows.length, pageSize]);
@@ -91,8 +98,13 @@ export function useServerQuery(
     const id = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return; // 非表示タブでは更新しない
       const { name: n, opts: o, loaded } = liveRef.current;
+      const myGen = applyGenRef.current; // 発行時点の世代を確保
       queryStore(n, { hasType: o.hasType, statusIn: o.statusIn, q: o.q, counts: o.counts, limit: Math.max(pageSize, loaded), offset: 0 })
-        .then((r) => { setRows(r.rows); setTotal(r.total); setSumTotal(r.sumTotal); setStatusCounts(r.statusCounts); })
+        .then((r) => {
+          // 応答までにフィルタ変更/loadMore が走っていたら、この古い結果は適用しない（ちらつき/巻き戻り防止）。
+          if (myGen !== applyGenRef.current) return;
+          setRows(r.rows); setTotal(r.total); setSumTotal(r.sumTotal); setStatusCounts(r.statusCounts);
+        })
         .catch(() => {});
     }, pollMs);
     return () => clearInterval(id);

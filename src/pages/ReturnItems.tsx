@@ -2,8 +2,14 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ReturnItemsDesktop from "./desktop/ReturnItemsDesktop";
 
 export default function ReturnItems() {
+  return useIsDesktop() ? <ReturnItemsDesktop /> : <ReturnItemsMobile />;
+}
+
+function ReturnItemsMobile() {
   const navigate = useNavigate();
   const { orderId } = useParams();
   const { orders } = useOrders();
@@ -12,9 +18,11 @@ export default function ReturnItems() {
   const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
 
   // アクセス制御: 自分が発注した注文のみ返却操作できる（他社注文の URL 直打ちを防ぐ）。
+  // 所有者を証明できない注文（userId 未設定）も拒否（deny-by-default）。
+  const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
   const foundOrder = orders.find(o => o.id === orderId);
   const order =
-    foundOrder && foundOrder.userId && foundOrder.userId !== currentUser?.id
+    foundOrder && !isPrivileged && foundOrder.userId !== currentUser?.id
       ? undefined
       : foundOrder;
 
@@ -36,7 +44,8 @@ export default function ReturnItems() {
   }
 
   const rentItems = order.items.filter(item => item.type === 'rent' && (item.returnedQuantity || 0) < item.quantity);
-  const totalReturning: number = Object.values(returnQuantities).reduce<number>((a: number, b: any) => a + (Number(b) || 0), 0);
+  // 空欄を表す -1 センチネルは 0 として扱う（合計が負に化けて表示・ボタン活性が壊れるのを防ぐ）。
+  const totalReturning: number = Object.values(returnQuantities).reduce<number>((a: number, b: any) => a + Math.max(0, Number(b) || 0), 0);
 
   const handleUpdateQuantity = (id: string, delta: number, max: number) => {
     setReturnQuantities(prev => {
@@ -72,13 +81,19 @@ export default function ReturnItems() {
              >
                一括返却
              </button>
-             <button 
+             <button
                onClick={() => setReturnType("partial")}
                className={`py-3 px-4 rounded-xl font-bold text-sm border-2 transition-all ${returnType === "partial" ? "border-primary bg-primary/5 text-primary" : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-primary/50"}`}
              >
                一部返却
              </button>
            </div>
+           {returnType === "partial" && (
+             <p className="mt-3 flex items-start gap-1.5 text-[11px] text-slate-500 leading-relaxed">
+               <span className="material-symbols-outlined text-[14px] text-primary mt-px">info</span>
+               一部返却は「直接持ち込み」のみご利用いただけます（業者集荷は不可）。
+             </p>
+           )}
         </div>
 
         <div className="flex items-center justify-between px-1 mt-2">
@@ -114,7 +129,11 @@ export default function ReturnItems() {
           </div>
           <button 
             disabled={totalReturning === 0}
-            onClick={() => navigate(`/return/${order.id}/shipping`, { state: { returnQuantities, order, returnType }})}
+            onClick={() => {
+              // -1 センチネルが返却確認画面へ漏れて残数を +1 水増ししないよう、0 以上に正規化して渡す。
+              const sanitized = Object.fromEntries(Object.entries(returnQuantities).map(([k, v]) => [k, Math.max(0, Number(v) || 0)]));
+              navigate(`/return/${order.id}/shipping`, { state: { returnQuantities: sanitized, order, returnType } });
+            }}
             className={`flex-1 rounded-xl font-bold h-12 flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition-transform ${totalReturning > 0 ? "bg-primary hover:bg-blue-600 text-white shadow-blue-500/20" : "bg-slate-300 text-slate-500 cursor-not-allowed"}`}
           >
             次へ進む

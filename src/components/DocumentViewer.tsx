@@ -1,9 +1,8 @@
 import React, { useRef, useState, useEffect } from "react";
 import { alertDialog } from "./AppDialog";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
+import { elementToPdf } from "../utils/pdfMultiPage"; // 複数ページ分割 + モバイル共有フォールバック
 import { isVehicleCategory } from "../utils/productUtils";
-import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks } from "../utils/billing";
+import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks, getTaxRate } from "../utils/billing";
 
 interface DocumentViewerProps {
   order: any;
@@ -18,6 +17,9 @@ const formatYen = (value: number) => Math.round(Number(value) || 0).toLocaleStri
 
 export default function DocumentViewer({ order, type, blockId, onClose }: DocumentViewerProps) {
   const documentRef = useRef<HTMLDivElement>(null);
+  // スマホ表示の縮小(zoom)は撮影対象の外側ラッパーに掛ける。
+  // 撮影される documentRef 自体は常に等倍の固定 A4(794px)を保ち、見積書PDFと同じ条件で出力する。
+  const fitRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
   // 画面サイズに応じた表示倍率:
@@ -43,58 +45,20 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
   const handleDownloadPdf = async () => {
     if (!documentRef.current) return;
     setIsGenerating(true);
+    const element = documentRef.current;
+    // PDF は常に等倍の A4 でキャプチャする。スマホ表示の縮小はラッパー(fitRef)の zoom で行うため、
+    // 撮影中だけラッパーの zoom を解除して documentRef の実寸(794px)を確保する（縮小されたまま撮ると小さく粗い PDF になる）。
+    const fit = fitRef.current;
+    const prevZoom = fit ? (fit.style as any).zoom : undefined;
+    if (fit) (fit.style as any).zoom = "1";
     try {
-      const element = documentRef.current;
-
-      // PDF は常に等倍の A4 レイアウトでキャプチャする
-      // （スマホ表示の zoom 縮小は画面表示のみ。一時的に解除して撮影後に戻す）。
-      const prevZoom = (element.style as any).zoom;
-      (element.style as any).zoom = "1";
-
-      // 重要: 署名などの data-URL 画像が完全にデコードされてから html2canvas に渡す。
-      // そうしないと clone 時に画像が未デコードのまま空白でキャプチャされ、PDF に署名が出ない。
-      const imgs = Array.from(element.querySelectorAll("img"));
-      await Promise.all(
-        imgs.map(async (img) => {
-          try {
-            if (typeof (img as HTMLImageElement).decode === "function") {
-              await (img as HTMLImageElement).decode();
-            } else if (!(img.complete && img.naturalWidth > 0)) {
-              await new Promise<void>((resolve) => {
-                img.addEventListener("load", () => resolve(), { once: true });
-                img.addEventListener("error", () => resolve(), { once: true });
-              });
-            }
-          } catch {
-            /* デコード失敗（無効な画像など）は無視して続行 */
-          }
-        })
-      );
-
-      let canvas: HTMLCanvasElement;
-      try {
-        canvas = await html2canvas(element, {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          backgroundColor: "#ffffff",
-          logging: false,
-        });
-      } finally {
-        (element.style as any).zoom = prevZoom || "";
-      }
-
-      const imgData = canvas.toDataURL("image/jpeg", 1.0);
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`${type}_${order.orderNumber}.pdf`);
+      // elementToPdf が「画像デコード待ち → 等倍キャプチャ → 複数ページ分割 → 保存（モバイルは共有）」を行う。
+      await elementToPdf(element, `${type}_${order.orderNumber || "document"}.pdf`);
     } catch (err) {
       console.error("PDF生成エラー:", err);
       void alertDialog("PDFの生成中にエラーが発生しました。");
     } finally {
+      if (fit) (fit.style as any).zoom = prevZoom || "";
       setIsGenerating(false);
     }
   };
@@ -167,10 +131,18 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       });
     }
   } else {
-    itemsToRender = order.items.map((item: any) => ({
-      ...item,
-      calculatedPrice: item.calculatedPrice ?? (item.type === 'rent' ? (item.rentPrice * (item.rentalDays || 1)) : item.buyPrice)
-    }));
+    itemsToRender = (order.items || []).map((item: any) => {
+      const qty = Number(item.quantity) || 1;
+      // calculatedPrice は全注文ソースで「単価」（Checkout/AdminOrderDrawer 共通の規約）。
+      // items 欠落で map クラッシュ→ErrorBoundary 落ちを防ぐ。単価未設定でも NaN にしない。
+      const perUnit = item.calculatedPrice ?? (item.type === 'rent' ? ((item.rentPrice || 0) * (item.rentalDays || 1)) : (item.buyPrice || 0));
+      return {
+        ...item,
+        // 金額列は明細合計（単価×数量）にする。block 無しフォールバックで単価のまま出すと、
+        // 数量2以上のとき金額列の合計が小計(order.subtotal=単価×数量)に一致しなかった。
+        calculatedPrice: perUnit * qty,
+      };
+    });
     if (type === "請求書" && order.invoiceBlocks) {
       order.invoiceBlocks.forEach((b: any) => {
         if (b.extraCosts) {
@@ -187,6 +159,30 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
         }
       });
     }
+  }
+
+  // 請求書では保証料(初回準備・保証料)を「商品ごと」に独立した明細行として明示する。
+  // 各レンタル明細の直後に、その商品の保証料を1行追加する（どの商品にいくら掛かっているか
+  // admin・お客様の双方が一目で確認できる。明細金額の合計も小計と一致する）。
+  const totalGuaranteeFee = type === "請求書"
+    ? itemsToRender.reduce((sum: number, it: any) => sum + (Number(it.guaranteeFeeFlat) || 0), 0)
+    : 0;
+  if (type === "請求書" && totalGuaranteeFee > 0) {
+    const interleaved: any[] = [];
+    for (const it of itemsToRender) {
+      interleaved.push(it);
+      const g = Number(it.guaranteeFeeFlat) || 0;
+      if (!it.isExtraCost && !it.isGuarantee && g > 0) {
+        interleaved.push({
+          name: `初回準備・保証料（${it.name}）`,
+          isGuarantee: true,
+          quantity: 1,
+          price: g,
+          calculatedPrice: g,
+        });
+      }
+    }
+    itemsToRender = interleaved;
   }
 
   let customerName = "";
@@ -227,19 +223,21 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
         {/* Scrollable Document Area */}
         <div className={`flex-1 overflow-auto bg-slate-100 flex justify-center items-start ${isMobile ? "p-2" : "p-4 md:p-8"}`}>
 
-          {/* A4 Document Container
-              スマホでは zoom で画面幅にフィット（PDF 出力時は等倍に戻して撮影）。 */}
+          {/* 表示フィット用ラッパー: スマホでは zoom で画面幅に縮小（PDF 撮影時のみ等倍へ戻す）。
+              撮影対象の documentRef 自体は常に固定 A4(794px) を保ち、見積書PDFと同一条件で出力する。 */}
+          <div ref={fitRef} style={{ zoom: docScale } as React.CSSProperties}>
+          {/* A4 Document Container（固定 794×1123px・等倍・白背景）— 見積書PDFと同じ方式。 */}
           <div
             ref={documentRef}
             className="bg-white shadow-sm"
             style={{
-               width: "210mm",
-               minHeight: "297mm",
-               padding: "20mm 15mm",
+               width: "794px",
+               minHeight: "1123px",
+               padding: "76px 57px",
                fontFamily: "'Noto Sans JP', sans-serif",
+               backgroundColor: "#ffffff",
                color: "#333",
                boxSizing: "border-box",
-               zoom: docScale,
             } as React.CSSProperties}
           >
             {/* Document Header */}
@@ -268,7 +266,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                 {type === "請求書" && (
                   <>
                     <h2 className="font-bold text-xl mb-1 mt-4">ご請求金額： ¥{formatYen(total)} -</h2>
-                    <p className="text-xs text-slate-500">(消費税 10% ¥{formatYen(tax)} を含む)</p>
+                    <p className="text-xs text-slate-500">(消費税 {Math.round(getTaxRate() * 100)}% ¥{formatYen(tax)} を含む)</p>
                   </>
                 )}
               </div>
@@ -328,20 +326,20 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                 {itemsToRender.map((item: any, idx: number) => {
                   const price = item.price ?? 0;
                   const calculatedPrice = item.calculatedPrice ?? 0;
-                  const quantityToDisplay = type === "回収書" ? (item.returnedQuantity ?? item.quantity) : item.quantity;
+                  const quantityToDisplay = type === "回収書" ? (item.returnedQuantity ?? item.quantity ?? 1) : (item.quantity ?? 1);
                   const isRent = item.type === 'rent';
                   const isExtra = item.isExtraCost;
 
                   return (
-                    <tr key={idx} className={`border-b border-slate-300 ${isExtra ? 'bg-amber-50/20' : ''}`}>
+                    <tr key={idx} className={`border-b border-slate-300 ${(isExtra || item.isGuarantee) ? 'bg-amber-50/20' : ''}`}>
                       <td className="border border-slate-300 p-2 text-center">{idx + 1}</td>
                       <td className="border border-slate-300 p-2">
                         {item.name}
                         {isRent && item.rentalDays && (
                           <span className="block text-xs text-slate-500 mt-0.5">{item.rentalDays}日間 (レンタル)</span>
                         )}
-                        {isRent && item.guaranteeFeeFlat > 0 && (
-                          <span className="block text-[10px] text-slate-400 mt-0.5">※初回保証料含む</span>
+                        {item.isGuarantee && (
+                          <span className="block text-[10px] text-slate-400 mt-0.5">※初回のみ</span>
                         )}
                         {item.note && (
                           <span className="block text-xs text-slate-500 mt-0.5">{item.note}</span>
@@ -349,7 +347,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                       </td>
                       <td className="border border-slate-300 p-2 text-right">{quantityToDisplay}</td>
                       <td className="border border-slate-300 p-2 text-center text-xs">
-                        {isExtra ? "式" : (isRent ? "点/レンタル" : "点/購入")}
+                        {(isExtra || item.isGuarantee) ? "式" : (isRent ? "点/レンタル" : "点/購入")}
                       </td>
                       {type === "請求書" && (
                         <>
@@ -384,7 +382,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                 <h3 className="font-bold text-orange-800 mb-2">確認事項（不足・破損等）</h3>
                 <ul className="list-disc list-inside space-y-1 text-orange-900">
                   {order.itemIssues.map((issue: any, idx: number) => {
-                    const item = order.items.find((i: any) => i.id === issue.itemId);
+                    const item = (order.items || []).find((i: any) => i.id === issue.itemId);
                     return (
                       <li key={idx}>
                          {item ? item.name : "不明な品目"} - 
@@ -406,8 +404,14 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                       <th className="border border-slate-400 bg-slate-100 p-2 text-left">小計</th>
                       <td className="border border-slate-400 p-2 text-right">¥{formatYen(subtotal)}</td>
                     </tr>
+                    {totalGuaranteeFee > 0 && (
+                      <tr>
+                        <th className="border border-slate-400 bg-slate-100 p-2 text-left text-xs text-slate-500 font-normal">（うち初回保証料）</th>
+                        <td className="border border-slate-400 p-2 text-right text-xs text-slate-500">¥{formatYen(totalGuaranteeFee)}</td>
+                      </tr>
+                    )}
                     <tr>
-                      <th className="border border-slate-400 bg-slate-100 p-2 text-left">消費税 (10%)</th>
+                      <th className="border border-slate-400 bg-slate-100 p-2 text-left">消費税 ({Math.round(getTaxRate() * 100)}%)</th>
                       <td className="border border-slate-400 p-2 text-right">¥{formatYen(tax)}</td>
                     </tr>
                     <tr>
@@ -445,7 +449,8 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                 </div>
               </div>
             )}
-            
+
+          </div>
           </div>
         </div>
       </div>

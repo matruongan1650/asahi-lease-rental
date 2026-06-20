@@ -1,9 +1,15 @@
 import { Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
-import { confirmDialog } from "../components/AppDialog";
+import { confirmDialog, alertDialog } from "../components/AppDialog";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ProfileDesktop from "./desktop/ProfileDesktop";
 
 export default function Profile() {
+  return useIsDesktop() ? <ProfileDesktop /> : <ProfileMobile />;
+}
+
+function ProfileMobile() {
   const { profile, logout } = useUser();
 
   const handleLogout = async () => {
@@ -50,8 +56,8 @@ export default function Profile() {
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-5">
-          <ProfileMenuLink icon="settings" iconColor="slate" title="設定" />
-          <ProfileMenuLink icon="help" iconColor="emerald" title="ヘルプ" />
+          <ProfileMenuLink icon="settings" iconColor="slate" title="設定" onClick={() => void alertDialog("設定機能は準備中です。")} />
+          <ProfileMenuLink icon="help" iconColor="emerald" title="ヘルプ" onClick={() => void alertDialog("ヘルプは準備中です。ご不明な点はアサヒリース担当者までお問い合わせください。")} />
         </div>
 
         <button onClick={handleLogout} className="w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors flex items-center justify-center gap-2 mb-8 group active:scale-[0.98]">
@@ -67,7 +73,7 @@ export default function Profile() {
   );
 }
 
-function ProfileMenuLink({ icon, iconColor, title, subtitle, to }: { icon: string, iconColor: string, title: string, subtitle?: string, to?: string }) {
+function ProfileMenuLink({ icon, iconColor, title, subtitle, to, onClick }: { icon: string, iconColor: string, title: string, subtitle?: string, to?: string, onClick?: () => void }) {
   
   const colors: Record<string, string> = {
     blue: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400",
@@ -96,7 +102,7 @@ function ProfileMenuLink({ icon, iconColor, title, subtitle, to }: { icon: strin
   }
 
   return (
-    <button className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors border-b border-slate-100 dark:border-slate-700 last:border-0 group">
+    <button onClick={onClick} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors border-b border-slate-100 dark:border-slate-700 last:border-0 group">
       <div className="flex items-center gap-4">
         <div className={`h-10 w-10 rounded-full ${colors[iconColor as keyof typeof colors]} flex items-center justify-center group-hover:scale-110 transition-transform duration-300`}>
           <span className="material-symbols-outlined">{icon}</span>

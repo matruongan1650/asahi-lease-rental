@@ -3,12 +3,14 @@ import { alertDialog } from "../components/AppDialog";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
-import { isVehicleCategory } from '../utils/productUtils';
+import { isVehicleCategory, getItemUnit } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
 import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../utils/billing";
 import OrderBus from "../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned } from "../utils/orderStatus";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import OrderDetailDesktop from "./desktop/OrderDetailDesktop";
 
 type CustomerPhoto = {
   src: string;
@@ -86,7 +88,12 @@ function CustomerPhotoGrid({ photos, alt, cols = "grid-cols-3" }: { photos: Cust
   );
 }
 
+// PC とスマホでお客様サイトを分岐。
 export default function OrderDetail() {
+  return useIsDesktop() ? <OrderDetailDesktop /> : <OrderDetailMobile />;
+}
+
+function OrderDetailMobile() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { orders, updateOrder } = useOrders();
@@ -110,12 +117,16 @@ export default function OrderDetail() {
   const found = orders.find(o => o.id === id);
 
   // アクセス制御: 顧客は自分が発注した注文しか開けない（URL 直打ちで他社の注文を覗けないようにする）。
-  // admin / staff は業務上すべて閲覧可。発注者未設定（過去データ）の注文は所有者判定できないため許可する。
+  // admin / staff は業務上すべて閲覧可。
+  // 発注者(userId)が一致しない注文は拒否し、所有者を証明できない注文（userId 未設定）も
+  // 非特権ユーザーには見せない（deny-by-default）。自分の注文は注文履歴から userId 一致で開ける。
   const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
+  // deny-by-default: 特権でなければ「ログイン済み(本人ID あり)かつ注文に発注者ID があり一致」した時だけ開ける。
+  // （未ログイン + userId 未設定の注文で undefined === undefined となり素通りしていた IDOR を防ぐ）
   const order =
-    found && found.userId && !isPrivileged && found.userId !== currentUser?.id
-      ? undefined
-      : found;
+    found && (isPrivileged || (!!currentUser?.id && !!found.userId && found.userId === currentUser.id))
+      ? found
+      : undefined;
 
   if (!order) {
     return (
@@ -254,12 +265,21 @@ export default function OrderDetail() {
       };
       const newInvoiceBlocks = getOrGenerateInvoiceBlocks(tempOrder);
 
+      // 燃料補給費(order.fuelCharge)・破損紛失弁償費(order.compensationCharge)は
+      // getOrGenerateInvoiceBlocks がブロックの extraCosts に計上する。合計は items 再計算ではなく
+      // 生成済みブロックの合算を正本とし、延長時にこれらの追加費用が脱落（過少請求）しないようにする。
+      const bt = (newInvoiceBlocks || []).reduce(
+        (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+        { subtotal: 0, tax: 0, total: 0 }
+      );
+      const hasBlocks = (newInvoiceBlocks || []).length > 0;
+
       await updateOrder(order.id, {
         rentalEndDate: newEndDate,
         items: updatedItems,
-        subtotal,
-        tax,
-        total,
+        subtotal: hasBlocks ? bt.subtotal : subtotal,
+        tax: hasBlocks ? bt.tax : tax,
+        total: hasBlocks ? bt.total : total,
         invoiceBlocks: newInvoiceBlocks
       });
 
@@ -397,18 +417,34 @@ export default function OrderDetail() {
           </h3>
           
           {order.items.map((item: any, idx: number) => {
-            const price = item.calculatedPrice ?? item.buyPrice ?? 0;
             const isRent = item.type === 'rent';
+            const qty = Number(item.quantity) || 1;
+            // 明細金額（行合計）。calculatedPrice は「1点あたり」なので数量を掛ける（Checkout と同じ規則）。
+            // 未保存の旧注文向けに monthlyBreakdown 合計 → rentPrice×日数 の順でフォールバックする。
+            let lineTotal = 0;
+            if (isRent) {
+              if (item.calculatedPrice != null) {
+                lineTotal = Number(item.calculatedPrice) * qty;
+              } else if (Array.isArray(item.monthlyBreakdown) && item.monthlyBreakdown.length) {
+                lineTotal = item.monthlyBreakdown.reduce((s: number, b: any) => s + (Number(b.price) || 0), 0) * qty;
+              } else {
+                lineTotal = (Number(item.rentPrice) || 0) * (Number(item.rentalDays) || 1) * qty;
+              }
+            } else {
+              lineTotal = (Number(item.buyPrice) || 0) * qty;
+            }
+            const guaranteeFee = Number(item.guaranteeFeeFlat) || 0;
 
             return (
-              <OrderItem 
+              <OrderItem
                 key={`${item.id}-${idx}`}
                 name={item.name}
                 quantity={item.quantity.toString()}
                 returnedQuantity={item.returnedQuantity || 0}
-                unit={isRent ? "点/レンタル" : "点/購入"}
+                unit={`${getItemUnit(item)}/${isRent ? "レンタル" : "購入"}`}
                 detail={isRent ? (item.actualReturnDate ? "返却額再計算済" : `${item.rentalDays || "—"}日間 (予定)`) : "購入品"}
-                price={price.toLocaleString()}
+                price={lineTotal.toLocaleString()}
+                guaranteeFee={guaranteeFee}
                 image={item.image}
                 item={item}
               />
@@ -866,7 +902,7 @@ export default function OrderDetail() {
   );
 }
 
-const OrderItem: React.FC<{ name: string; quantity: string; returnedQuantity?: number; unit: string; detail: string; price: string; image: string; item: any }> = ({ name, quantity, returnedQuantity, unit, detail, price, image, item }) => {
+const OrderItem: React.FC<{ name: string; quantity: string; returnedQuantity?: number; unit: string; detail: string; price: string; guaranteeFee?: number; image: string; item: any }> = ({ name, quantity, returnedQuantity, unit, detail, price, guaranteeFee = 0, image, item }) => {
   return (
     <div className="bg-white dark:bg-slate-800 border border-[#c2c6d7] dark:border-slate-700 rounded-xl overflow-hidden shadow-sm flex flex-col">
       <div className="flex">
@@ -888,7 +924,10 @@ const OrderItem: React.FC<{ name: string; quantity: string; returnedQuantity?: n
               </p>
             )}
           </div>
-          <div className="flex justify-end items-end">
+          <div className="flex justify-between items-end gap-2">
+            {guaranteeFee > 0 ? (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">保証料: <span className="font-bold text-slate-700 dark:text-slate-200">¥{guaranteeFee.toLocaleString()}</span></p>
+            ) : <span />}
             <p className="font-extrabold text-[16px] text-[#191b23] dark:text-white tracking-tighter">¥{price}</p>
           </div>
         </div>

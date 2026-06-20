@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from "react";
 import { calculateRentalPrice } from "../utils/billing";
 import { useProducts } from "./ProductContext";
+import { useUser } from "./UserContext";
 import { isVehicleCategory } from '../utils/productUtils';
 import { safeSetJSON } from "../utils/safeStorage";
 
@@ -17,6 +18,7 @@ export interface CartItem {
   billedDays?: number;
   type: 'rent' | 'buy';
   category?: string;
+  unit?: string;
   actualReturnDate?: string;
   calculatedPrice?: number;
   monthlyBreakdown?: any[];
@@ -38,6 +40,7 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const { products } = useProducts();
+  const { currentUser } = useUser();
   const [items, setItems] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem("cart_v3");
@@ -77,9 +80,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems((prevItems) => {
       const existingItemIndex = prevItems.findIndex(item => item.id === newItem.id && item.type === newItem.type);
       if (existingItemIndex >= 0) {
-        const updatedItems = [...prevItems];
-        updatedItems[existingItemIndex].quantity += newItem.quantity;
-        return updatedItems;
+        // 直接 mutate せず新しいオブジェクトに置き換える（前の state を壊さない／
+        // StrictMode の二重呼び出しで数量が二重加算されるのを防ぐ）。
+        return prevItems.map((item, i) =>
+          i === existingItemIndex ? { ...item, quantity: item.quantity + newItem.quantity } : item
+        );
       }
       return [...prevItems, newItem];
     });
@@ -118,6 +123,23 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearCart = useCallback(() => setItems([]), []);
+
+  // アカウントが切り替わったら（ログイン/ログアウト/別アカウントへ切替）カートを空にする。
+  // 共有端末でカートが別の同僚アカウントに引き継がれ、誤った userId で発注される事故を防ぐ。
+  // 初回マウント（リロード）では消さない（自分のカートを保持）。
+  const prevUserIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const id = currentUser?.id ?? null;
+    const prev = prevUserIdRef.current;
+    prevUserIdRef.current = id;
+    if (prev === undefined) return;        // 初回マウント（リロード）は記録のみ
+    if (prev === null && id !== null) return; // null→実ユーザー（ユーザーキャッシュ遅延ハイドレーション）は切替ではない
+    if (prev !== id) {
+      // アカウント切替/ログアウト時のみカートを破棄（共有端末での誤発注防止）。
+      setItems([]);
+      try { localStorage.removeItem("cart_v3"); } catch { /* ignore */ }
+    }
+  }, [currentUser?.id]);
 
   React.useEffect(() => {
     safeSetJSON("cart_v3", items);

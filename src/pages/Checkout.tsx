@@ -5,12 +5,13 @@ import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { useProducts } from "../context/ProductContext";
 import { useState, useRef } from "react";
-import { calculateRentalPrice } from "../utils/billing";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
+import { calculateRentalPrice, getTaxRate } from "../utils/billing";
+import { elementToPdf } from "../utils/pdfMultiPage"; // A4フィット + 複数ページ分割 + モバイル共有フォールバック
 import { isVehicleCategory } from '../utils/productUtils';
 import { isBusinessDay, nextBusinessDay, nonBusinessDayReason } from '../utils/jpHolidays';
 import React, { useEffect } from 'react';
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import CheckoutDesktop from "./desktop/CheckoutDesktop";
 
 // 日付入力は 期間延長（注文詳細）と同じネイティブの <input type="date"> を使用する。
 // 値の形式は YYYY-MM-DD（state とそのまま一致）。
@@ -18,7 +19,12 @@ function toDateInputValue(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+// PC とスマホでお客様サイトを分岐。
 export default function Checkout() {
+  return useIsDesktop() ? <CheckoutDesktop /> : <CheckoutMobile />;
+}
+
+function CheckoutMobile() {
   const navigate = useNavigate();
   const { items, totalItems } = useCart();
   const { addOrder } = useOrders();
@@ -44,9 +50,10 @@ export default function Checkout() {
 
   const [siteName, setSiteName] = useState("");
   const [constructionNumber, setConstructionNumber] = useState("");
-  const [companyName, setCompanyName] = useState(profile.companyName);
-  const [personFirstName, setPersonFirstName] = useState(profile.firstName);
-  const [personLastName, setPersonLastName] = useState(profile.lastName);
+  // 会社名・担当者名は登録情報（プロフィール）から固定表示。注文では変更不可。
+  const [companyName] = useState(profile.companyName);
+  const [personFirstName] = useState(profile.firstName);
+  const [personLastName] = useState(profile.lastName);
 
   const estimateRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -61,7 +68,9 @@ export default function Checkout() {
   })();
   const earliestRentalStartDate = earliestDeliveryDate;
 
-  const updatedItems = items.map(item => ({ ...item }));
+  // 数量0の品目は注文・表示から除外する（カートで数量欄を空(0)にしたまま blur せず checkout に
+  // 進んだ場合に、0点の明細が注文へ流れ込み合計と食い違うのを防ぐ）。
+  const updatedItems = items.filter(item => Number(item.quantity) >= 1).map(item => ({ ...item }));
 
   let totalRentalPrice = 0;
   let totalBuyPrice = 0;
@@ -115,7 +124,7 @@ export default function Checkout() {
   });
 
   const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-  const tax = Math.floor(subtotal * 0.1);
+  const tax = Math.floor(subtotal * getTaxRate());
   const total = subtotal + tax;
 
   const isDateRangeValid = Boolean(
@@ -131,7 +140,10 @@ export default function Checkout() {
     isBusinessDay(rentalEndDate) &&
     isBusinessDay(deliveryDate)
   );
-  const isFormValid = siteName.trim() !== "" && constructionNumber.trim() !== "" && isDateRangeValid && deliveryLocation.trim() !== "";
+  // カートが空のときは確定不可（0 件注文の作成を防ぐ）。
+  // 判定は実際に発注される updatedItems（数量1以上）で行う。items.length だと数量0の行が残った
+  // ケースで isFormValid が true になり、品目0・¥0 の注文が作成されてしまう。
+  const isFormValid = updatedItems.length > 0 && siteName.trim() !== "" && constructionNumber.trim() !== "" && isDateRangeValid && deliveryLocation.trim() !== "";
 
   useEffect(() => {
     if (rentalStartDate && rentalStartDate < earliestRentalStartDate) {
@@ -175,52 +187,12 @@ export default function Checkout() {
     
     if (!estimateRef.current) return;
     setIsGeneratingPdf(true);
-    
+
     try {
-      const element = estimateRef.current;
-      const canvas = await html2canvas(element, { 
-        scale: 2,
-        useCORS: true,
-        logging: false
-      });
-      
-      const imgData = canvas.toDataURL("image/jpeg", 1.0);
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, Math.min(pdfHeight, 297));
-      
+      // A4 にフィットさせ、明細が多い場合は自動で複数ページに分割する（以前は1ページ目で切れて
+      // データが欠落していた）。モバイルは共有シート、PC はダウンロードへフォールバック。
       const filename = `御見積書_${companyName || personLastName || "ゲスト"}.pdf`;
-      const pdfBlob = pdf.output('blob');
-
-      // Mobile Safari / iOS fallback: use Web Share API if available
-      if (navigator.canShare && navigator.share) {
-        try {
-          const file = new File([pdfBlob], filename, { type: 'application/pdf' });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              files: [file],
-              title: '御見積書',
-            });
-            // If share was successful, don't trigger the default download to avoid double action
-            return;
-          }
-        } catch (shareErr) {
-          console.log("Share API cancelled or failed, falling back to default download.", shareErr);
-        }
-      }
-
-      // Standard fallback (Desktop / Android / older browsers)
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 100);
-      
+      await elementToPdf(estimateRef.current, filename);
     } catch (err) {
       console.error("PDF generation failed", err);
       void alertDialog("見積書の作成に失敗しました。");
@@ -242,30 +214,36 @@ export default function Checkout() {
         <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3 px-1">お客様情報</h3>
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 p-5 space-y-5">
           <label className="flex flex-col w-full">
-            <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">会社名</p>
+            <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">会社名 <span className="text-xs font-medium text-slate-400">（登録情報・変更不可）</span></p>
             <input
               value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 px-4 py-3.5 text-base outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all"
+              readOnly
+              aria-readonly="true"
+              title="登録済みの会社名です。変更はできません。"
+              className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-100 dark:bg-slate-900/40 text-slate-500 dark:text-slate-400 px-4 py-3.5 text-base outline-none cursor-not-allowed"
               type="text"
             />
           </label>
-          
+
           <div className="flex flex-col w-full">
-            <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">担当者名</p>
+            <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">担当者名 <span className="text-xs font-medium text-slate-400">（登録情報・変更不可）</span></p>
             <div className="grid grid-cols-2 gap-3">
               <input
                 value={personLastName}
-                onChange={(e) => setPersonLastName(e.target.value)}
+                readOnly
+                aria-readonly="true"
                 placeholder="姓"
-                className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 px-4 py-3.5 text-base outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all"
+                title="登録済みの担当者名です。変更はできません。"
+                className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-100 dark:bg-slate-900/40 text-slate-500 dark:text-slate-400 px-4 py-3.5 text-base outline-none cursor-not-allowed"
                 type="text"
               />
               <input
                 value={personFirstName}
-                onChange={(e) => setPersonFirstName(e.target.value)}
+                readOnly
+                aria-readonly="true"
                 placeholder="名"
-                className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 px-4 py-3.5 text-base outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all"
+                title="登録済みの担当者名です。変更はできません。"
+                className="w-full rounded-lg border border-slate-100 dark:border-slate-700/50 bg-slate-100 dark:bg-slate-900/40 text-slate-500 dark:text-slate-400 px-4 py-3.5 text-base outline-none cursor-not-allowed"
                 type="text"
               />
             </div>

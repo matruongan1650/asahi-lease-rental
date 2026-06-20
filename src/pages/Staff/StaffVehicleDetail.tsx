@@ -1,476 +1,354 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import Icon from "../../components/staff/Icon";
+import {
+  Badge,
+  Btn,
+  Card,
+  Empty,
+  InfoRow,
+  MetricCard,
+  Overline,
+  PhotoTile,
+  SectionLabel,
+  SegmentControl,
+  TopBar,
+  makePhoto,
+  statusVariant,
+} from "../../components/staff/StaffUI";
 import { useVehicles } from "../../context/VehicleContext";
-import { ArrowLeft, Edit2, Car, Download, UploadCloud, AlertTriangle, PenTool, Image, FileText, CheckCircle2, MoreVertical, Search, ShieldCheck } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+
+type VehicleTab = "basic" | "legal" | "history" | "docs";
+
+function toInputDate(value?: string) {
+  return String(value || "").replace(/\//g, "-");
+}
+
+function fromInputDate(value: string) {
+  return value.replace(/-/g, "/");
+}
+
+function daysTone(days: number | null | undefined) {
+  if (days == null) return "neutral";
+  if (days < 0) return "danger";
+  if (days <= 30) return "warning";
+  return "success";
+}
+
+function FileChip({ name, dataUrl }: { name?: string; dataUrl?: string }) {
+  // 実体（dataUrl）があるときだけダウンロード可能。無いときは「参照のみ」で押せないようにする
+  // （以前は実体が無くてもダウンロードアイコン付きの押せるボタンに見えて、押しても何も起きなかった）。
+  const downloadable = !!(name && dataUrl);
+  const open = () => {
+    if (!dataUrl) return;
+    try {
+      const [meta, b64] = dataUrl.split(",");
+      const mime = (meta.match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+      const bin = atob(b64 || "");
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const blob = new Blob([arr], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name || "file";
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      window.open(dataUrl, "_blank");
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={downloadable ? open : undefined}
+      disabled={!downloadable}
+      style={{
+        width: "100%",
+        minWidth: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "11px 12px",
+        borderRadius: 13,
+        border: `1px ${name ? "solid" : "dashed"} var(--border-strong)`,
+        background: name ? "var(--surface)" : "var(--surface-2)",
+        color: name ? "var(--fg)" : "var(--fg-subtle)",
+        cursor: downloadable ? "pointer" : "default",
+        fontFamily: "var(--font-jp)",
+      }}
+    >
+      <Icon name={name ? "fileCheck" : "paperclip"} size={17} color={name ? "var(--brand-accent)" : "var(--fg-subtle)"} />
+      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left", fontSize: 12.5, fontWeight: 800 }}>
+        {name || "ファイル未登録"}
+      </span>
+      {downloadable && <Icon name="download" size={16} color="var(--fg-subtle)" />}
+    </button>
+  );
+}
 
 export default function StaffVehicleDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { vehicles, updateVehicle } = useVehicles();
+  const vehicle = vehicles.find(v => v.id === id || v.productId === id);
 
-  const [activeTab, setActiveTab] = useState<"basic" | "legal" | "history" | "docs">("basic");
-  
-  const [isEditingLegal, setIsEditingLegal] = useState(false);
-  const [editForm, setEditForm] = useState({
-    inspectionDate: "",
-    insuranceDate: "",
-    insurancePolicyNo: ""
-  });
+  const [activeTab, setActiveTab] = useState<VehicleTab>("basic");
+  const [editingLegal, setEditingLegal] = useState(false);
+  const [editForm, setEditForm] = useState({ inspectionDate: "", insuranceDate: "" });
 
-  // Get real vehicle from context
-  const foundVehicle = vehicles.find(v => v.id === id);
+  const alerts = useMemo(() => {
+    if (!vehicle) return [];
+    const list = [...(vehicle.alerts || [])];
+    const days = vehicle.inspectionDaysRemaining ?? null;
+    if (days !== null && days < 0 && !list.some(a => a.title.includes("車検"))) {
+      list.unshift({ id: 1, type: "danger" as const, title: "車検が期限切れです", subtitle: `${Math.abs(days)}日超過 ・ 至急対応してください`, icon: "alert" });
+    }
+    if (days !== null && days >= 0 && days <= 30 && !list.some(a => a.title.includes("車検"))) {
+      list.unshift({ id: 2, type: "warning" as const, title: "車検期限が近づいています", subtitle: `残り${days}日 ・ 有効期限 ${vehicle.inspectionDate || "未登録"}`, icon: "clock" });
+    }
+    return list;
+  }, [vehicle]);
 
-  if (!foundVehicle) {
-    return <div className="text-slate-500 p-5 text-center mt-10">Vehicle not found</div>;
+  if (!vehicle) {
+    return (
+      <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--font-jp)" }}>
+        <TopBar title="車両が見つかりません" sub="VEHICLE" onBack={() => navigate(-1)} />
+        <div style={{ padding: 16 }}>
+          <Empty icon="car" title="該当する車両がありません" sub="admin の車庫管理で登録状態を確認してください" />
+        </div>
+      </div>
+    );
   }
 
-  // Handle edit toggle
-  const handleEditLegal = () => {
-    if (!isEditingLegal) {
-      setEditForm({
-        inspectionDate: foundVehicle.inspectionDate,
-        insuranceDate: foundVehicle.insuranceDate,
-        insurancePolicyNo: "JB-2024-558102" // Mock static value
-      });
-    }
-    setIsEditingLegal(!isEditingLegal);
-  };
-
-  const handleSaveLegal = () => {
-    updateVehicle(foundVehicle.id, {
-      inspectionDate: editForm.inspectionDate,
-      insuranceDate: editForm.insuranceDate,
-      // We could ideally save policy no as well, but it's not in our context yet
-    });
-    setIsEditingLegal(false);
-  };
-
-  const vehicle = {
-    ...foundVehicle,
-    alerts: (foundVehicle.alerts && foundVehicle.alerts.length > 0) ? foundVehicle.alerts : [
-        { id: 3, type: "warning", title: "自動車税が未払いです", subtitle: "2026年度 ・ 納付期限を確認してください", icon: <AlertTriangle size={18} /> }
-    ],
-    basicInfo: [
-      { label: "ナンバープレート", value: foundVehicle.plate },
-      { label: "メーカー", value: foundVehicle.manufacturer },
-      { label: "Model (車種・モデル)", value: foundVehicle.name },
-      { label: "年式", value: foundVehicle.year },
-      { label: "車体色", value: foundVehicle.color },
-      { label: "車台番号", value: foundVehicle.vin },
-      { label: "原動機", value: foundVehicle.engineModel },
-      { label: "購入日", value: foundVehicle.purchaseDate },
-      { label: "購入価格", value: foundVehicle.purchasePrice },
-      { label: "走行距離", value: foundVehicle.mileage },
-      { label: "状態", value: foundVehicle.status, isBadge: true },
-    ],
-    legalInfo: {
-      inspection: {
-        title: "車検証 (自動車検査証)",
-        daysRemaining: foundVehicle.inspectionDaysRemaining ?? 0,
-        lastDate: "2024/06/05",
-        expiryDate: foundVehicle.inspectionDate || "未登録",
-        file: `車検証_${String(foundVehicle.plate || "").replace(/[^0-9]/g, '') || "未登録"}.pdf`
-      },
-      insurance: {
-        title: "自賠責保険",
-        daysRemaining: (foundVehicle.inspectionDaysRemaining ?? 0) + 12,
-        policyNo: "JB-2024-558102",
-        expiryDate: foundVehicle.insuranceDate || "未登録",
-        file: "自賠責_2024.pdf"
-      }
-    },
-    maintenanceHistory: foundVehicle.maintenanceHistory || [],
-    repairHistory: foundVehicle.repairHistory || [],
-    documents: foundVehicle.documents || [],
-    nextInspectionDaysRemaining: foundVehicle.inspectionDaysRemaining,
-    nextInspectionDate: foundVehicle.inspectionDate,
-  };
-
   const tabs = [
-    { id: "basic", label: "基本情報" },
-    { id: "legal", label: "法規・保険" },
-    { id: "history", label: "履歴" },
-    { id: "docs", label: "書類・画像" },
+    { key: "basic", label: "基本" },
+    { key: "legal", label: "法的" },
+    { key: "history", label: "履歴" },
+    { key: "docs", label: "資料" },
   ];
 
+  const startEditLegal = () => {
+    setEditForm({
+      inspectionDate: vehicle.inspectionDate || "",
+      insuranceDate: vehicle.insuranceDate || "",
+    });
+    setEditingLegal(true);
+    setActiveTab("legal");
+  };
+
+  const saveLegal = () => {
+    // 車検日を変えたら残り日数も再計算する（admin と同じ）。
+    // これを忘れると metric・色・連動アラート/通知が古い日数のまま残る。
+    const updates: any = {
+      inspectionDate: editForm.inspectionDate,
+      insuranceDate: editForm.insuranceDate,
+    };
+    const insp = String(editForm.inspectionDate || "").replace(/\//g, "-").slice(0, 10);
+    if (insp) {
+      const now = new Date();
+      const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const exp = new Date(insp + "T00:00:00").getTime();
+      if (!isNaN(exp)) updates.inspectionDaysRemaining = Math.ceil((exp - t0) / 86400000);
+    }
+    updateVehicle(vehicle.id, updates);
+    setEditingLegal(false);
+  };
+
+  const inspectionDays = vehicle.inspectionDaysRemaining ?? 0;
+  const docs = vehicle.documents || [];
+  const files = vehicle.vehicleFiles || [];
+  const photos = vehicle.photos || [];
+
   return (
-    <div className="bg-slate-50 min-h-screen text-slate-900 pb-24 font-sans">
-      {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-20 px-4 py-3 flex justify-between items-center border-b border-slate-100">
-        <button onClick={() => navigate(-1)} className="p-2 -ml-2 text-slate-500 hover:text-slate-800 transition-colors">
-          <ArrowLeft size={24} />
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="text-sm font-extrabold tracking-tight font-mono text-slate-800">{vehicle.plate}</h1>
-          <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-full mt-0.5">
-            {vehicle.name}
-          </span>
-        </div>
-        <button className="p-2 -mr-2 text-slate-500 hover:text-blue-600 transition-colors">
-          <Edit2 size={20} />
-        </button>
-      </div>
+    <div data-theme="light" style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--fg)", fontFamily: "var(--font-jp)" }}>
+      <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <TopBar
+          title={vehicle.plate || vehicle.name}
+          sub={vehicle.name}
+          onBack={() => navigate(-1)}
+          right={<button onClick={startEditLegal} style={{ width: 40, height: 40, borderRadius: 12, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--fg)", display: "grid", placeItems: "center", cursor: "pointer" }}><Icon name="edit" size={18} /></button>}
+        />
 
-      <div className="p-5 space-y-5 max-w-md mx-auto">
-        {/* Next Inspection Card */}
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-5 shadow-lg shadow-blue-200 flex items-center gap-4 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full blur-3xl opacity-10 -translate-y-1/2 translate-x-1/2"></div>
-          <div className="w-14 h-14 bg-white/20 backdrop-blur-md text-white rounded-2xl flex items-center justify-center shrink-0 shadow-inner">
-            <Car size={28} />
-          </div>
-          <div className="relative z-10 w-full">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] text-blue-100 font-bold uppercase tracking-widest">車検有効期限</span>
-              <span className="text-[10px] bg-orange-500/20 text-orange-200 border border-orange-400/30 font-extrabold px-2 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
-                残り {vehicle.nextInspectionDaysRemaining} 日
+        <div style={{ padding: "0 16px 16px", overflowY: "auto", flex: 1 }}>
+          <Card pad={16} style={{ marginBottom: 12, borderRadius: 20, background: "linear-gradient(135deg,var(--brand-tint),var(--surface))" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+              <span style={{ width: 54, height: 54, borderRadius: 16, background: "var(--brand-tint)", color: "var(--brand-accent)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                <Icon name="car" size={28} />
               </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 18, fontWeight: 900, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vehicle.name}</span>
+                  <Badge variant={statusVariant(vehicle.status)}>{vehicle.status}</Badge>
+                </div>
+                <div style={{ marginTop: 4, fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 900, color: "var(--brand-accent)" }}>{vehicle.plate || "ナンバー未登録"}</div>
+              </div>
             </div>
-            <h2 className="text-2xl font-mono font-extrabold text-white tracking-widest">{vehicle.nextInspectionDate}</h2>
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <MetricCard label="車検期限" value={inspectionDays < 0 ? Math.abs(inspectionDays) : inspectionDays} unit={inspectionDays < 0 ? "日超過" : "日"} icon="car" tone={daysTone(inspectionDays) as any} onClick={() => setActiveTab("legal")} />
+            <MetricCard label="自動アラート" value={alerts.length} unit="件" icon="alert" tone={alerts.length ? "danger" : "success"} onClick={() => setActiveTab("basic")} />
           </div>
-        </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex bg-slate-200/50 rounded-2xl p-1 relative">
-          <div 
-            className="absolute top-1 bottom-1 bg-white rounded-xl shadow-sm transition-all duration-300 ease-out" 
-            style={{ 
-              width: `calc(25% - 2px)`, 
-              left: `calc(${(tabs.findIndex(t => t.id === activeTab)) * 25}% + 4px)` 
-            }}
-          />
-          {tabs.map(tab => (
-            <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id as any)}
-               className={`flex-1 py-2.5 text-xs font-bold rounded-xl relative z-10 transition-colors ${
-                 activeTab === tab.id 
-                   ? "text-blue-600" 
-                   : "text-slate-500"
-               }`}
-             >
-               {tab.label}
-             </button>
-           ))}
-        </div>
+          <div style={{ marginBottom: 14 }}>
+            <SegmentControl items={tabs} active={activeTab} onChange={(key) => setActiveTab(key as VehicleTab)} />
+          </div>
 
-        {/* Tab Content */}
-        <AnimatePresence mode="wait">
           {activeTab === "basic" && (
-            <motion.div key="basic" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-5">
-              {/* Auto Alerts */}
-              {vehicle.alerts.length > 0 && (
-                <div>
-                  <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">
-                    自動アラート ({vehicle.alerts.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {vehicle.alerts.map((alert: any) => (
-                      <div key={alert.id} className={`p-4 rounded-2xl border flex items-start gap-3 ${
-                        alert.type === "danger" 
-                          ? "bg-red-50 border-red-100" 
-                          : "bg-orange-50 border-orange-100"
-                      }`}>
-                        <div className={alert.type === "danger" ? "text-red-500 mt-0.5" : "text-orange-500 mt-0.5"}>
-                           {alert.icon || <AlertTriangle size={18} />}
-                        </div>
-                        <div>
-                          <h4 className={`text-sm font-bold mb-1 ${alert.type === "danger" ? "text-red-800" : "text-orange-800"}`}>{alert.title}</h4>
-                          <p className={`text-[11px] font-medium leading-relaxed ${
-                            alert.type === "danger" ? "text-red-600" : "text-orange-600"
-                          }`}>{alert.subtitle}</p>
-                        </div>
+            <>
+              {alerts.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <SectionLabel>自動アラート</SectionLabel>
+                  {alerts.map(alert => (
+                    <div key={alert.id} style={{ display: "flex", gap: 11, padding: 12, borderRadius: 14, marginBottom: 8, border: `1px solid ${alert.type === "danger" ? "var(--danger-bright)" : "var(--warning-bright)"}`, background: alert.type === "danger" ? "var(--danger-tint)" : "var(--warning-tint)" }}>
+                      <Icon name={alert.icon || "alert"} size={19} color={alert.type === "danger" ? "var(--danger-bright)" : "var(--warning-bright)"} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 900, color: "var(--fg)" }}>{alert.title}</div>
+                        <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2, lineHeight: 1.45 }}>{alert.subtitle}</div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {/* Basic Info */}
-              <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">基本情報</h3>
-                <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
-                  <div className="space-y-4">
-                    {vehicle.basicInfo.map((info, idx) => (
-                      <div key={idx} className="flex justify-between items-center border-b border-slate-50 pb-4 last:border-0 last:pb-0">
-                        <span className="text-xs text-slate-500 font-bold">{info.label}</span>
-                        {info.isBadge ? (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-600 font-extrabold px-2.5 py-1 rounded-full border border-emerald-100 uppercase tracking-widest">
-                            {info.value}
-                          </span>
-                        ) : (
-                          <span className="text-[13px] text-slate-800 font-semibold font-mono">{info.value}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+              <SectionLabel>基本情報</SectionLabel>
+              <Card pad={0}>
+                <InfoRow label="メーカー" icon="building" value={vehicle.manufacturer || "未登録"} last />
+                <InfoRow label="年式 / 色" icon="calendar" value={`${vehicle.year || "—"} / ${vehicle.color || "—"}`} />
+                <InfoRow label="車台番号" icon="idCard" value={vehicle.vin || "未登録"} />
+                <InfoRow label="原動機型式" icon="gauge" value={vehicle.engineModel || "未登録"} />
+                <InfoRow label="購入日 / 価格" icon="yen" value={`${vehicle.purchaseDate || "—"} / ${vehicle.purchasePrice || "—"}`} />
+                <InfoRow label="走行距離" icon="gauge" value={vehicle.mileage || "未登録"} />
+              </Card>
+            </>
           )}
 
           {activeTab === "legal" && (
-            <motion.div key="legal" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-5">
-              {/* Action Bar for Editing */}
-              <div className="flex justify-end mb-1">
-                {!isEditingLegal ? (
-                  <button 
-                    onClick={handleEditLegal}
-                    className="text-xs bg-white text-blue-600 border border-blue-100 px-4 py-2.5 rounded-xl font-bold transition-all shadow-sm flex items-center gap-1.5 hover:bg-blue-50 active:scale-95"
-                  >
-                    <Edit2 size={14} /> 編集
-                  </button>
+            <>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 10 }}>
+                {editingLegal ? (
+                  <>
+                    <Btn size="sm" variant="secondary" onClick={() => setEditingLegal(false)}>キャンセル</Btn>
+                    <Btn size="sm" icon="check" onClick={saveLegal}>保存</Btn>
+                  </>
                 ) : (
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={handleEditLegal}
-                      className="text-xs bg-white text-slate-500 border border-slate-200 px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-slate-50 active:scale-95"
-                    >
-                      キャンセル
-                    </button>
-                    <button 
-                      onClick={handleSaveLegal}
-                      className="text-xs bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold transition-all shadow-md shadow-blue-200 flex items-center gap-1.5 hover:bg-blue-700 active:scale-95"
-                    >
-                      <CheckCircle2 size={14} /> 保存
-                    </button>
-                  </div>
+                  <Btn size="sm" variant="secondary" icon="edit" onClick={startEditLegal}>編集</Btn>
                 )}
               </div>
 
-              {/* Inspection */}
-              <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">車検情報</h3>
-                <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
-                  <div className="flex justify-between items-center mb-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100">
-                        <FileText size={20} />
-                      </div>
-                      <span className="text-sm font-bold text-slate-800">{vehicle.legalInfo.inspection.title}</span>
-                    </div>
-                    {!isEditingLegal && (
-                      <span className="text-[10px] bg-orange-50 text-orange-600 font-extrabold px-2.5 py-1 rounded-full border border-orange-100">
-                        残り {vehicle.legalInfo.inspection.daysRemaining} 日
-                      </span>
-                    )}
-                  </div>
+              <SectionLabel>車検・保険</SectionLabel>
+              <Card pad={14} style={{ marginBottom: 12 }}>
+                <Overline style={{ marginBottom: 10 }}>自動車検査証</Overline>
+                <InfoRow label="有効期限" icon="car" value={editingLegal ? (
+                  <input
+                    type="date"
+                    value={toInputDate(editForm.inspectionDate)}
+                    onChange={e => setEditForm(prev => ({ ...prev, inspectionDate: fromInputDate(e.target.value) }))}
+                    style={{ width: "100%", border: "1px solid var(--border-2)", borderRadius: 10, padding: "8px 10px", fontFamily: "var(--font-mono)", fontWeight: 800 }}
+                  />
+                ) : (vehicle.inspectionDate || "未登録")} last />
+                <div style={{ marginTop: 10 }}>{(() => { const f = files.find((x: any) => /車検|inspection|shaken/i.test(x.name || "")); return <FileChip name={f?.name || `車検証_${vehicle.plate || vehicle.id}.pdf`} dataUrl={f?.dataUrl} />; })()}</div>
+              </Card>
 
-                  <div className="space-y-4 mb-5 bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-500 font-bold">前回実施日</span>
-                      <span className="text-[13px] text-slate-800 font-mono font-semibold">{vehicle.legalInfo.inspection.lastDate}</span>
-                    </div>
-                    <div className="flex justify-between items-center pt-3 border-t border-slate-200/60">
-                      <span className="text-xs text-slate-500 font-bold">有効期限</span>
-                      {isEditingLegal ? (
-                        <input 
-                          type="date"
-                          value={editForm.inspectionDate.replace(/\//g, '-')}
-                          onChange={e => setEditForm({...editForm, inspectionDate: e.target.value.replace(/-/g, '/')})}
-                          className="bg-white border border-blue-300 text-slate-800 text-[13px] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all font-mono font-bold"
-                        />
-                      ) : (
-                        <span className="text-[13px] text-slate-800 font-mono font-semibold">{vehicle.legalInfo.inspection.expiryDate}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {!isEditingLegal ? (
-                    <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-3 hover:bg-slate-50 cursor-pointer transition-colors shadow-sm active:scale-[0.98]">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <FileText size={18} className="text-blue-500 shrink-0" />
-                        <span className="text-xs font-bold text-slate-700 truncate">{vehicle.legalInfo.inspection.file}</span>
-                      </div>
-                      <Download size={18} className="text-slate-400 shrink-0 ml-2 hover:text-blue-500" />
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center border-2 border-dashed border-blue-200 bg-blue-50/50 rounded-xl p-5 cursor-pointer transition-colors text-slate-500 hover:bg-blue-50 group">
-                      <UploadCloud size={24} className="mb-2 text-blue-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-blue-700">新しい車検証をアップロード</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Insurance & Tax */}
-              <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">自賠責保険</h3>
-                <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
-                  <div className="flex justify-between items-center mb-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
-                        <ShieldCheck size={20} />
-                      </div>
-                      <span className="text-sm font-bold text-slate-800">{vehicle.legalInfo.insurance.title}</span>
-                    </div>
-                    {!isEditingLegal && (
-                      <span className="text-[10px] bg-emerald-50 text-emerald-600 font-extrabold px-2.5 py-1 rounded-full border border-emerald-100">
-                        残り {vehicle.legalInfo.insurance.daysRemaining} 日
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-4 mb-5 bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-500 font-bold">証書番号</span>
-                      {isEditingLegal ? (
-                        <input 
-                          type="text"
-                          value={editForm.insurancePolicyNo}
-                          onChange={e => setEditForm({...editForm, insurancePolicyNo: e.target.value})}
-                          className="bg-white border border-blue-300 text-slate-800 text-[13px] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all font-mono font-bold w-32 text-right"
-                        />
-                      ) : (
-                        <span className="text-[13px] text-slate-800 font-mono font-semibold">{vehicle.legalInfo.insurance.policyNo}</span>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center pt-3 border-t border-slate-200/60">
-                      <span className="text-xs text-slate-500 font-bold">有効期限</span>
-                      {isEditingLegal ? (
-                        <input 
-                          type="date"
-                          value={editForm.insuranceDate.replace(/\//g, '-')}
-                          onChange={e => setEditForm({...editForm, insuranceDate: e.target.value.replace(/-/g, '/')})}
-                          className="bg-white border border-blue-300 text-slate-800 text-[13px] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all font-mono font-bold"
-                        />
-                      ) : (
-                        <span className="text-[13px] text-slate-800 font-mono font-semibold">{vehicle.legalInfo.insurance.expiryDate}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {!isEditingLegal ? (
-                    <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-3 hover:bg-slate-50 cursor-pointer transition-colors shadow-sm active:scale-[0.98]">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <FileText size={18} className="text-emerald-500 shrink-0" />
-                        <span className="text-xs font-bold text-slate-700 truncate">{vehicle.legalInfo.insurance.file}</span>
-                      </div>
-                      <Download size={18} className="text-slate-400 shrink-0 ml-2 hover:text-emerald-500" />
-                    </div>
-                  ) : (
-                     <div className="flex flex-col items-center justify-center border-2 border-dashed border-emerald-200 bg-emerald-50/50 rounded-xl p-5 cursor-pointer transition-colors text-slate-500 hover:bg-emerald-50 group">
-                      <UploadCloud size={24} className="mb-2 text-emerald-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-xs font-bold text-emerald-700">新しい保険証をアップロード</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
+              <Card pad={14}>
+                <Overline style={{ marginBottom: 10 }}>自賠責保険</Overline>
+                <InfoRow label="満期日" icon="shield" value={editingLegal ? (
+                  <input
+                    type="date"
+                    value={toInputDate(editForm.insuranceDate)}
+                    onChange={e => setEditForm(prev => ({ ...prev, insuranceDate: fromInputDate(e.target.value) }))}
+                    style={{ width: "100%", border: "1px solid var(--border-2)", borderRadius: 10, padding: "8px 10px", fontFamily: "var(--font-mono)", fontWeight: 800 }}
+                  />
+                ) : (vehicle.insuranceDate || "未登録")} last />
+                <div style={{ marginTop: 10 }}>{(() => { const f = files.find((x: any) => /保険|insurance|jibai|nini/i.test(x.name || "")); return <FileChip name={f?.name || "自賠責保険証.pdf"} dataUrl={f?.dataUrl} />; })()}</div>
+              </Card>
+            </>
           )}
 
           {activeTab === "history" && (
-            <motion.div key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-5">
-              {/* Maintenance History */}
-              <div>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">メンテナンス履歴</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.maintenanceHistory.length} 件</span>
-                </div>
-                
-                <div className="bg-white border border-slate-100 shadow-sm rounded-3xl overflow-hidden">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">実施日</th>
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">項目</th>
-                        <th className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right whitespace-nowrap">走行距離</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vehicle.maintenanceHistory.map((item, idx) => (
-                        <tr key={idx} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
-                          <td className="py-4 px-4 text-[12px] text-slate-500 font-mono font-medium">{item.date}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-800 font-bold leading-snug">{item.item}</td>
-                          <td className="py-4 px-4 text-[12px] text-slate-600 font-mono font-medium text-right">{item.mileage}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            <>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{vehicle.maintenanceHistory?.length || 0}件</span>}>整備・点検履歴</SectionLabel>
+              {(vehicle.maintenanceHistory || []).length === 0 ? (
+                <Empty icon="wrench" title="整備履歴はありません" />
+              ) : (
+                <Card pad={6} style={{ marginBottom: 16 }}>
+                  {(vehicle.maintenanceHistory || []).map((item, index) => (
+                    <InfoRow key={index} icon="wrench" label={item.date} value={item.item} sub={item.mileage} last={index === 0} />
+                  ))}
+                </Card>
+              )}
 
-              {/* Repair History */}
-              <div>
-                <div className="flex justify-between items-center mb-3 mt-8">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">修理履歴</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.repairHistory.length} 件</span>
-                </div>
-                
-                <div className="space-y-4">
-                  {vehicle.repairHistory.map((item, idx) => (
-                    <div key={idx} className="bg-white border border-slate-100 shadow-sm rounded-3xl p-5">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-800 leading-snug mb-1">{item.title}</h4>
-                          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">{item.shop}</p>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{vehicle.repairHistory?.length || 0}件</span>}>修理履歴</SectionLabel>
+              {(vehicle.repairHistory || []).length === 0 ? (
+                <Empty icon="wrench" title="修理履歴はありません" />
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {(vehicle.repairHistory || []).map((item, index) => (
+                    <Card key={index} pad={14}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 14.5, fontWeight: 900, color: "var(--fg)" }}>{item.title}</div>
+                          <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 3 }}>{item.shop}</div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-[11px] text-slate-500 font-mono font-medium mb-1">{item.date}</p>
-                          <p className="text-[15px] text-slate-800 font-mono font-extrabold">{item.price}</p>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 12, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)" }}>{item.date}</div>
+                          <div style={{ fontSize: 14, color: "var(--fg)", fontWeight: 900, marginTop: 2 }}>{item.price}</div>
                         </div>
                       </div>
-                      
-                      <div className="flex items-center justify-between border border-slate-100 bg-slate-50 rounded-xl p-3 hover:bg-slate-100 cursor-pointer transition-colors active:scale-[0.98]">
-                        <div className="flex items-center gap-3">
-                          <FileText size={16} className="text-slate-400" />
-                          <span className="text-xs font-bold text-slate-700">{item.receipt}</span>
-                        </div>
-                        <Download size={16} className="text-slate-400" />
-                      </div>
-                    </div>
+                      <div style={{ marginTop: 10 }}><FileChip name={item.receipt} /></div>
+                    </Card>
                   ))}
                 </div>
-              </div>
-            </motion.div>
+              )}
+            </>
           )}
 
-          {activeTab === "docs" && (
-            <motion.div key="docs" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-              {/* Attached Docs */}
-              <div>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">添付書類</h3>
-                  <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded">{vehicle.documents.length} 件</span>
+          {activeTab === "docs" && (() => {
+            // 実体ファイル（dataUrl 付き = ダウンロード可）を優先表示し、実体の無いドキュメント名は参照のみ表示。
+            const fileNames = new Set(files.map((f: any) => f.name));
+            const nameOnly = docs.filter((d: string) => !fileNames.has(d));
+            const total = files.length + nameOnly.length;
+            return (
+            <>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{total}件</span>}>添付資料</SectionLabel>
+              {total === 0 ? (
+                <Empty icon="file" title="添付資料はありません" />
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                  {files.map((f: any, index: number) => <FileChip key={`f-${index}`} name={f.name} dataUrl={f.dataUrl} />)}
+                  {nameOnly.map((doc: string, index: number) => <FileChip key={`d-${doc}-${index}`} name={doc} />)}
                 </div>
-                
-                <div className="bg-white border border-slate-100 shadow-sm rounded-3xl p-2 space-y-1">
-                  {vehicle.documents.map((doc, idx) => (
-                    <div key={idx} className="flex items-center justify-between bg-white rounded-2xl p-3 hover:bg-slate-50 cursor-pointer transition-colors active:scale-[0.98]">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-slate-50 text-slate-500 rounded-xl flex items-center justify-center border border-slate-100">
-                          <FileText size={20} />
-                        </div>
-                        <span className="text-sm font-bold text-slate-700">{doc}</span>
-                      </div>
-                      <Download size={20} className="text-slate-400 mr-2" />
-                    </div>
-                  ))}
-                </div>
-              </div>
+              )}
 
-              {/* Photos */}
-              <div>
-                <h3 className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest mt-6">車両画像</h3>
-                <div className="bg-white border border-slate-100 shadow-sm rounded-3xl p-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    {[1, 2, 3].map((item, idx) => (
-                      <div key={idx} className="aspect-square rounded-2xl border border-slate-100 flex items-center justify-center relative overflow-hidden group cursor-pointer bg-slate-50">
-                        <Image size={32} className="text-slate-300 group-hover:text-slate-400 transition-colors" />
-                        <span className="absolute bottom-2 left-2 text-[10px] font-mono font-bold bg-white/90 backdrop-blur-sm text-slate-700 px-2 py-0.5 rounded shadow-sm">12:03</span>
-                      </div>
-                    ))}
-                    
-                    <div className="aspect-square bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors gap-2 group active:scale-95">
-                      <UploadCloud size={28} className="group-hover:scale-110 transition-transform" />
-                      <span className="text-[11px] font-bold text-slate-500 group-hover:text-blue-600">画像を追加</span>
+              <SectionLabel right={<span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 800 }}>{photos.length}枚</span>}>車両写真</SectionLabel>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 9, marginBottom: 20 }}>
+                {photos.length > 0
+                  ? photos.map((url, index) => (
+                    <div key={index} style={{ aspectRatio: "1", borderRadius: 13, overflow: "hidden", border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                      <img src={url} alt={`車両写真 ${index + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     </div>
-                  </div>
-                </div>
+                  ))
+                  : null}
+                <label style={{ aspectRatio: "1", borderRadius: 13, border: "1.5px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", display: "grid", placeItems: "center", cursor: "pointer" }}>
+                  <Icon name="camera" size={22} />
+                  <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => { if (typeof reader.result === "string") updateVehicle(vehicle.id, { photos: [...photos, reader.result] }); };
+                    reader.readAsDataURL(f);
+                    e.target.value = "";
+                  }} />
+                </label>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            </>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );

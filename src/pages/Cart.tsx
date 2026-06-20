@@ -2,10 +2,17 @@ import React, { FC } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart, CartItem as CartItemType } from "../context/CartContext";
 import { useProducts } from "../context/ProductContext";
-import { calculateRentalPrice } from "../utils/billing";
+import { calculateRentalPrice, getTaxRate } from "../utils/billing";
 import { isVehicleCategory } from '../utils/productUtils';
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import CartDesktop from "./desktop/CartDesktop";
 
+// PC はデスクトップ専用 UI、スマホは従来のモバイル UI。
 export default function Cart() {
+  return useIsDesktop() ? <CartDesktop /> : <CartMobile />;
+}
+
+function CartMobile() {
   const navigate = useNavigate();
   const { items, removeItem, updateQuantity, setQuantityAmount, totalItems } = useCart();
   const { products } = useProducts();
@@ -65,7 +72,7 @@ export default function Cart() {
   });
 
   const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-  const tax = Math.floor(subtotal * 0.1);
+  const tax = Math.floor(subtotal * getTaxRate());
   const total = subtotal + tax;
 
   return (
@@ -195,7 +202,7 @@ const CartItemView: FC<{ item: CartItemType, onRemove: () => void, onUpdateQuant
               )}
             </div>
             <div className="flex items-center rounded-lg bg-slate-50 p-1 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 gap-1">
-              <button onClick={() => onUpdateQuantity(-1)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm hover:text-primary dark:bg-slate-700 dark:text-slate-200 transition-all">
+              <button disabled={item.quantity <= 1} onClick={() => onUpdateQuantity(-1)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm hover:text-primary dark:bg-slate-700 dark:text-slate-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                 <span className="material-symbols-outlined text-[16px]">remove</span>
               </button>
               <input 

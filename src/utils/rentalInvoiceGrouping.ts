@@ -6,6 +6,7 @@ export interface RenterGroup {
   subtotal: number;
   tax: number;
   total: number;
+  guaranteeFee: number; // 保証料の合計（小計に内包）
 }
 
 export interface CompanyGroup {
@@ -14,6 +15,7 @@ export interface CompanyGroup {
   subtotal: number;
   tax: number;
   total: number;
+  guaranteeFee: number; // 保証料の合計（小計に内包）
   orderCount: number;
 }
 
@@ -46,17 +48,45 @@ function safeBlocks(o: any) {
   catch { return []; }
 }
 
-function orderSubtotal(o: any, monthPeriod?: string): { subtotal: number; tax: number; total: number; matched: boolean } {
+function companyNameOf(order: any): string {
+  return normalizeName(order.companyName || order.customer || order.company || order.customerName);
+}
+
+function personNameOf(order: any): string {
+  return normalizeName(order.personName || order.employeeName || order.customerName);
+}
+
+function orderSubtotal(o: any, monthPeriod?: string): { subtotal: number; tax: number; total: number; guaranteeFee: number; matched: boolean } {
   if (monthPeriod) {
     const blocks = safeBlocks(o);
     const block = blocks.find((b: any) => b.monthPeriod === monthPeriod);
-    if (!block) return { subtotal: 0, tax: 0, total: 0, matched: false };
-    return { subtotal: block.subtotal || 0, tax: block.tax || 0, total: block.total || 0, matched: true };
+    if (!block) return { subtotal: 0, tax: 0, total: 0, guaranteeFee: 0, matched: false };
+    return { subtotal: block.subtotal || 0, tax: block.tax || 0, total: block.total || 0, guaranteeFee: Number(block.guaranteeFee || 0), matched: true };
   }
+
+  const blocks = safeBlocks(o);
+  if (blocks.length > 0) {
+    return blocks.reduce(
+      (acc, block: any) => ({
+        subtotal: acc.subtotal + Number(block.subtotal || 0),
+        tax: acc.tax + Number(block.tax || 0),
+        total: acc.total + Number(block.total || 0),
+        guaranteeFee: acc.guaranteeFee + Number(block.guaranteeFee || 0),
+        matched: true,
+      }),
+      { subtotal: 0, tax: 0, total: 0, guaranteeFee: 0, matched: true },
+    );
+  }
+
+  // ブロックが無い注文は、明細の guaranteeFeeFlat（賃貸品）から保証料を集計する。
+  const guaranteeFee = (o.items || [])
+    .filter((i: any) => i?.type === "rent")
+    .reduce((s: number, i: any) => s + Number(i.guaranteeFeeFlat || 0), 0);
   return {
     subtotal: o.subtotal || 0,
     tax: o.tax || 0,
     total: o.total || 0,
+    guaranteeFee,
     matched: true,
   };
 }
@@ -67,14 +97,17 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
   const filterCompany = opts.companyName ? normalizeName(opts.companyName) : "";
 
   for (const order of orders) {
-    const orderCompany = normalizeName(order.companyName);
+    // キャンセル注文は請求対象外（請求書グルーピング・合計に含めない）。
+    if (String(order?.status) === "キャンセル") continue;
+
+    const orderCompany = companyNameOf(order);
     if (filterCompany && orderCompany !== filterCompany) continue;
 
     const matched = orderSubtotal(order, opts.monthPeriod).matched;
     if (!matched) continue;
 
     const company = orderCompany || EMPTY_COMPANY;
-    const person = normalizeName(order.personName) || EMPTY_PERSON;
+    const person = personNameOf(order) || EMPTY_PERSON;
 
     if (!byCompany.has(company)) byCompany.set(company, new Map());
     const personMap = byCompany.get(company)!;
@@ -86,15 +119,16 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
 
   for (const [companyName, personMap] of byCompany) {
     const renters: RenterGroup[] = [];
-    let cSubtotal = 0, cTax = 0, cTotal = 0, cCount = 0;
+    let cSubtotal = 0, cTax = 0, cTotal = 0, cGuarantee = 0, cCount = 0;
 
     for (const [personName, ordersOfPerson] of personMap) {
-      let rSubtotal = 0, rTax = 0, rTotal = 0;
+      let rSubtotal = 0, rTax = 0, rTotal = 0, rGuarantee = 0;
       for (const o of ordersOfPerson) {
         const v = orderSubtotal(o, opts.monthPeriod);
         rSubtotal += v.subtotal;
         rTax += v.tax;
         rTotal += v.total;
+        rGuarantee += v.guaranteeFee;
       }
       renters.push({
         personName,
@@ -102,10 +136,12 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
         subtotal: rSubtotal,
         tax: rTax,
         total: rTotal,
+        guaranteeFee: rGuarantee,
       });
       cSubtotal += rSubtotal;
       cTax += rTax;
       cTotal += rTotal;
+      cGuarantee += rGuarantee;
       cCount += ordersOfPerson.length;
     }
 
@@ -115,6 +151,7 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
       subtotal: cSubtotal,
       tax: cTax,
       total: cTotal,
+      guaranteeFee: cGuarantee,
       orderCount: cCount,
     });
   }
@@ -129,10 +166,11 @@ export function aggregateTotals(groups: CompanyGroup[]) {
       acc.subtotal += g.subtotal;
       acc.tax += g.tax;
       acc.total += g.total;
+      acc.guaranteeFee += g.guaranteeFee;
       acc.orderCount += g.orderCount;
       acc.renterCount += g.renters.length;
       return acc;
     },
-    { subtotal: 0, tax: 0, total: 0, orderCount: 0, renterCount: 0 },
+    { subtotal: 0, tax: 0, total: 0, guaranteeFee: 0, orderCount: 0, renterCount: 0 },
   );
 }

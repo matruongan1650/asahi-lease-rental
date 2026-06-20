@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import AdminSidebar, { AdminTab } from "../../components/AdminSidebar";
 import AdminDashboardHome from "../../components/AdminDashboardHome";
 import AdminProductManagement from "../../components/AdminProductManagement";
@@ -17,30 +18,101 @@ import AdminStockIn from "./AdminStockIn";
 import AdminStockOut from "./AdminStockOut";
 import AdminRental from "./AdminRental";
 import AdminSales from "./AdminSales";
+import AdminInvoices from "./AdminInvoices";
 import AdminRecovery from "./AdminRecovery";
 import AdminRepairWarranty from "./AdminRepairWarranty";
 import AdminMaintenance from "./AdminMaintenance";
 import AdminSuppliers from "./AdminSuppliers";
 import AdminVendors from "./AdminVendors";
 import AdminSettings from "./AdminSettings";
+import { buildAdminNotifications } from "../../utils/notifications";
+import { useNotificationReads } from "../../lib/notificationReads";
+import { useUser } from "../../context/UserContext";
+import { ROLES as INITIAL_ROLES } from "../../data/adminMockData";
+
+function notificationToneClass(tone: string) {
+  if (tone === "danger") return "bg-red-50 text-red-700 border-red-100";
+  if (tone === "warning") return "bg-amber-50 text-amber-700 border-amber-100";
+  if (tone === "success") return "bg-emerald-50 text-emerald-700 border-emerald-100";
+  return "bg-blue-50 text-blue-700 border-blue-100";
+}
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+  // タブ切替を URL(?tab=...) と履歴に連動させる。これによりブラウザの「戻る」で前の管理画面へ戻れ、
+  // 履歴を遡り切ると（管理画面に入る前のエントリへ）そのままサイトを抜ける（ログイン画面や顧客サイトに飛ばさない）。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const setActiveTab = useCallback(
+    (t: AdminTab) => setSearchParams(t === "dashboard" ? {} : { tab: t }),
+    [setSearchParams],
+  );
+  const [showNotifications, setShowNotifications] = useState(false);
+  const { currentUser } = useUser();
   const liveOrders = useAdminOrders();
   const { rows: fieldReports } = useAdminCollection("fieldReports");
+  const { rows: products } = useAdminCollection("products");
+  const { rows: vehicles } = useAdminCollection("vehicles");
+  const { rows: maintenance } = useAdminCollection("maintenance");
+  const { rows: systemSettingsRows } = useAdminCollection("systemSettings");
+  const { rows: roleRows } = useAdminCollection("roles");
 
-  const notificationCount = useMemo(() => {
-    const today = new Date();
-    const processing = liveOrders.orders.filter((o: any) => ["処理中", "確認済み", "検品待ち"].includes(String(o.status || ""))).length;
-    const pendingReports = fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length;
-    const overdue = liveOrders.orders.filter((o: any) => {
-      if (["返却済", "返却済み", "完了", "キャンセル"].includes(String(o.status || ""))) return false;
-      if (!o.rentalEndDate) return false;
-      const end = new Date(String(o.rentalEndDate).replace(/\//g, "-"));
-      return !isNaN(end.getTime()) && end < today && (o.items || []).some((item: any) => item.type === "rent");
-    }).length;
-    return processing + pendingReports + overdue;
-  }, [liveOrders.orders, fieldReports]);
+  const allowedTabs = useMemo(() => {
+    const roles = roleRows.length > 0 ? roleRows : INITIAL_ROLES;
+    const explicitRoleId = (currentUser as any)?.permissionRoleId;
+    const roleId = explicitRoleId || (currentUser?.role === "admin" ? "admin" : "viewer");
+    const role = roles.find((r: any) => r.id === roleId) || roles.find((r: any) => r.id === "admin");
+    const perms = Array.isArray(role?.perms) ? role.perms : ["編集", "編集", "編集", "編集", "編集", "編集"];
+    const can = (moduleIndex: number) => perms[moduleIndex] !== "なし";
+    const allowed = new Set<AdminTab>();
+    const add = (ok: boolean, tabs: AdminTab[]) => {
+      if (ok) tabs.forEach((tab) => allowed.add(tab));
+    };
+    add(can(0), ["dashboard", "calendar"]);
+    add(can(1), ["products", "warehouse", "vehicles", "inventory", "incoming", "outgoing", "security_goods"]);
+    add(can(2), ["orders", "sales", "invoices", "collection"]);
+    add(can(3), ["repair", "maintenance", "field_report"]);
+    add(can(4), ["users", "customers", "suppliers", "repairers"]);
+    add(can(5), ["settings"]);
+    if (allowed.size === 0) allowed.add("dashboard");
+    return allowed;
+  }, [currentUser, roleRows]);
+
+  // アクティブタブは URL(?tab=) から導出（履歴連動）。権限外・不正タブはダッシュボードへフォールバック。
+  const requestedTab = (searchParams.get("tab") || "dashboard") as AdminTab;
+  const activeTab: AdminTab = allowedTabs.has(requestedTab) ? requestedTab : "dashboard";
+
+  useEffect(() => {
+    // 権限のないタブが URL に指定されたら、許可された先頭タブへ置換（履歴は増やさない）。
+    if (!allowedTabs.has(requestedTab)) {
+      const first = (allowedTabs.values().next().value || "dashboard") as AdminTab;
+      setSearchParams(first === "dashboard" ? {} : { tab: first }, { replace: true });
+    }
+  }, [requestedTab, allowedTabs, setSearchParams]);
+
+  const systemSettings = useMemo(
+    () => ({ notifyVehicle: true, notifyOverdue: true, notifyFieldReport: true, ...(systemSettingsRows.find((r: any) => r.id === "global") || {}) }),
+    [systemSettingsRows],
+  );
+
+  const notifications = useMemo(
+    () =>
+      buildAdminNotifications({ orders: liveOrders.orders, fieldReports, products, vehicles, maintenance }).filter((item) => {
+        if (item.id === "admin-overdue" && systemSettings.notifyOverdue === false) return false;
+        if (item.id === "admin-field-reports" && systemSettings.notifyFieldReport === false) return false;
+        if (item.id === "admin-maintenance" && systemSettings.notifyVehicle === false) return false;
+        return true;
+      }),
+    [liveOrders.orders, fieldReports, products, vehicles, maintenance, systemSettings],
+  );
+  const { isRead, markRead, unreadCount } = useNotificationReads("admin");
+  const notificationCount = unreadCount(notifications);
+  // 通知 → 該当タブへ遷移できるようにする（クリックで業務画面に直行）。
+  const NOTIF_TAB: Record<string, AdminTab> = {
+    "admin-new-orders": "orders",
+    "admin-inspection": "collection",
+    "admin-overdue": "collection",
+    "admin-field-reports": "field_report",
+    "admin-maintenance": "maintenance",
+  };
 
   const tabTitles: Record<AdminTab, { title: string; sub: string }> = {
     dashboard: { title: "概要", sub: "ダッシュボード" },
@@ -49,11 +121,12 @@ export default function AdminDashboard() {
     warehouse: { title: "倉庫管理", sub: "保管場所・棚・ラックの稼働状況" },
     vehicles: { title: "車庫管理", sub: "車両の稼働状況・車検・メンテナンス" },
     inventory: { title: "棚卸", sub: "在庫の差異照合とカウント調整" },
-    incoming: { title: "入庫履歴", sub: "仕入・返却に伴う受入履歴" },
-    outgoing: { title: "出庫履歴", sub: "出荷・レンタルに伴う払出履歴" },
-    orders: { title: "レンタル管理", sub: "稼働中のレンタル契約および関連伝票" },
-    sales: { title: "販売管理", sub: "製品販売契約および請求伝票" },
-    collection: { title: "回収・返却管理", sub: "回収手配と返却確認" },
+    incoming: { title: "入庫管理", sub: "購入・返却戻し・調整入庫の登録" },
+    outgoing: { title: "出庫管理", sub: "レンタル出荷・販売出荷の登録" },
+    orders: { title: "受注・レンタル", sub: "レンタル注文の受付・配送手配・稼働管理" },
+    sales: { title: "販売受注", sub: "販売注文の受付・出庫準備・完了管理" },
+    invoices: { title: "請求管理", sub: "レンタル・販売の請求書発行と月次集計" },
+    collection: { title: "回収・返却", sub: "一部返却・一括返却・検品履歴の確認" },
     repair: { title: "修理・保証管理", sub: "破損した保安品の修理手配とメーカー保証追跡" },
     maintenance: { title: "メンテナンス管理", sub: "機械・機器の定期保守点検スケジュール" },
     field_report: { title: "現場報告", sub: "現場から報告された不足・破損の処理" },
@@ -68,45 +141,78 @@ export default function AdminDashboard() {
   const activeMeta = tabTitles[activeTab] || { title: "管理コンソール", sub: "ASAHI LEASE" };
 
   return (
-    <div className="bg-slate-100 min-h-screen text-slate-900 flex">
+    <div className="admin-shell bg-[#eff8f7] min-h-screen text-[#173b38] flex font-body">
       {/* Sidebar Layout */}
-      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} allowedTabs={allowedTabs} />
 
       {/* Main Content */}
-      <div className="flex-1 ml-64 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 ml-[236px] flex flex-col h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0">
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">{activeMeta.title}</h1>
-            <p className="text-sm text-slate-500 font-medium mt-0.5">{activeMeta.sub}</p>
+        <header className="bg-[#fffdf6]/95 backdrop-blur border-b border-[#cfe6e3] px-5 py-3 flex items-center justify-between shrink-0">
+          <div className="min-w-0 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[#e8f6f5] border border-[#b5dad6] text-[#1e8c86] flex items-center justify-center">
+              <span className="material-symbols-outlined text-[21px]">space_dashboard</span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xl font-black text-[#173b38] tracking-tight leading-tight">{activeMeta.title}</h1>
+              <p className="text-xs text-[#46706c] font-semibold mt-0.5 truncate">{activeMeta.sub}</p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">
-                search
-              </span>
-              <input
-                type="text"
-                placeholder="検索（顧客、伝票、保安品…）"
-                className="pl-9 pr-4 py-2 bg-slate-100 border-transparent rounded-lg text-sm w-64 focus:ring-2 focus:ring-blue-500/20 outline-none"
-              />
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 rounded-full border border-[#b5dad6] bg-[#e8f6f5] px-3 py-2">
+              <span className="w-2 h-2 rounded-full bg-[#27ae60]" />
+              <span className="text-xs font-black text-[#1e8c86]">{liveOrders.live ? "実データ" : "接続確認中"}</span>
             </div>
-            <div className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center cursor-pointer relative">
-              <span className="material-symbols-outlined text-slate-600">notifications</span>
-              {notificationCount > 0 && (
-                <div className="absolute top-2 right-2 min-w-4 h-4 px-1 bg-red-500 rounded-full border-2 border-white text-white text-[9px] font-bold flex items-center justify-center">
-                  {notificationCount > 99 ? "99+" : notificationCount}
-                </div>
+            <div className="relative">
+              <button onClick={() => setShowNotifications(!showNotifications)} className="w-10 h-10 rounded-lg border border-[#cfe6e3] bg-white hover:bg-[#fff8e7] flex items-center justify-center cursor-pointer relative transition-colors">
+                <span className="material-symbols-outlined text-[#46706c]">notifications</span>
+                {notificationCount > 0 && (
+                  <div className="absolute top-2 right-2 min-w-4 h-4 px-1 bg-[#ef6c4a] rounded-full border-2 border-white text-white text-[9px] font-bold flex items-center justify-center">
+                    {notificationCount > 99 ? "99+" : notificationCount}
+                  </div>
+                )}
+              </button>
+              {showNotifications && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
+                  <div className="absolute right-0 top-12 z-50 w-[340px] rounded-xl border border-[#cfe6e3] bg-white p-4 shadow-xl">
+                    <div className="mb-3 flex items-center justify-between border-b border-[#e3f1ef] pb-2">
+                      <div className="text-sm font-black text-[#173b38]">実データ通知{notificationCount > 0 ? `（未読 ${notificationCount}）` : ""}</div>
+                      {notificationCount > 0 && (
+                        <button onClick={() => markRead(notifications)} className="text-[11px] font-bold text-[#1e8c86] hover:underline">すべて既読</button>
+                      )}
+                    </div>
+                    <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="py-5 text-center text-sm font-bold text-slate-400">現在の通知はありません</div>
+                      ) : notifications.map((item) => {
+                        const read = isRead(item);
+                        const target = NOTIF_TAB[item.id];
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => { markRead([item]); if (target) setActiveTab(target); setShowNotifications(false); }}
+                            className={`relative w-full text-left rounded-lg border px-3 py-2 ${notificationToneClass(item.tone)} ${read ? "opacity-50" : ""} ${target ? "hover:brightness-95 cursor-pointer" : ""}`}
+                          >
+                            {!read && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#ef6c4a]" />}
+                            <div className="text-xs font-black pr-3">{item.title}</div>
+                            <div className="mt-0.5 text-[11px] font-semibold text-slate-600">{item.body}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
         </header>
 
         {/* Scrollable Page Content */}
-        <div className="flex-1 overflow-y-auto p-6 pb-20">
-          <div className="max-w-6xl mx-auto">
-            {activeTab === "dashboard" && <AdminDashboardHome />}
+        <div className="flex-1 overflow-y-auto p-4 xl:p-5 pb-16 admin-scrollbar">
+          <div className="max-w-[1440px] mx-auto">
+            {activeTab === "dashboard" && <AdminDashboardHome onNavigate={(t) => setActiveTab(t as AdminTab)} />}
             {activeTab === "calendar" && <AdminCalendar />}
             {activeTab === "products" && <AdminProductManagement />}
             {activeTab === "warehouse" && <AdminWarehouse />}
@@ -116,6 +222,7 @@ export default function AdminDashboard() {
             {activeTab === "outgoing" && <AdminStockOut />}
             {activeTab === "orders" && <AdminRental />}
             {activeTab === "sales" && <AdminSales />}
+            {activeTab === "invoices" && <AdminInvoices />}
             {activeTab === "collection" && <AdminRecovery />}
             {activeTab === "repair" && <AdminRepairWarranty />}
             {activeTab === "maintenance" && <AdminMaintenance />}

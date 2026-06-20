@@ -8,6 +8,7 @@ export interface Order {
   date: string;
   status: string;
   returnRequestType?: "full" | "partial";
+  requestedReturn?: Record<string, number>;
   items: CartItem[];
   total: number;
   subtotal: number;
@@ -28,6 +29,13 @@ export interface Order {
   rentalStartDate?: string;
   rentalEndDate?: string;
   actualReturnDate?: string;
+  deliveryConfirmedAt?: string;
+  collectionConfirmedAt?: string;
+  stockDeducted?: boolean;
+  stockDeductedAt?: string;
+  stockRestored?: boolean;
+  compensationCharge?: { amount: number; note: string; lines: any[] };
+  compensationDismissed?: boolean;
   firestoreId?: string;
   staffStatus?: string;
   staffNote?: string;
@@ -97,8 +105,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const addOrder = useCallback(async (orderData: Omit<Order, "id" | "orderNumber" | "date" | "status">) => {
     const newOrder: Order = {
       ...orderData,
-      id: Math.random().toString(36).substr(2, 9),
-      orderNumber: `#ORD-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`,
+      // 衝突しにくい一意ID（時刻+乱数）。短い乱数のみだとソフト削除済みレコードのIDと衝突して
+      // ON DUPLICATE KEY で「復活」させてしまう恐れがあるため。
+      id: `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      // 衝突しにくい注文番号。4桁乱数(1万通り/年)では数百件で重複し、派生する請求書番号(INV-R/S)まで
+      // 衝突するため、ミリ秒タイムスタンプ下6桁で採番する（レコード id は別途一意な time+乱数）。
+      orderNumber: `#ORD-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
       date: new Date().toLocaleDateString("ja-JP") + " • " + new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
       status: "処理中",
     };
@@ -135,7 +147,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const addCustomOrder = useCallback(async (orderData: Omit<Order, "id">) => {
     const newOrder: Order = {
       ...orderData,
-      id: Math.random().toString(36).substr(2, 9),
+      // 衝突しにくい一意ID（時刻+乱数）。短い乱数のみだとソフト削除済みレコードのIDと衝突して
+      // ON DUPLICATE KEY で「復活」させてしまう恐れがあるため。
+      id: `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
     
     setOrders(prev => [newOrder, ...prev]);

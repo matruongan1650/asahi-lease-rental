@@ -14,6 +14,8 @@ import {
 import { useAdminCollection, useAdminOrders } from "../context/AdminDataContext";
 import { byOrderDateDesc } from "../utils/orderSort";
 import { isVehicleCategory } from "../utils/productUtils";
+import { deductOrderStock, settleReturnStock } from "../utils/stockLedger";
+import OrderBus from "../lib/orderBus";
 import AdminOrderDrawer from "./AdminOrderDrawer";
 import { Btn, Modal, triggerToast } from "./AdminUI";
 import {
@@ -115,9 +117,15 @@ function splitOrderRevenue(order: any): { rental: number; sales: number } {
   const subtotal = rentalSub + salesSub;
   const total = Number(order.total || 0);
   if (subtotal <= 0) {
-    return order.items?.some((item: any) => item.type === "rent")
-      ? { rental: total, sales: 0 }
-      : { rental: 0, sales: total };
+    // 明細価格が degenerate(0) のときは品目「件数」で按分する。rent 行が1つでもあれば全額レンタルに
+    // するのは、rent+buy 混在注文でレンタル比率を過大計上するため。
+    const rentCount = order.items?.filter((i: any) => i.type === "rent").length || 0;
+    const buyCount = order.items?.filter((i: any) => i.type === "buy").length || 0;
+    if (rentCount > 0 && buyCount > 0) {
+      const rental = Math.round((rentCount / (rentCount + buyCount)) * total);
+      return { rental, sales: total - rental };
+    }
+    return buyCount > 0 ? { rental: 0, sales: total } : { rental: total, sales: 0 };
   }
   return {
     rental: Math.round((rentalSub / subtotal) * total),
@@ -126,7 +134,8 @@ function splitOrderRevenue(order: any): { rental: number; sales: number } {
 }
 
 // ─── component ───────────────────────────────────────────
-export default function AdminDashboardHome() {
+export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: string) => void } = {}) {
+  const go = (tab: string) => onNavigate?.(tab);
   const liveOrders = useAdminOrders();
   const { rows: products } = useAdminCollection("products");
   const { rows: vehicles } = useAdminCollection("vehicles");
@@ -144,11 +153,13 @@ export default function AdminDashboardHome() {
   const kpis = useMemo(() => {
     const rentOrders = orders.filter((o) => o.items?.some((i) => i.type === "rent"));
     const buyOrders = orders.filter((o) => o.items?.some((i) => i.type === "buy"));
-    const avgTransaction = orders.length > 0 ? Math.round(orders.reduce((s, o) => s + (o.total || 0), 0) / orders.length) : 0;
+    // 売上系の集計はキャンセル注文を除外（実現売上のみ）。件数(totalOrders等)は従来どおり全件。
+    const revenueOrders = orders.filter((o) => String(o.status) !== "キャンセル");
+    const avgTransaction = revenueOrders.length > 0 ? Math.round(revenueOrders.reduce((s, o) => s + (o.total || 0), 0) / revenueOrders.length) : 0;
 
     let rentalRevenue = 0;
     let salesRevenue = 0;
-    orders.forEach((o) => {
+    revenueOrders.forEach((o) => {
       const split = splitOrderRevenue(o);
       rentalRevenue += split.rental;
       salesRevenue += split.sales;
@@ -200,6 +211,7 @@ export default function AdminDashboardHome() {
     const totalsByKey = new Map<string, number>();
 
     orders.forEach((order) => {
+      if (String(order.status) === "キャンセル") return; // 売上トレンドはキャンセルを除外
       const d = parseOrderDate(order);
       if (!d) return;
       let key = "";
@@ -275,30 +287,52 @@ export default function AdminDashboardHome() {
   // ══════════════════════════════════════
   const todaySchedule = useMemo(() => {
     const today = todayStr();
-    const deliveries = orders.filter((o) => normalizeDateKey(o.deliveryDate) === today || o.status === "配送中");
-    const collections = orders.filter(
-      (o) => normalizeDateKey(o.rentalEndDate) === today || o.status === "回収予定" || o.status === "回収中"
+
+    // 配送：今日が deliveryDate、または現在「配送中」のもの。配送完了(配送済み/レンタル中)は除外。
+    const DELIVERY_DONE = new Set(["配送済み", "レンタル中", "回収予定", "回収中", "一部返却", "返却済み", "返却済", "完了", "キャンセル"]);
+    const allDeliveries = orders.filter((o) =>
+      normalizeDateKey(o.deliveryDate) === today || o.status === "配送中"
     );
+    const deliveriesDone   = allDeliveries.filter((o) => DELIVERY_DONE.has(o.status));
+    const deliveriesPending = allDeliveries.filter((o) => !DELIVERY_DONE.has(o.status));
+
+    // 回収：今日が rentalEndDate、または「回収予定/回収中」のもの。完了済みは除外。
+    const RECOVERY_DONE = new Set(["返却済み", "返却済", "完了", "キャンセル"]);
+    const allCollections = orders.filter((o) =>
+      normalizeDateKey(o.rentalEndDate) === today || o.status === "回収予定" || o.status === "回収中"
+    );
+    const collectionsDone    = allCollections.filter((o) => RECOVERY_DONE.has(o.status));
+    const collectionsPending = allCollections.filter((o) => !RECOVERY_DONE.has(o.status));
+
     const orderIssueReports = orders.filter(
       (o) => o.itemIssues && o.itemIssues.length > 0 && !isClosedOrder(o.status)
     );
     const pendingFieldReports = fieldReports.filter((r: any) => !["対応済", "完了"].includes(String(r.status || "")));
-    return { deliveries, collections, fieldReports: [...pendingFieldReports, ...orderIssueReports] };
+    return {
+      deliveries: deliveriesPending,
+      deliveriesDone,
+      deliveriesTotal: allDeliveries.length,
+      collections: collectionsPending,
+      collectionsDone,
+      collectionsTotal: allCollections.length,
+      fieldReports: [...pendingFieldReports, ...orderIssueReports],
+    };
   }, [orders, fieldReports]);
 
   // ══════════════════════════════════════
   // アラート (Alerts)
   // ══════════════════════════════════════
   const alerts = useMemo(() => {
-    const list: { icon: React.ReactNode; title: string; desc: string; color: "red" | "orange" | "blue" }[] = [];
+    const list: { icon: React.ReactNode; title: string; desc: string; color: "red" | "orange" | "blue"; target: string }[] = [];
     
-    // Overdue rentals
-    const today = new Date();
+    // Overdue rentals（日付のみで比較。今日が返却日の注文を終日「延滞」と誤判定しないよう深夜0時基準にする）
+    const _now = new Date();
+    const t0 = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate()).getTime();
     const overdueRentals = orders.filter((o) => {
       if (isClosedOrder(o.status)) return false;
       if (!o.rentalEndDate) return false;
-      const end = new Date(o.rentalEndDate.replace(/\//g, "-"));
-      return end < today && o.items?.some((i) => i.type === "rent");
+      const end = new Date(o.rentalEndDate.replace(/\//g, "-") + "T00:00:00").getTime();
+      return end < t0 && o.items?.some((i) => i.type === "rent");
     });
     if (overdueRentals.length > 0) {
       list.push({
@@ -306,6 +340,7 @@ export default function AdminDashboardHome() {
         title: `延滞中のレンタル ${overdueRentals.length} 件`,
         desc: "回収手配が必要です",
         color: "red",
+        target: "collection",
       });
     }
 
@@ -323,6 +358,7 @@ export default function AdminDashboardHome() {
         title: `現場報告 未対応 ${unprocessedReports.length} 件`,
         desc: "破損・紛失の処理が必要",
         color: "red",
+        target: "field_report",
       });
     }
 
@@ -334,6 +370,7 @@ export default function AdminDashboardHome() {
         title: `在庫不足 ${lowStock.length} 品目`,
         desc: lowStock.slice(0, 2).map((p) => p.name).join("、"),
         color: "orange",
+        target: "warehouse",
       });
     }
 
@@ -345,6 +382,7 @@ export default function AdminDashboardHome() {
         title: `車検期限 ${vehicleAlerts.length} 台`,
         desc: "30日以内に車検が必要",
         color: "orange",
+        target: "vehicles",
       });
     }
 
@@ -357,6 +395,7 @@ export default function AdminDashboardHome() {
         title: `メンテナンス予定 ${pendingMaintenance.length} 件`,
         desc: pendingMaintenance.slice(0, 2).map((m: any) => m.name || m.asset || m.id).join("、"),
         color: "blue",
+        target: "maintenance",
       });
     }
 
@@ -367,15 +406,17 @@ export default function AdminDashboardHome() {
   // 未回収一覧 (Unreturned Equipment)
   // ══════════════════════════════════════
   const allUnreturnedOrders = useMemo(() => {
-    const today = new Date();
+    const now = new Date();
+    // 残日数は日付（深夜0時）基準で計算。時刻成分や UTC 解釈による ±1 日のズレを防ぐ。
+    const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     return orders
       .filter((o) => {
         if (isClosedOrder(o.status)) return false;
         return o.items?.some((i) => i.type === "rent");
       })
       .map((o) => {
-        const endDate = o.rentalEndDate ? new Date(o.rentalEndDate.replace(/\//g, "-")) : null;
-        const daysRemaining = endDate ? Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null;
+        const endDate = o.rentalEndDate ? new Date(o.rentalEndDate.replace(/\//g, "-") + "T00:00:00") : null;
+        const daysRemaining = endDate ? Math.round((endDate.getTime() - t0) / 86400000) : null;
         return { ...o, daysRemaining };
       })
       .sort((a, b) => (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999));
@@ -388,6 +429,7 @@ export default function AdminDashboardHome() {
   const topCustomers = useMemo(() => {
     const map: Record<string, { name: string; total: number; count: number }> = {};
     orders.forEach((o) => {
+      if (String(o.status) === "キャンセル") return; // 売上ランキングはキャンセルを除外
       const key = o.companyName || o.personName || "不明";
       if (!map[key]) map[key] = { name: key, total: 0, count: 0 };
       map[key].total += o.total || 0;
@@ -436,8 +478,10 @@ export default function AdminDashboardHome() {
       const d = parseOrderDate(o);
       return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : "";
     };
-    const thisMonthOrders = orders.filter((o) => orderMonthKey(o) === thisMonthStr);
-    const lastMonthOrders = orders.filter((o) => orderMonthKey(o) === lastMonthStr);
+    // 売上比較もキャンセルを除外（実現売上のみ）。
+    const notCancelled = orders.filter((o) => String(o.status) !== "キャンセル");
+    const thisMonthOrders = notCancelled.filter((o) => orderMonthKey(o) === thisMonthStr);
+    const lastMonthOrders = notCancelled.filter((o) => orderMonthKey(o) === lastMonthStr);
 
     const thisRevenue = thisMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
     const lastRevenue = lastMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
@@ -481,10 +525,19 @@ export default function AdminDashboardHome() {
     };
   }, [vehicles]);
 
+  // 総売上高カードの直近7日スパークライン。日付ラベルと実額を保持し、
+  // 棒の高さは「その日の売上 ÷ 直近7日の最大売上」で正規化する。
   const miniBarData = useMemo(() => {
     const recent = trendData.slice(-7);
     const max = Math.max(1, ...recent.map((p) => p.value));
-    return recent.length > 0 ? recent.map((p) => Math.round((p.value / max) * 100)) : [0, 0, 0, 0, 0, 0, 0];
+    if (recent.length === 0) {
+      return Array.from({ length: 7 }, () => ({ label: "", value: 0, pct: 0 }));
+    }
+    return recent.map((p) => ({
+      label: p.date,
+      value: p.value,
+      pct: Math.round((p.value / max) * 100),
+    }));
   }, [trendData]);
 
   // ══════════════════════════════════════
@@ -509,23 +562,31 @@ export default function AdminDashboardHome() {
       {/* ─── KPI Cards ─── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* 総売上高 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div onClick={() => go("invoices")} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">総売上高</span>
             {pctBadge(monthComparison.revChange)}
           </div>
-          <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-4">{fmtYen(kpis.total)}</h2>
+          <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-3">{fmtYen(kpis.total)}</h2>
           <div className="flex items-end gap-1.5 h-8">
-            {miniBarData.map((v, i) => (
-              <div key={i} className="flex-1 rounded-sm bg-blue-100" style={{ height: `${v}%` }}>
-                <div className="w-full rounded-sm bg-blue-500" style={{ height: `${v}%` }} />
+            {miniBarData.map((p, i) => (
+              <div
+                key={i}
+                className="flex-1 flex flex-col justify-end h-full rounded-sm bg-blue-50"
+                title={p.label ? `${p.label}: ${fmtYen(p.value)}` : ""}
+              >
+                <div
+                  className="w-full rounded-sm bg-blue-500 transition-all"
+                  style={{ height: `${p.value > 0 ? Math.max(p.pct, 8) : 0}%` }}
+                />
               </div>
             ))}
           </div>
+          <p className="text-[10px] font-medium text-slate-400 mt-1.5 text-right">直近7日の売上</p>
         </div>
 
         {/* レンタル売上 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div onClick={() => go("orders")} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">レンタル売上</span>
             {pctBadge(monthComparison.rentalChange)}
@@ -540,7 +601,7 @@ export default function AdminDashboardHome() {
         </div>
 
         {/* 販売売上 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div onClick={() => go("sales")} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">販売売上</span>
             {pctBadge(monthComparison.salesChange)}
@@ -555,7 +616,7 @@ export default function AdminDashboardHome() {
         </div>
 
         {/* 平均取引額 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div onClick={() => go("orders")} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">平均取引額</span>
             {pctBadge(monthComparison.avgChange)}
@@ -567,7 +628,7 @@ export default function AdminDashboardHome() {
         </div>
 
         {/* 在庫数 */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+        <div onClick={() => go("warehouse")} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-slate-500">在庫数</span>
             <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">稼働率 {kpis.utilizationRate}%</span>
@@ -584,9 +645,9 @@ export default function AdminDashboardHome() {
       </div>
 
       {/* ─── 本日の予定 + アラート ─── */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* 本日の予定 */}
-        <div className="col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6">
           <div className="flex items-center gap-2 mb-5">
             <CalendarClock size={20} className="text-blue-500" />
             <h3 className="font-bold text-slate-800 text-base">本日の予定</h3>
@@ -594,51 +655,81 @@ export default function AdminDashboardHome() {
               {new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric" })}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {/* 配送 */}
-            <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100">
+            <div onClick={() => go("orders")} className="bg-blue-50/60 rounded-xl p-4 border border-blue-100 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
                   <Truck size={16} className="text-blue-600" />
                 </div>
                 <span className="text-sm font-bold text-blue-700">配送</span>
+                {todaySchedule.deliveriesTotal > 0 && (
+                  <span className="ml-auto text-xs text-blue-500 font-medium bg-blue-100 px-1.5 py-0.5 rounded-full">
+                    完了 {todaySchedule.deliveriesDone.length}/{todaySchedule.deliveriesTotal}
+                  </span>
+                )}
               </div>
               <div className="text-3xl font-extrabold text-slate-800 mb-1">
-                {todaySchedule.deliveries.length}<span className="text-sm font-bold text-slate-400 ml-1">件</span>
+                {todaySchedule.deliveries.length}<span className="text-sm font-bold text-slate-400 ml-1">件残</span>
               </div>
+              {todaySchedule.deliveriesTotal > 0 && (
+                <div className="w-full h-1.5 bg-blue-100 rounded-full mb-2">
+                  <div
+                    className="h-full bg-blue-400 rounded-full transition-all"
+                    style={{ width: `${Math.round((todaySchedule.deliveriesDone.length / todaySchedule.deliveriesTotal) * 100)}%` }}
+                  />
+                </div>
+              )}
               {todaySchedule.deliveries.slice(0, 2).map((o, i) => (
                 <p key={i} className="text-xs text-slate-500 truncate mt-1">
                   • {o.companyName || o.siteName || o.personName}
                 </p>
               ))}
               {todaySchedule.deliveries.length === 0 && (
-                <p className="text-xs text-slate-400 mt-1">予定なし</p>
+                <p className="text-xs text-blue-500 mt-1 font-medium">
+                  {todaySchedule.deliveriesTotal > 0 ? "✓ すべて完了" : "予定なし"}
+                </p>
               )}
             </div>
 
             {/* 回収 */}
-            <div className="bg-purple-50/60 rounded-xl p-4 border border-purple-100">
+            <div onClick={() => go("collection")} className="bg-purple-50/60 rounded-xl p-4 border border-purple-100 cursor-pointer hover:border-purple-300 hover:shadow-sm transition-all">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
                   <Package size={16} className="text-purple-600" />
                 </div>
                 <span className="text-sm font-bold text-purple-700">回収</span>
+                {todaySchedule.collectionsTotal > 0 && (
+                  <span className="ml-auto text-xs text-purple-500 font-medium bg-purple-100 px-1.5 py-0.5 rounded-full">
+                    完了 {todaySchedule.collectionsDone.length}/{todaySchedule.collectionsTotal}
+                  </span>
+                )}
               </div>
               <div className="text-3xl font-extrabold text-slate-800 mb-1">
-                {todaySchedule.collections.length}<span className="text-sm font-bold text-slate-400 ml-1">件</span>
+                {todaySchedule.collections.length}<span className="text-sm font-bold text-slate-400 ml-1">件残</span>
               </div>
+              {todaySchedule.collectionsTotal > 0 && (
+                <div className="w-full h-1.5 bg-purple-100 rounded-full mb-2">
+                  <div
+                    className="h-full bg-purple-400 rounded-full transition-all"
+                    style={{ width: `${Math.round((todaySchedule.collectionsDone.length / todaySchedule.collectionsTotal) * 100)}%` }}
+                  />
+                </div>
+              )}
               {todaySchedule.collections.slice(0, 2).map((o, i) => (
                 <p key={i} className="text-xs text-slate-500 truncate mt-1">
                   • {o.companyName || o.siteName || o.personName}
                 </p>
               ))}
               {todaySchedule.collections.length === 0 && (
-                <p className="text-xs text-slate-400 mt-1">予定なし</p>
+                <p className="text-xs text-purple-500 mt-1 font-medium">
+                  {todaySchedule.collectionsTotal > 0 ? "✓ すべて完了" : "予定なし"}
+                </p>
               )}
             </div>
 
             {/* 現場報告 */}
-            <div className="bg-amber-50/60 rounded-xl p-4 border border-amber-100">
+            <div onClick={() => go("field_report")} className="bg-amber-50/60 rounded-xl p-4 border border-amber-100 cursor-pointer hover:border-amber-300 hover:shadow-sm transition-all">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
                   <AlertTriangle size={16} className="text-amber-600" />
@@ -666,6 +757,7 @@ export default function AdminDashboardHome() {
             {alerts.length > 0 ? alerts.map((a, i) => (
               <div
                 key={i}
+                onClick={() => go(a.target)}
                 className={`p-3.5 rounded-xl flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity border ${
                   a.color === "red"
                     ? "bg-red-50/80 border-red-100 text-red-600"
@@ -689,9 +781,9 @@ export default function AdminDashboardHome() {
       </div>
 
       {/* ─── Charts Row ─── */}
-      <div className="grid grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
         {/* Area Chart */}
-        <div className="col-span-3 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+        <div className="xl:col-span-3 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
           <div className="flex items-start justify-between mb-1">
             <div>
               <h3 className="font-bold text-slate-800 text-base">売上推移</h3>
@@ -730,7 +822,7 @@ export default function AdminDashboardHome() {
         </div>
 
         {/* Donut Chart */}
-        <div className="col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+        <div className="xl:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
           <h3 className="font-bold text-slate-800 text-base">メンテナンス状況</h3>
           <p className="text-xs text-slate-400 mt-1">機材の稼働ステータス</p>
           <div className="flex justify-center my-2">
@@ -763,9 +855,9 @@ export default function AdminDashboardHome() {
       </div>
 
       {/* ─── 未回収 + 月別比較 ─── */}
-      <div className="grid grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
         {/* 未回収一覧 */}
-        <div className="col-span-3 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div className="xl:col-span-3 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="p-6 pb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock size={20} className="text-red-500" />
@@ -815,7 +907,7 @@ export default function AdminDashboardHome() {
         </div>
 
         {/* 月別比較 */}
-        <div className="col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6">
+        <div className="xl:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6">
           <div className="flex items-center gap-2 mb-5">
             <BarChart3 size={20} className="text-indigo-500" />
             <h3 className="font-bold text-slate-800 text-base">月別比較</h3>
@@ -874,6 +966,7 @@ export default function AdminDashboardHome() {
           <div className="flex items-center gap-2 mb-5">
             <Star size={20} className="text-amber-500" />
             <h3 className="font-bold text-slate-800 text-base">売上ランキング</h3>
+            <button onClick={() => go("customers")} className="ml-auto text-slate-300 hover:text-blue-600 transition-colors cursor-pointer" title="顧客管理へ"><ArrowRight size={16} /></button>
           </div>
           <div className="space-y-3">
             {topCustomers.length > 0 ? topCustomers.map((c, i) => (
@@ -903,6 +996,7 @@ export default function AdminDashboardHome() {
           <div className="flex items-center gap-2 mb-5">
             <TrendingUp size={20} className="text-emerald-500" />
             <h3 className="font-bold text-slate-800 text-base">人気機材</h3>
+            <button onClick={() => go("products")} className="ml-auto text-slate-300 hover:text-blue-600 transition-colors cursor-pointer" title="商品管理へ"><ArrowRight size={16} /></button>
           </div>
           <div className="space-y-3">
             {popularEquipment.length > 0 ? popularEquipment.map((eq, i) => (
@@ -930,6 +1024,7 @@ export default function AdminDashboardHome() {
           <div className="flex items-center gap-2 mb-5">
             <Truck size={20} className="text-blue-500" />
             <h3 className="font-bold text-slate-800 text-base">車両稼働</h3>
+            <button onClick={() => go("vehicles")} className="ml-auto text-slate-300 hover:text-blue-600 transition-colors cursor-pointer" title="車庫管理へ"><ArrowRight size={16} /></button>
           </div>
 
           <div className="flex items-center justify-center mb-5">
@@ -981,6 +1076,7 @@ export default function AdminDashboardHome() {
             <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full ml-1">
               {lowStockItems.length}品目
             </span>
+            <button onClick={() => go("warehouse")} className="ml-auto text-slate-300 hover:text-blue-600 transition-colors cursor-pointer" title="倉庫管理へ"><ArrowRight size={16} /></button>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {lowStockItems.map((p) => (
@@ -1189,7 +1285,10 @@ export default function AdminDashboardHome() {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          liveOrders.patchOrder(id, { status, staffStatus });
+          // 受注確定(確認済み)で出庫、返却系クローズで入庫（AdminRental と同じ在庫台帳処理）。
+          const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("注文ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

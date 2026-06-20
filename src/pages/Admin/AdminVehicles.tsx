@@ -43,7 +43,8 @@ function formatDateSlash(date = new Date()) {
 
 function daysUntil(dateText: string | undefined): number {
   if (!dateText) return 999;
-  const date = new Date(dateText.replace(/\//g, "-"));
+  // "YYYY-MM-DD" を UTC 解釈せずローカル日付として解釈（負オフセット TZ での ±1 日ズレ防止）。
+  const date = new Date(dateText.replace(/\//g, "-") + "T00:00:00");
   if (Number.isNaN(date.getTime())) return 999;
   const today = new Date();
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
@@ -134,7 +135,9 @@ function syncLinkedProduct(vehicle: VehicleDetail, updates: Partial<VehicleDetai
   const payload = {
     name: merged.name,
     category: merged.category,
-    stock: Number(merged.stock || 1),
+    // 既存の在庫を保持する。車両メタ編集フォームには stock 欄が無く merged.stock が undefined のため、
+    // `|| 1` だと入出庫/棚卸で調整済みの商品在庫を毎回 1 に潰してしまう（価格と同じく existing を尊重）。
+    stock: merged.stock != null ? Number(merged.stock) : (existing?.stock ?? 1),
     image,
     vehicleId: merged.id,
     plate: merged.plate,
@@ -176,6 +179,31 @@ export default function AdminVehicles() {
   const [newStatus, setNewStatus] = useState<"空車" | "使用中" | "整備中">("空車");
   const [newInspectionDate, setNewInspectionDate] = useState("2027-01-01");
   const [newInsuranceDate, setNewInsuranceDate] = useState("2027-01-01");
+  const [newManufacturer, setNewManufacturer] = useState("");
+  const [newYear, setNewYear] = useState("");
+  const [newColor, setNewColor] = useState("");
+  const [newVin, setNewVin] = useState("");
+  const [newEngineModel, setNewEngineModel] = useState("");
+  const [newPurchaseDate, setNewPurchaseDate] = useState("");
+  const [newPurchasePrice, setNewPurchasePrice] = useState("");
+
+  // 追加モーダルの全項目を初期値へ戻す（部分リセットだとカテゴリ・車検満了日などが前回値のまま残る）。
+  const resetAddForm = () => {
+    setNewName("軽トラック");
+    setNewPlate("");
+    setNewCat("軽トラック");
+    setNewMileage("0 km");
+    setNewStatus("空車");
+    setNewInspectionDate("2027-01-01");
+    setNewInsuranceDate("2027-01-01");
+    setNewManufacturer("");
+    setNewYear("");
+    setNewColor("");
+    setNewVin("");
+    setNewEngineModel("");
+    setNewPurchaseDate("");
+    setNewPurchasePrice("");
+  };
 
   useEffect(() => {
     if (selectedVehicle) {
@@ -186,6 +214,12 @@ export default function AdminVehicles() {
   const vehicleCategories = useMemo(() => {
     return Array.from(new Set(vehicles.map((v) => v.category).filter(Boolean))).sort();
   }, [vehicles]);
+
+  // カテゴリ候補: 既定プリセット＋実データのカテゴリ。編集時は現在値も必ず含める
+  // （商品管理側で付けた "2tノーマル" 等が候補に無く、表示と保存値がズレるのを防ぐ）。
+  const VEHICLE_CATEGORY_PRESETS = ["軽トラック", "軽バン", "2tトラック", "3tダンプ", "高所作業車"];
+  const addCategoryOptions = Array.from(new Set([...VEHICLE_CATEGORY_PRESETS, ...vehicleCategories]));
+  const editCategoryOptions = Array.from(new Set([...(editForm.category ? [editForm.category] : []), ...vehicleCategories, ...VEHICLE_CATEGORY_PRESETS]));
 
   const filteredVehicles = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -242,13 +276,13 @@ export default function AdminVehicles() {
       inspectionDate,
       inspectionDaysRemaining,
       insuranceDate,
-      manufacturer: "スズキ",
-      year: "2025年",
-      color: "ホワイト",
-      vin: "DA16T-" + Math.floor(100000 + Math.random() * 900000),
-      engineModel: "R06A",
-      purchaseDate: "2025/01/01",
-      purchasePrice: "¥1,200,000",
+      manufacturer: newManufacturer.trim(),
+      year: newYear.trim(),
+      color: newColor.trim(),
+      vin: newVin.trim(),
+      engineModel: newEngineModel.trim(),
+      purchaseDate: newPurchaseDate ? dateInputToSlash(newPurchaseDate) : "",
+      purchasePrice: newPurchasePrice.trim(),
       mileage: newMileage,
       maintenanceDesc: "新規登録",
       maintenanceDate: formatDateSlash(),
@@ -264,8 +298,7 @@ export default function AdminVehicles() {
     syncLinkedProduct(newVehicle);
     triggerToast(`車両 ${newPlate} を登録しました`, "ok");
     setIsAddModalOpen(false);
-    setNewPlate("");
-    setNewMileage("0 km");
+    resetAddForm();
   };
 
   const handleUpdateVehicle = () => {
@@ -324,6 +357,11 @@ export default function AdminVehicles() {
   const handleSaveVehicleAction = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!vehicleAction) return;
+    // 日付未入力のまま保存すると本日へ無言で補正され、車検満了日が本日＝期限切れアラート誤発火になる。
+    if (!actionDate) {
+      triggerToast(vehicleAction.kind === "inspection" ? "新しい車検満了日を入力してください" : "記録日を入力してください", "warn");
+      return;
+    }
     const vehicle = vehicleAction.vehicle;
     const dateSlash = dateInputToSlash(actionDate) || formatDateSlash();
     const mileage = actionMileage || vehicle.mileage;
@@ -389,7 +427,8 @@ export default function AdminVehicles() {
       const inspectionDaysRemaining = daysUntil(inspectionDate);
       const updates: Partial<VehicleDetail> = {
         inspectionDate,
-        insuranceDate: inspectionDate,
+        // 車検(inspectionDate)と自賠責保険(insuranceDate)は別物。車検更新で保険日を
+        // 上書きしない（以前は insuranceDate を inspectionDate で潰していた）。
         inspectionDaysRemaining,
         alerts: makeInspectionAlerts(vehicle, inspectionDaysRemaining, inspectionDate),
         maintenanceHistory: [
@@ -484,7 +523,7 @@ export default function AdminVehicles() {
     {
       h: "車検満了日",
       cell: (r: VehicleDetail) => {
-        const isWarning = r.inspectionDaysRemaining < 30;
+        const isWarning = r.inspectionDaysRemaining <= 30; // フィルタ/統計/アラート(<=30)と閾値を統一
         return (
           <div className="flex flex-col">
             <span className={`font-mono text-sm font-bold ${isWarning ? 'text-red-600' : 'text-slate-700'}`}>
@@ -552,7 +591,7 @@ export default function AdminVehicles() {
 
       <Toolbar
         right={
-          <Btn icon="add" variant="primary" onClick={() => setIsAddModalOpen(true)}>
+          <Btn icon="add" variant="primary" onClick={() => { resetAddForm(); setIsAddModalOpen(true); }}>
             車両を登録
           </Btn>
         }
@@ -739,7 +778,7 @@ export default function AdminVehicles() {
                       <div className="text-xs text-slate-400 font-bold mb-1">車検満了日</div>
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-semibold text-slate-800 font-mono">{selectedVehicle.inspectionDate}</div>
-                        <Badge tone={selectedVehicle.inspectionDaysRemaining < 30 ? "danger" : "default"}>残り{selectedVehicle.inspectionDaysRemaining}日</Badge>
+                        <Badge tone={selectedVehicle.inspectionDaysRemaining <= 30 ? "danger" : "default"}>残り{selectedVehicle.inspectionDaysRemaining}日</Badge>
                       </div>
                     </div>
                     <div>
@@ -842,7 +881,7 @@ export default function AdminVehicles() {
                   </Row>
                   <Row>
                     <Field label="カテゴリー">
-                      <SelectInput value={editForm.category || ""} onChange={e => setEditForm({...editForm, category: e.target.value})} options={["軽トラック", "軽バン", "2tトラック", "3tダンプ", "高所作業車"]} />
+                      <SelectInput value={editForm.category || ""} onChange={e => setEditForm({...editForm, category: e.target.value})} options={editCategoryOptions} />
                     </Field>
                     <Field label="ステータス">
                       <SelectInput value={editForm.status || "空車"} onChange={e => setEditForm({...editForm, status: e.target.value as any})} options={["空車", "使用中", "整備中"]} />
@@ -862,6 +901,22 @@ export default function AdminVehicles() {
                     </Field>
                     <Field label="年式">
                       <TextInput value={editForm.year || ""} onChange={e => setEditForm({...editForm, year: e.target.value})} />
+                    </Field>
+                  </Row>
+                  <Row>
+                    <Field label="車体色">
+                      <TextInput value={editForm.color || ""} onChange={e => setEditForm({...editForm, color: e.target.value})} />
+                    </Field>
+                    <Field label="原動機型式">
+                      <TextInput value={editForm.engineModel || ""} onChange={e => setEditForm({...editForm, engineModel: e.target.value})} />
+                    </Field>
+                  </Row>
+                  <Row>
+                    <Field label="取得年月日">
+                      <TextInput type="date" value={(editForm.purchaseDate || "").replace(/\//g, "-")} onChange={e => setEditForm({...editForm, purchaseDate: e.target.value.replace(/-/g, "/")})} />
+                    </Field>
+                    <Field label="取得価額">
+                      <TextInput value={editForm.purchasePrice || ""} onChange={e => setEditForm({...editForm, purchasePrice: e.target.value})} />
                     </Field>
                   </Row>
                 </FormSection>
@@ -1054,7 +1109,7 @@ export default function AdminVehicles() {
               <TextInput value={newPlate} onChange={e => setNewPlate(e.target.value)} placeholder="例：品川 580 あ 1234" />
             </Field>
             <Field label="カテゴリー" required>
-              <SelectInput value={newCat} onChange={e => setNewCat(e.target.value)} options={["軽トラック", "軽バン", "2tトラック", "3tダンプ", "高所作業車"]} />
+              <SelectInput value={newCat} onChange={e => setNewCat(e.target.value)} options={addCategoryOptions} />
             </Field>
           </Row>
           <Row>
@@ -1073,6 +1128,33 @@ export default function AdminVehicles() {
               <TextInput type="date" value={newInsuranceDate} onChange={e => setNewInsuranceDate(e.target.value)} />
             </Field>
           </Row>
+          <Row>
+            <Field label="メーカー">
+              <TextInput value={newManufacturer} onChange={e => setNewManufacturer(e.target.value)} placeholder="例：スズキ" />
+            </Field>
+            <Field label="年式">
+              <TextInput value={newYear} onChange={e => setNewYear(e.target.value)} placeholder="例：2025年" />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="車体色">
+              <TextInput value={newColor} onChange={e => setNewColor(e.target.value)} placeholder="例：ホワイト" />
+            </Field>
+            <Field label="車台番号 (VIN)">
+              <TextInput value={newVin} onChange={e => setNewVin(e.target.value)} placeholder="例：DA16T-123456" />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="原動機型式">
+              <TextInput value={newEngineModel} onChange={e => setNewEngineModel(e.target.value)} placeholder="例：R06A" />
+            </Field>
+            <Field label="取得価額">
+              <TextInput value={newPurchasePrice} onChange={e => setNewPurchasePrice(e.target.value)} placeholder="例：¥1,200,000" />
+            </Field>
+          </Row>
+          <Field label="取得年月日">
+            <TextInput type="date" value={newPurchaseDate} onChange={e => setNewPurchaseDate(e.target.value)} />
+          </Field>
         </form>
       </Modal>
     </div>

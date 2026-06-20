@@ -24,6 +24,8 @@ export interface Product {
   rentPrice?: number;         // 単価A (15日以下など)
   rentPriceLongTerm?: number; // 単価B (17日以上割引など)
   buyPrice?: number;
+  compensationPrice?: number; // 弁償価格（破損・紛失時の弁償単価/個。未設定なら buyPrice を使用）
+  unit?: string;              // 数量の単位（個・本・台・枚 など。未設定なら "点"）
   badge?: string;
   badgeColor?: string;
   stock: number;
@@ -72,6 +74,7 @@ export interface CartItem {
   billedDays?: number;
   type: 'rent' | 'buy';
   category?: string;
+  unit?: string;              // 数量の単位（商品マスタから引き継ぐ。未設定なら "点"）
   actualReturnDate?: string;
   calculatedPrice?: number;
   monthlyBreakdown?: MonthlyBreakdown[];
@@ -113,6 +116,7 @@ export interface Order {
   date: string;
   status: OrderStatus | string;
   returnRequestType?: "full" | "partial";
+  requestedReturn?: Record<string, number>;
   items: CartItem[];
   total: number;
   subtotal: number;
@@ -126,6 +130,17 @@ export interface Order {
   rentalStartDate?: string;
   rentalEndDate?: string;
   actualReturnDate?: string;
+  deliveryConfirmedAt?: string;
+  collectionConfirmedAt?: string;
+  /** 受注確定で現物在庫を減算済み（出庫済み）の印。二重減算防止。 */
+  stockDeducted?: boolean;
+  stockDeductedAt?: string;
+  /** 倉庫最終検品で現物在庫へ戻し済み（入庫済み）の印。二重加算防止。 */
+  stockRestored?: boolean;
+  /** 破損・紛失の弁償費（最終検品で確定）。請求書に ExtraCost として自動計上される。 */
+  compensationCharge?: { amount: number; note: string; lines: { itemId?: string; name: string; type: 'missing' | 'broken'; qty: number; unit: number; amount: number }[] };
+  /** admin が弁償費の行を削除した印（自動再計上を抑止）。 */
+  compensationDismissed?: boolean;
   firestoreId?: string;
   staffStatus?: StaffStatus | string;
   staffNote?: string;

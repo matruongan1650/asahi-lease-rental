@@ -5,7 +5,7 @@
  * これにより注文などのレコードが軽くなり、localStorage 容量超過・同期肥大・
  * 「再起動で画像が消える」問題が根本的に解消する。
  */
-import { API_BASE } from "./dataBackend";
+import { API_BASE, apiHeaders } from "./dataBackend";
 
 // 同一 dataURL の二重アップロード防止（セッション内キャッシュ）。
 const _uploaded = new Map<string, string>();
@@ -22,7 +22,7 @@ export async function uploadDataUrl(dataUrl: string): Promise<string> {
   try {
     const res = await fetch(`${API_BASE}/upload`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ dataUrl }),
     });
     if (!res.ok) throw new Error(`upload ${res.status}`);

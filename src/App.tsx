@@ -24,6 +24,7 @@ import PersonalInfo from "./pages/PersonalInfo";
 import ErrorBoundary from "./components/ErrorBoundary";
 import AdminAuthGate from "./components/AdminAuthGate";
 import { DialogHost } from "./components/AppDialog";
+import { ToastHost } from "./components/AdminUI";
 import { CartProvider } from "./context/CartContext";
 import { OrderProvider } from "./context/OrderContext";
 import { FeaturedProvider } from "./context/FeaturedContext";
@@ -69,6 +70,8 @@ export default function App() {
             </Routes>
           </BrowserRouter>
             <DialogHost />
+            {/* triggerToast の購読先。お客様サイト(モバイル/デスクトップ共通)でもトーストを表示する。 */}
+            <ToastHost />
             </CartProvider>
           </OrderProvider>
           </VehicleProvider>

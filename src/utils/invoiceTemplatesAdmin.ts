@@ -1,6 +1,10 @@
 import { CompanyGroup, RenterGroup, aggregateTotals } from "./rentalInvoiceGrouping";
 import { A4_PX_WIDTH, A4_PX_HEIGHT, renderSectionsToPdf, mountOffscreen } from "./pdfMultiPage";
-import { getOrGenerateInvoiceBlocks } from "./billing";
+import { ensureMonthlyBreakdowns, getOrGenerateInvoiceBlocks, orderMonthKey, getTaxRate } from "./billing";
+
+// 消費税率のラベル（"10%" 等）。税額計算は getTaxRate() に統一済みなので表示も動的にする。
+const taxPctLabel = () => `${Math.round(getTaxRate() * 100)}%`;
+import { getItemUnit } from "./productUtils";
 
 const ISSUER = {
   name: "アサヒリース 株式会社",
@@ -94,8 +98,10 @@ function computeRenterPeriod(renter: RenterGroup): string {
   const starts = renter.orders.map((o: any) => o.rentalStartDate).filter(Boolean) as string[];
   const ends = renter.orders.map((o: any) => o.rentalEndDate).filter(Boolean) as string[];
   if (starts.length === 0 || ends.length === 0) return "";
-  starts.sort();
-  ends.sort();
+  // 区切りが "/" と "-" で混在しても正しく前後判定できるよう正規化キーで比較する。
+  const norm = (d: string) => String(d || "").replace(/\//g, "-");
+  starts.sort((a, b) => norm(a).localeCompare(norm(b)));
+  ends.sort((a, b) => norm(a).localeCompare(norm(b)));
   return `${starts[0]} 〜 ${ends[ends.length - 1]}`;
 }
 
@@ -103,6 +109,7 @@ export interface PrintItem {
   name: string;
   detail: string;
   quantity: number | string;
+  unit?: string; // 数量の単位（商品マスタ）。手数料/追加費用行には付けない。
   unitPrice: number;
   lineTotal: number;
   typeLabel: string;
@@ -110,20 +117,22 @@ export interface PrintItem {
 
 export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
   const items: PrintItem[] = [];
+  const sourceItems = ensureMonthlyBreakdowns(order);
   
   if (monthPeriod) {
     const blocks = getOrGenerateInvoiceBlocks(order);
     const block = blocks.find((b: any) => b.monthPeriod === monthPeriod);
     if (!block) return [];
 
-    order.items?.forEach((it: any) => {
+    sourceItems.forEach((it: any) => {
       if (it.type === 'buy') {
-        const orderMonth = order.date?.split('•')[0]?.trim().slice(0, 7) || "";
+        const orderMonth = orderMonthKey(order);
         if (orderMonth === monthPeriod) {
           items.push({
             name: it.name || "-",
             detail: "販売品",
             quantity: it.quantity ?? 1,
+            unit: getItemUnit(it),
             unitPrice: it.buyPrice || 0,
             lineTotal: (it.buyPrice || 0) * (it.quantity ?? 1),
             typeLabel: "販売"
@@ -137,6 +146,7 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
             name: it.name || "-",
             detail: `${breakdown.days}日間`,
             quantity: it.quantity ?? 1,
+            unit: getItemUnit(it),
             unitPrice: breakdown.price, // unit price for this period
             lineTotal: rentalFee,
             typeLabel: "賃貸"
@@ -145,10 +155,11 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
           const isFirstMonth = it.monthlyBreakdown?.[0]?.monthStr === monthPeriod;
           if (isFirstMonth && it.guaranteeFeeFlat) {
             items.push({
-              name: `${it.name || "-"} (基本補償料)`,
+              name: `${it.name || "-"} (基本保証料)`,
               detail: "初回のみ",
-              quantity: it.quantity ?? 1,
-              unitPrice: it.guaranteeFeeFlat / (it.quantity ?? 1),
+              // 定額手数料は数量1行で表示する。数量割りすると 単価×数量≠金額 / 端数の単価になるため。
+              quantity: 1,
+              unitPrice: it.guaranteeFeeFlat,
               lineTotal: it.guaranteeFeeFlat,
               typeLabel: "手数料"
             });
@@ -161,7 +172,7 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
       block.extraCosts.forEach((ec: any) => {
         items.push({
           name: ec.note || "追加費用",
-          detail: ec.id === "fuel-refill" ? "燃料補給" : "その他",
+          detail: ec.id === "fuel-refill" ? "燃料補給" : ec.id === "compensation-charge" ? "破損・紛失弁償" : "その他",
           quantity: 1,
           unitPrice: ec.amount,
           lineTotal: ec.amount,
@@ -172,7 +183,7 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
 
   } else {
     // Overall invoice
-    order.items?.forEach((it: any) => {
+    sourceItems.forEach((it: any) => {
       const price = it.calculatedPrice ?? it.buyPrice ?? 0;
       const detail = it.type === "rent"
         ? `${it.rentalDays ?? "-"}日間` + (it.billedDays && it.rentalDays && it.billedDays > it.rentalDays ? ` (請求${it.billedDays}日)` : "")
@@ -182,6 +193,7 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
         name: it.name || "-",
         detail,
         quantity: it.quantity ?? 1,
+        unit: getItemUnit(it),
         unitPrice: price,
         lineTotal: price * (it.quantity ?? 1),
         typeLabel: it.type === "rent" ? "賃貸" : "販売"
@@ -189,10 +201,11 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
 
       if (it.type === 'rent' && it.guaranteeFeeFlat) {
         items.push({
-          name: `${it.name || "-"} (基本補償料)`,
+          name: `${it.name || "-"} (基本保証料)`,
           detail: "初回のみ",
-          quantity: it.quantity ?? 1,
-          unitPrice: it.guaranteeFeeFlat / (it.quantity ?? 1),
+          // 定額手数料は数量1行で表示する（端数単価・単価×数量≠金額を回避）。
+          quantity: 1,
+          unitPrice: it.guaranteeFeeFlat,
           lineTotal: it.guaranteeFeeFlat,
           typeLabel: "手数料"
         });
@@ -205,7 +218,7 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
         b.extraCosts.forEach((ec: any) => {
           items.push({
             name: ec.note || "追加費用",
-            detail: `(${b.monthPeriod}) ${ec.id === "fuel-refill" ? "燃料補給" : "その他"}`,
+            detail: `(${b.monthPeriod}) ${ec.id === "fuel-refill" ? "燃料補給" : ec.id === "compensation-charge" ? "破損・紛失弁償" : "その他"}`,
             quantity: 1,
             unitPrice: ec.amount,
             lineTotal: ec.amount,
@@ -357,7 +370,8 @@ export function renderCompanyCoverPage(
       </h2>
       <div style="margin-top:6px;font-size:10.5px;color:#475569;display:flex;justify-content:flex-end;gap:16px;">
         <span>小計 (税抜): ¥${group.subtotal.toLocaleString()}</span>
-        <span>消費税 (10%): ¥${group.tax.toLocaleString()}</span>
+        ${(group.guaranteeFee || 0) > 0 ? `<span>うち保証料: ¥${group.guaranteeFee.toLocaleString()}</span>` : ""}
+        <span>消費税 (${taxPctLabel()}): ¥${group.tax.toLocaleString()}</span>
       </div>
     </div>
 
@@ -524,7 +538,7 @@ export function renderRenterInvoicePage(opts: RenterInvoicePageOpts): HTMLElemen
             <div style="font-weight:600;">${escapeHtml(it.name)}</div>
             <div style="font-size:10px;color:#64748b;">${escapeHtml(it.detail)}</div>
           </td>
-          <td style="${tdStyle('text-align:center;')}">${it.quantity}</td>
+          <td style="${tdStyle('text-align:center;')}">${it.quantity}${it.unit ? escapeHtml(it.unit) : ""}</td>
           <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${Number(it.unitPrice).toLocaleString()}</td>
           <td style="${tdStyle('text-align:right;font-weight:600;font-family:ui-monospace,monospace;')}">¥${Number(it.lineTotal).toLocaleString()}</td>
           <td style="${tdStyle('text-align:center;color:#64748b;')}">${it.typeLabel}</td>
@@ -562,7 +576,8 @@ export function renderRenterInvoicePage(opts: RenterInvoicePageOpts): HTMLElemen
         </div>
         <div style="width:240px;border:1.5px solid #0f172a;flex-shrink:0;">
           ${totalsRow("小計", opts.renter.subtotal)}
-          ${totalsRow("消費税 (10%)", opts.renter.tax)}
+          ${(opts.renter.guaranteeFee || 0) > 0 ? totalsRow("うち保証料", opts.renter.guaranteeFee) : ""}
+          ${totalsRow(`消費税 (${taxPctLabel()})`, opts.renter.tax)}
           ${totalsRow("担当者合計", opts.renter.total, true)}
           ${opts.companyTotal ? `<div style="border-top:1px dashed #94a3b8;padding:6px 12px;font-size:9px;color:#475569;display:flex;justify-content:space-between;"><span>会社合計参考</span><span style="font-weight:bold;color:#0f172a;font-family:ui-monospace,monospace;">¥${opts.companyTotal.total.toLocaleString()}</span></div>` : ""}
         </div>
@@ -667,17 +682,28 @@ export function renderBreakdownSummary(groups: CompanyGroup[], overallPageCount:
 // High-level issuer helpers
 // ============================================================
 
-export async function issueOrderInvoice(order: any) {
+export function buildOrderInvoice(order: any, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
+  const block = monthPeriod
+    ? getOrGenerateInvoiceBlocks(order).find((b: any) => b.monthPeriod === monthPeriod)
+    : null;
+
+  const guaranteeFee = block
+    ? Number(block.guaranteeFee || 0)
+    : (order.items || [])
+        .filter((i: any) => i?.type === "rent")
+        .reduce((s: number, i: any) => s + Number(i.guaranteeFeeFlat || 0), 0);
+
   const renter: RenterGroup = {
-    personName: order.personName?.trim() || "(担当者未設定)",
+    personName: order.personName?.trim() || order.employeeName?.trim() || order.customerName?.trim() || "(担当者未設定)",
     orders: [order],
-    subtotal: order.subtotal || 0,
-    tax: order.tax || 0,
-    total: order.total || 0,
+    subtotal: block ? block.subtotal || 0 : order.subtotal || 0,
+    tax: block ? block.tax || 0 : order.tax || 0,
+    total: block ? block.total || 0 : order.total || 0,
+    guaranteeFee,
   };
 
   const rows: PrintRow[] = [{ type: "order-header", order }];
-  const pItems = getPrintItems(order);
+  const pItems = getPrintItems(order, monthPeriod);
   pItems.forEach((it, idx) => {
     rows.push({ type: "item-row", order, item: it, index: idx });
   });
@@ -688,25 +714,27 @@ export async function issueOrderInvoice(order: any) {
   const nodes = pages.map((pageRows, pi) =>
     renderRenterInvoicePage({
       mode: "order-invoice",
-      companyName: order.companyName?.trim() || "(会社名未設定)",
+      companyName: order.companyName?.trim() || order.customer?.trim() || order.customerName?.trim() || "(会社名未設定)",
       renter,
       pageRows,
       pageIndex: pi,
       pageCount: pages.length,
       overallPageIndex: pi,
       overallPageCount: totalPages,
+      monthPeriod,
     })
   );
 
-  const cleanup = mountOffscreen(nodes);
-  try {
-    await renderSectionsToPdf(nodes, `請求書_${order.orderNumber || "no-num"}.pdf`);
-  } finally {
-    cleanup();
-  }
+  return { nodes, filename: `請求書_${order.orderNumber || "no-num"}.pdf` };
 }
 
-export async function issueRenterInvoice(companyName: string, renter: RenterGroup, monthPeriod?: string) {
+export async function issueOrderInvoice(order: any, monthPeriod?: string) {
+  const { nodes, filename } = buildOrderInvoice(order, monthPeriod);
+  const cleanup = mountOffscreen(nodes);
+  try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
+}
+
+export function buildRenterInvoice(companyName: string, renter: RenterGroup, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
   const rows: PrintRow[] = renter.orders.flatMap(o => {
     const headerRow: PrintRow = { type: "order-header", order: o };
     const pItems = getPrintItems(o, monthPeriod);
@@ -736,15 +764,16 @@ export async function issueRenterInvoice(companyName: string, renter: RenterGrou
     })
   );
 
-  const cleanup = mountOffscreen(nodes);
-  try {
-    await renderSectionsToPdf(nodes, `請求書_${companyName}_${renter.personName}_${todayShort()}.pdf`);
-  } finally {
-    cleanup();
-  }
+  return { nodes, filename: `請求書_${companyName}_${renter.personName}_${todayShort()}.pdf` };
 }
 
-export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: string) {
+export async function issueRenterInvoice(companyName: string, renter: RenterGroup, monthPeriod?: string) {
+  const { nodes, filename } = buildRenterInvoice(companyName, renter, monthPeriod);
+  const cleanup = mountOffscreen(nodes);
+  try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
+}
+
+export function buildCompanyInvoice(group: CompanyGroup, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
   if (!group.renters || group.renters.length === 0) {
     throw new Error(`「${group.companyName}」に該当する担当者がありません。`);
   }
@@ -801,15 +830,16 @@ export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: str
   });
 
   const allNodes = [coverNode, ...detailNodes];
-  const cleanup = mountOffscreen(allNodes);
-  try {
-    await renderSectionsToPdf(allNodes, `請求書_${group.companyName}_${todayShort()}.pdf`);
-  } finally {
-    cleanup();
-  }
+  return { nodes: allNodes, filename: `請求書_${group.companyName}_${todayShort()}.pdf` };
 }
 
-export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string) {
+export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: string) {
+  const { nodes, filename } = buildCompanyInvoice(group, monthPeriod);
+  const cleanup = mountOffscreen(nodes);
+  try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
+}
+
+export function buildAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
   if (groups.length === 0) throw new Error("対象データがありません。");
 
   // 1. Calculate pagination for all companies and renters
@@ -879,10 +909,11 @@ export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeri
     }
   }
 
-  const cleanup = mountOffscreen(sections);
-  try {
-    await renderSectionsToPdf(sections, `内訳請求書_${monthPeriod ?? todayShort()}.pdf`);
-  } finally {
-    cleanup();
-  }
+  return { nodes: sections, filename: `内訳請求書_${monthPeriod ?? todayShort()}.pdf` };
+}
+
+export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string) {
+  const { nodes, filename } = buildAggregatedBreakdown(groups, monthPeriod);
+  const cleanup = mountOffscreen(nodes);
+  try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
 }

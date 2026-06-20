@@ -111,6 +111,40 @@ export interface EmptyProps {
   sub?: string;
 }
 
+export interface MetricCardProps {
+  label: string;
+  value: string | number;
+  unit?: string;
+  icon: string;
+  tone?: "brand" | "success" | "warning" | "danger" | "neutral";
+  sub?: string;
+  onClick?: () => void;
+}
+
+export interface SegmentItem {
+  key: string;
+  label: string;
+  count?: number | null;
+}
+
+export interface SegmentControlProps {
+  items: SegmentItem[];
+  active: string;
+  onChange: (key: string) => void;
+}
+
+export interface InfoRowProps {
+  icon?: string;
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  action?: React.ReactNode;
+  last?: boolean;
+}
+
+export const formatYen = (value: number) => `¥${Math.round(Number(value) || 0).toLocaleString("ja-JP")}`;
+export const formatCount = (value: number | string) => Number(value || 0).toLocaleString("ja-JP");
+
 /* ---------- Top bar ---------- */
 export function TopBar({ title, sub, onBack, right, accent }: TopBarProps) {
   return (
@@ -131,7 +165,7 @@ export function TopBar({ title, sub, onBack, right, accent }: TopBarProps) {
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
         {sub && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-accent)", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "var(--font-mono)" }}>{sub}</div>}
-        <div style={{ fontSize: 19, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{title}</div>
       </div>
       {right}
     </div>
@@ -175,6 +209,103 @@ export function Badge({ children, variant = "neutral", icon, mono }: BadgeProps)
   );
 }
 
+export function MetricCard({ label, value, unit, icon, tone = "neutral", sub, onClick }: MetricCardProps) {
+  const palette = {
+    brand: ["var(--brand-tint)", "var(--brand-accent)", "var(--brand)"],
+    success: ["var(--success-tint)", "var(--success-bright)", "var(--success-bright)"],
+    warning: ["var(--warning-tint)", "var(--warning-bright)", "var(--warning-bright)"],
+    danger: ["var(--danger-tint)", "var(--danger-bright)", "var(--danger-bright)"],
+    neutral: ["var(--surface-2)", "var(--fg)", "var(--border-strong)"],
+  }[tone];
+  const [bg, fg, line] = palette;
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        minWidth: 0,
+        textAlign: "left",
+        border: `1px solid ${tone === "neutral" ? "var(--border)" : "transparent"}`,
+        borderTop: `4px solid ${line}`,
+        background: "var(--surface)",
+        borderRadius: 16,
+        padding: "13px 13px 12px",
+        boxShadow: "var(--shadow-card)",
+        cursor: onClick ? "pointer" : "default",
+        fontFamily: "var(--font-jp)",
+      }}
+      className={onClick ? "active:scale-[0.97] transition-transform" : undefined}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 10, background: bg, color: fg, display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <Icon name={icon} size={18} />
+        </span>
+        {onClick && <Icon name="chevronRight" size={15} color="var(--fg-subtle)" />}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 28, lineHeight: 1, fontWeight: 900, color: fg, fontFamily: "var(--font-mono)", letterSpacing: "0" }}>
+        {value}
+        {unit && <span style={{ marginLeft: 3, fontSize: 12.5, color: "var(--fg-subtle)", fontFamily: "var(--font-jp)", fontWeight: 800 }}>{unit}</span>}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 12, color: "var(--fg-muted)", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      {sub && <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--fg-subtle)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+    </button>
+  );
+}
+
+export function SegmentControl({ items, active, onChange }: SegmentControlProps) {
+  return (
+    <div style={{ display: "flex", gap: 5, background: "var(--surface-2)", padding: 4, borderRadius: 14, border: "1px solid var(--border)" }}>
+      {items.map(item => {
+        const on = active === item.key;
+        return (
+          <button
+            key={item.key}
+            onClick={() => onChange(item.key)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: "9px 4px",
+              minHeight: 44,
+              borderRadius: 10,
+              border: "none",
+              background: on ? "var(--surface)" : "transparent",
+              color: on ? "var(--fg)" : "var(--fg-muted)",
+              fontWeight: 900,
+              fontSize: 12,
+              cursor: "pointer",
+              boxShadow: on ? "var(--shadow-card)" : "none",
+              fontFamily: "var(--font-jp)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span>{item.label}</span>
+            {item.count ? <span style={{ marginLeft: 3, fontFamily: "var(--font-mono)", color: on ? "var(--brand-accent)" : "var(--fg-subtle)" }}>({item.count})</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function InfoRow({ icon, label, value, sub, action, last }: InfoRowProps) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", borderTop: last ? "none" : "1px solid var(--border)" }}>
+      {icon && (
+        <span style={{ width: 36, height: 36, borderRadius: 10, background: "var(--surface-3)", color: "var(--brand-accent)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <Icon name={icon} size={18} />
+        </span>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", fontWeight: 700 }}>{label}</div>
+        <div style={{ fontSize: 14.5, color: "var(--fg)", fontWeight: 800, marginTop: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+        {sub && <div style={{ fontSize: 12.5, color: "var(--fg-muted)", fontWeight: 600, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
 export function statusVariant(s: string) {
   if (["完了", "正常", "受領済", "確認済", "使用中", "支払済", "確認済み", "完了済み"].includes(s)) return "success";
   if (["急ぎ", "期限間近", "予定", "未確認", "整備中", "未払い", "準備中", "検品待ち"].includes(s)) return "warning";
@@ -189,9 +320,10 @@ export function statusVariant(s: string) {
 export function Btn({ children, onClick, variant = "primary", icon, iconRight, full, size = "md", disabled, style }: BtnProps) {
   const pad = size === "lg" ? "16px 22px" : size === "sm" ? "9px 16px" : "13px 20px";
   const fs = size === "lg" ? 17 : size === "sm" ? 14 : 15.5;
+  const minH = size === "lg" ? 56 : size === "sm" ? 44 : 50;
   const base: React.CSSProperties = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9,
-    padding: pad, fontSize: fs, fontWeight: 800, borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer",
+    padding: pad, minHeight: minH, fontSize: fs, fontWeight: 800, borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer",
     width: full ? "100%" : undefined, border: "1px solid transparent", fontFamily: "var(--font-jp)",
     letterSpacing: "0.02em", transition: "transform .12s cubic-bezier(.34,1.56,.64,1), filter .12s", opacity: disabled ? 0.45 : 1,
   };
@@ -206,9 +338,7 @@ export function Btn({ children, onClick, variant = "primary", icon, iconRight, f
     <button
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      onMouseDown={e => !disabled && (e.currentTarget.style.transform = "scale(0.95)")}
-      onMouseUp={e => (e.currentTarget.style.transform = "scale(1)")}
-      onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+      className={disabled ? undefined : "active:scale-95"}
       style={{ ...base, ...variants[variant], ...style }}
     >
       {icon && <Icon name={icon} size={fs + 3} stroke={2.4} />}
@@ -221,8 +351,10 @@ export function Btn({ children, onClick, variant = "primary", icon, iconRight, f
 /* ---------- Card ----------
    Flip7 デザイン: 白背景・角丸24px・ティールグロー影・左6pxのアクセントバー。 */
 export function Card({ children, onClick, style, pad = 16, accent, className }: CardProps) {
+  // タップ可能な Card は MetricCard と同じく押下フィードバックを付ける。
+  const cls = [onClick ? "active:scale-[0.99] transition-transform" : "", className].filter(Boolean).join(" ") || undefined;
   return (
-    <div onClick={onClick} className={className} style={{
+    <div onClick={onClick} className={cls} role={onClick ? "button" : undefined} style={{
       background: "var(--surface)", border: "1px solid var(--border)",
       borderRadius: 24, padding: pad, boxShadow: "var(--shadow-card)",
       cursor: onClick ? "pointer" : undefined, position: "relative", overflow: "hidden",
@@ -260,26 +392,35 @@ export function Overline({ children, style }: { children: React.ReactNode; style
 /* ---------- Stepper ---------- */
 export function Stepper({ steps, current }: StepperProps) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 0, padding: "4px 2px 2px" }}>
-      {steps.map((s, i) => {
-        const done = i < current, now = i === current;
-        return (
-          <React.Fragment key={i}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0, width: 30 }}>
-              <div style={{
-                width: 26, height: 26, borderRadius: 99, display: "grid", placeItems: "center",
-                background: done ? "var(--brand)" : now ? "var(--brand-tint)" : "var(--surface-2)",
-                border: now ? "2px solid var(--brand)" : `1px solid ${done ? "var(--brand)" : "var(--border)"}`,
-                color: done ? "var(--on-brand)" : now ? "var(--brand-accent)" : "var(--fg-subtle)",
-                fontSize: 12, fontWeight: 800,
-              }}>
-                {done ? <Icon name="check" size={15} stroke={3} /> : i + 1}
+    <div style={{ padding: "4px 2px 2px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+        {steps.map((s, i) => {
+          const done = i < current, now = i === current;
+          return (
+            <React.Fragment key={i}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0, width: 30 }}>
+                <div style={{
+                  width: 26, height: 26, borderRadius: 99, display: "grid", placeItems: "center",
+                  background: done ? "var(--brand)" : now ? "var(--brand-tint)" : "var(--surface-2)",
+                  border: now ? "2px solid var(--brand)" : `1px solid ${done ? "var(--brand)" : "var(--border)"}`,
+                  color: done ? "var(--on-brand)" : now ? "var(--brand-accent)" : "var(--fg-subtle)",
+                  fontSize: 12, fontWeight: 800,
+                }}>
+                  {done ? <Icon name="check" size={15} stroke={3} /> : i + 1}
+                </div>
               </div>
-            </div>
-            {i < steps.length - 1 && <div style={{ flex: 1, height: 2, borderRadius: 2, background: i < current ? "var(--brand)" : "var(--border)" }} />}
-          </React.Fragment>
-        );
-      })}
+              {i < steps.length - 1 && <div style={{ flex: 1, height: 2, borderRadius: 2, background: i < current ? "var(--brand)" : "var(--border)" }} />}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {/* 現在のステップ名を表示（番号だけだと現在地が分かりづらいため）。 */}
+      {steps[current] != null && (
+        <div style={{ textAlign: "center", marginTop: 7, fontSize: 11.5, fontWeight: 800, color: "var(--fg)" }}>
+          <span style={{ color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginRight: 6 }}>{current + 1}/{steps.length}</span>
+          {steps[current]}
+        </div>
+      )}
     </div>
   );
 }
@@ -290,7 +431,8 @@ export function BottomNav({ tabs, active, onChange }: BottomNavProps) {
   return (
     <div style={{
       display: "flex", borderTop: "1px solid var(--border)", background: "var(--surface)",
-      padding: "8px 6px 6px", flexShrink: 0, boxShadow: "var(--shadow-pop)",
+      // 端末のジェスチャー/ホームインジケータ分の余白を確保（Android 15+ のエッジツーエッジでタブが隠れるのを防ぐ）。
+      padding: "8px 6px calc(6px + env(safe-area-inset-bottom))", flexShrink: 0, boxShadow: "var(--shadow-pop)",
     }}>
       {tabs.map(t => {
         const on = t.key === active;
@@ -310,7 +452,7 @@ export function BottomNav({ tabs, active, onChange }: BottomNavProps) {
               <Icon name={t.icon} size={21} stroke={on ? 2.4 : 2} />
             </span>
             <span style={{ fontSize: 11, fontWeight: on ? 800 : 600, fontFamily: "var(--font-jp)" }}>{t.label}</span>
-            {t.badge ? <span style={{ position: "absolute", top: -2, right: "50%", marginRight: -22, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 99, background: "var(--danger)", color: "#fff", fontSize: 10, fontWeight: 800, display: "grid", placeItems: "center", fontFamily: "var(--font-mono)", border: "2px solid var(--surface)" }}>{t.badge}</span> : null}
+            {t.badge ? <span style={{ position: "absolute", top: -2, right: "50%", marginRight: -22, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 99, background: "var(--danger)", color: "#fff", fontSize: 10, fontWeight: 800, display: "grid", placeItems: "center", fontFamily: "var(--font-mono)", border: "2px solid var(--surface)" }}>{t.badge > 99 ? "99+" : t.badge}</span> : null}
           </button>
         );
       })}
@@ -356,7 +498,7 @@ export function ItemRow({ icon, image, name, qty, qtyUnit = "個", right, sub, t
         )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--fg)", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{name}</div>
         {sub && <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 1 }}>{sub}</div>}
       </div>
       {right !== undefined ? right : (
@@ -370,6 +512,41 @@ export function ItemRow({ icon, image, name, qty, qtyUnit = "個", right, sub, t
 
 /* ---------- Bottom sheet ---------- */
 export function Sheet({ open, onClose, title, children }: SheetProps) {
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+
+    let disposed = false;
+    let nativeBackHandle: { remove: () => Promise<void> } | null = null;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    import("@capacitor/app")
+      .then(({ App }) => App.addListener("backButton", () => onCloseRef.current()))
+      .then(handle => {
+        if (disposed) {
+          void handle.remove();
+          return;
+        }
+        nativeBackHandle = handle;
+      })
+      .catch(() => {
+        // Browser preview does not need Capacitor's native back-button listener.
+      });
+    return () => {
+      disposed = true;
+      window.removeEventListener("keydown", handleKeyDown);
+      void nativeBackHandle?.remove();
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 60, display: "flex", flexDirection: "column", justifyContent: "flex-end", background: "var(--scrim)", animation: "fadeIn .16s ease" }}>
@@ -579,8 +756,8 @@ function stepBtnStyle(dis: boolean, kind: "minus" | "plus", size: number): React
 
 export function QtyStepper({ value, max, onChange }: { value: number; max: number; onChange: (v: number) => void }) {
   const btn = (dir: number, ic: "minus" | "plus", dis: boolean) => (
-    <button disabled={dis} onClick={() => onChange(Math.max(0, value + dir))} style={stepBtnStyle(dis, ic, 32)}>
-      <Icon name={ic} size={16} stroke={2.6} />
+    <button disabled={dis} onClick={() => onChange(Math.max(0, value + dir))} style={stepBtnStyle(dis, ic, 40)}>
+      <Icon name={ic} size={18} stroke={2.6} />
     </button>
   );
   return (
@@ -594,8 +771,8 @@ export function QtyStepper({ value, max, onChange }: { value: number; max: numbe
 
 export function NumStepper({ value, onChange, min = 1, max = 999, danger }: { value: number; onChange: (v: number) => void; min?: number; max?: number; danger?: boolean }) {
   const btn = (dir: number, ic: "minus" | "plus", dis: boolean) => (
-    <button disabled={dis} onClick={() => onChange(Math.min(max, Math.max(min, value + dir)))} style={stepBtnStyle(dis, ic, 30)}>
-      <Icon name={ic} size={15} stroke={2.8} />
+    <button disabled={dis} onClick={() => onChange(Math.min(max, Math.max(min, value + dir)))} style={stepBtnStyle(dis, ic, 40)}>
+      <Icon name={ic} size={17} stroke={2.8} />
     </button>
   );
   return (
@@ -670,7 +847,7 @@ export const REASON_ICON: Record<string, string> = { "破損あり": "alert", "�
 
 export interface DamageReportSheetProps {
   open: boolean;
-  product?: { id: string; name: string; qr?: string; icon?: string; report?: any[] };
+  product?: { id: string; name: string; qr?: string; icon?: string; report?: any[]; expected?: number; quantity?: number };
   onClose: () => void;
   onSave: (entries: any[]) => void;
 }
@@ -688,6 +865,9 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
   const used = entries.map(e => e.reason);
   const remaining = DAMAGE_REASONS.filter(r => !used.includes(r));
   const totalQty = entries.reduce((a, e) => a + e.qty, 0);
+  // 報告数量はレンタル数量（予定数）を上限にする。区分をまたいだ合計も予定数を超えない
+  //（不足・破損の合計が貸出数を超えると弁償費が過大計上されるため）。
+  const capQty = (() => { const c = Number(product.expected ?? product.quantity); return Number.isFinite(c) && c > 0 ? c : 999; })();
 
   const addEntry = (reason: string) => setEntries(es => [...es, { key: Date.now() + reason, reason, qty: 1, photos: [], note: "" }]);
   const removeEntry = (key: string) => setEntries(es => es.filter(e => e.key !== key));
@@ -717,7 +897,7 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px 12px" }}>
                 <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--fg-muted)" }}>個数</span>
-                <NumStepper value={e.qty} min={1} onChange={v => patchEntry(e.key, { qty: v })} danger />
+                <NumStepper value={e.qty} min={1} max={Math.max(1, capQty - (totalQty - e.qty))} onChange={v => patchEntry(e.key, { qty: v })} danger />
               </div>
               <Overline style={{ marginBottom: 8 }}>写真（{e.reason}）</Overline>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginBottom: 11 }}>

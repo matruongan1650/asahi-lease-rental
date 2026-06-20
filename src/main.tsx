@@ -2,10 +2,11 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import './lib/taxSync'; // 設定の消費税率を請求計算へ反映（side-effect）
 
 // 一度だけ実行: 既存の注文データ（admin/staff/customer 共通）をローカルから削除する。
-// Firebase を無効化（ローカル運用）に切り替えたため、古いキャッシュをクリアして
-// 注文を空の状態から始める。再実行したい場合は localStorage の "orders_reset_v1" を削除。
+// XServer 実データ運用へ移行したため、古いキャッシュをクリアする。
+// 再実行したい場合は localStorage の "orders_reset_v1" を削除。
 try {
   if (!localStorage.getItem('orders_reset_v1')) {
     localStorage.removeItem('order_history_v3'); // 顧客側 (OrderContext)
@@ -41,7 +42,7 @@ try {
   console.warn('[main] 持込返却キャッシュのクリアに失敗しました。', e);
 }
 
-// 一度だけ実行: 実データ運用への完全移行（Firebase 廃止・モック全廃）に伴い、
+// 一度だけ実行: 実データ運用への完全移行（モック全廃）に伴い、
 // 過去に seed されたモックコレクションと注文キャッシュをローカルから削除する。
 // サーバー(MySQL)側は別途クリア済み。再実行したい場合は "mock_purge_v1" を削除。
 try {

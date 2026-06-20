@@ -4,6 +4,7 @@ import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminCollection, useAdminOrders } from "../../context/AdminDataContext";
 import OrderBus from "../../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
+import { settleReturnStock } from "../../utils/stockLedger";
 import { usePagedList } from "../../hooks/usePagedList";
 
 type RecoveryView = "schedule" | "partial" | "full" | "inspection";
@@ -96,8 +97,20 @@ export default function AdminRecovery() {
       triggerToast("契約が見つかりませんでした", "err");
       return;
     }
-    OrderBus.patch("orders", id, { status: "返却済み", staffStatus: "回収完了", returnRequestType: "full" });
-    triggerToast(`${row.id} の回収を完了にしました`, "ok");
+    // ライブの注文で現在ステータスを確認し、二度押し・多端末での再処理（ステータス巻き戻し）を防ぐ。
+    const live = (OrderBus.getAll<any>("orders").find((o: any) => o && (o.id === id || o.firestoreId === id)))
+      || (orders || []).find((o: any) => o && (o.id === id || o.firestoreId === id));
+    if (live && ["検品待ち", "一部返却", "返却済", "返却済み", "完了", "キャンセル"].includes(String(live.status))) {
+      triggerToast(`${row.id} はすでに処理済みです`, "info");
+      return;
+    }
+    // 回収完了 → 倉庫の「最終検品」待ちへ。在庫はここでは戻さない（業務要件）。
+    // 最終検品が完了したとき（restoreOrderStock）に良品分のみ入庫する。
+    // status:"検品待ち" によりスタッフの倉庫検品キュー（StaffJobList warehouse）へ載る。
+    // 既に「一部返却」要求の注文は partial を維持（full で上書きしない）。
+    const returnRequestType = live?.returnRequestType === "partial" ? "partial" : "full";
+    OrderBus.patch("orders", id, { status: "検品待ち", staffStatus: "回収完了", returnRequestType });
+    triggerToast(`${row.id} を回収完了 → 倉庫最終検品待ちにしました`, "ok");
   };
 
   const views = [
@@ -240,7 +253,8 @@ export default function AdminRecovery() {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          const flags = settleReturnStock(selectedOrder, status);
+          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

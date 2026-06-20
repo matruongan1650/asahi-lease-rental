@@ -4,6 +4,10 @@ import AdminDocDrawer from "../../components/AdminDocDrawer";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
+import OrderBus from "../../lib/orderBus";
+import { confirmDialog } from "../../components/AppDialog";
+import { deductOrderStock } from "../../utils/stockLedger";
+import { getTaxRate } from "../../utils/billing";
 
 type SalesView = "all" | "pending" | "confirmed" | "closed";
 
@@ -75,12 +79,74 @@ export default function AdminSales() {
   const handleConfirm = (row: any) => {
     const id = row._raw?.firestoreId || row._raw?.id;
     if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
-    liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "出庫予定" });
-    triggerToast(`${row.id} を販売受注として確定しました`, "ok");
+    // 受注確定 = 現物在庫を減算（出庫）。最新の注文を解決してから台帳を更新する。
+    const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id || o.orderNumber === id)) || row._raw;
+    const flags = deductOrderStock(raw);
+    liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "出庫予定", ...flags });
+    triggerToast(`${row.id} を販売受注として確定し、在庫を出庫しました`, "ok");
+    setTimeout(refresh, 300);
+  };
+
+  // 受注待ちの販売注文を却下する。staffStatus は付けないためスタッフ APK には配信されない。
+  const handleReject = async (row: any) => {
+    const id = row._raw?.firestoreId || row._raw?.id;
+    if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
+    const ok = await confirmDialog(`${row.id} を却下しますか？\nこの注文は出庫手配されず、キャンセル扱いになります。`, {
+      okText: "却下する",
+      cancelText: "戻る",
+      danger: true,
+    });
+    if (!ok) return;
+    liveOrders.patchOrder(id, { status: "キャンセル", staffStatus: "" });
+    triggerToast(`${row.id} を却下しました`, "ok");
     setTimeout(refresh, 300);
   };
 
   const openDetail = (row: any) => setSelectedOrder(row._raw);
+
+  // 販売契約/請求書ドキュメント作成を実データとして永続化する（以前はトーストのみの no-op）。
+  const handleDocCreate = (doc: any) => {
+    if (doc.kind === "sale-contract") {
+      const items = (doc.lineItems || []).map((li: any) => ({
+        id: "it-" + li.id,
+        name: li.name,
+        type: "buy",
+        quantity: Number(li.qty) || 0,
+        buyPrice: Number(li.price) || 0,
+      }));
+      const subtotal = items.reduce((s: number, it: any) => s + it.quantity * it.buyPrice, 0);
+      const tax = Math.floor(subtotal * getTaxRate());
+      const orderRecord = {
+        orderNumber: doc.id,
+        companyName: doc.customer,
+        siteName: doc.site,
+        items,
+        subtotal,
+        tax,
+        total: subtotal + tax,
+        status: "確認済み",
+        orderType: "buy",
+        date: doc.date,
+        createdAt: new Date().toISOString(),
+      };
+      // 販売契約の作成 = 受注確定（確認済み）。現物在庫を出庫し、フラグを付けて push する。
+      const flags = deductOrderStock(orderRecord);
+      OrderBus.push("orders", { ...orderRecord, ...flags });
+      triggerToast(`販売契約 ${doc.id} を作成し、在庫を出庫しました`, "ok");
+      setTimeout(refresh, 300);
+    } else if (doc.kind === "sale-invoice") {
+      OrderBus.push("issuedInvoices", {
+        id: doc.id,
+        type: "sale",
+        customer: doc.customer,
+        amount: doc.amount,
+        items: doc.lineItems || [],
+        issuedAt: new Date().toISOString(),
+        date: doc.date,
+      });
+      triggerToast(`請求書 ${doc.id} を発行しました`, "ok");
+    }
+  };
 
   const views = [
     { id: "all" as const, label: "すべて", icon: "list", count: counts.all },
@@ -162,7 +228,16 @@ export default function AdminSales() {
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center justify-end gap-2">
                       {viewFor(String(row.status || "")) === "pending" && (
-                        <Btn size="sm" variant="primary" icon="check" onClick={() => handleConfirm(row)}>受注確定</Btn>
+                        <>
+                          <Btn size="sm" variant="primary" icon="check" onClick={() => handleConfirm(row)}>受注確定</Btn>
+                          <button
+                            onClick={() => handleReject(row)}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-black text-rose-600 hover:bg-rose-100"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">block</span>
+                            却下
+                          </button>
+                        </>
                       )}
                       <button onClick={() => setDrawer({ kind: "sale-invoice", customer: row.customer })} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 hover:bg-slate-50">
                         <span className="material-symbols-outlined text-[16px]">receipt</span>
@@ -188,13 +263,16 @@ export default function AdminSales() {
         </div>
       </div>
 
-      <AdminDocDrawer open={!!drawer} kind={drawer?.kind || null} presetCustomer={drawer?.customer} onClose={() => setDrawer(null)} />
+      <AdminDocDrawer open={!!drawer} kind={drawer?.kind || null} presetCustomer={drawer?.customer} onClose={() => setDrawer(null)} onCreate={handleDocCreate} />
       <AdminOrderDrawer
         open={!!selectedOrder}
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          // ドロワーの「手配する」(処理中→確認済み) も受注確定。出庫を確実に行う。
+          const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
+          const flags = status === "確認済み" ? deductOrderStock(raw) : {};
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);
         }}

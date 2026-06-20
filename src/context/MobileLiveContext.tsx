@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from "react";
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useRef } from "react";
 import OrderBus from "../lib/orderBus";
 import { getProductQrCode } from "../utils/productQr";
+import { deductOrderStock } from "../utils/stockLedger";
 
 // ---------------------------------------------------------------------------
 // Mock Data (matching project reference)
@@ -96,10 +97,13 @@ export const STOCK_MOVES = [
 // 持込返却（持込対応）はモックを使わず、実データのみ（顧客が直接持ち込んだ返却で作成された
 // walkinReturns）を使用する。以前のモック WALKIN_RETURNS 定数は削除済み。
 
-// Helper to count countdown days from 2026/06/02
+// 実日付（ローカル深夜0時）基準で残り日数を数える。
+// 以前は固定日 2026/06/02 を基準にしていたため、車検・保険・点検の「残り日数」が
+// 日が経つほどズレていた（admin 側は実日付基準で不一致だった）。
 export function daysUntil(dateStr: string): number | null {
   if (!dateStr) return null;
-  const t = new Date(2026, 5, 2).getTime();
+  const now = new Date();
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const [y, m, d] = dateStr.split("/").map(Number);
   const expiry = new Date(y, m - 1, d).getTime();
   return Math.round((expiry - t) / 86400000);
@@ -114,7 +118,7 @@ interface MobileLiveContextProps {
   liveDeliveries: any[];
   liveRecoveries: any[];
   completeDelivery: (id: string, signature?: string | null, photos?: any[], extra?: any) => void;
-  completeRecovery: (id: string, signature?: string | null, photos?: any[]) => void;
+  completeRecovery: (id: string, signature?: string | null, photos?: any[], inspected?: any[], staffName?: string, extra?: any) => void;
   vehicles: any[];
   recordVehicleShaken: (plate: string, updates: any) => void;
   products: any[];
@@ -126,8 +130,14 @@ interface MobileLiveContextProps {
   returnInspections: any[];
   stockMoves: any[];
   recordMaintenance: (id: string, updates: any) => void;
-  addStockMove: (type: string, details: { item: string; qty: number; ref?: string; icon?: string }) => void;
+  addStockMove: (type: string, details?: { item: string; qty: number; ref?: string; icon?: string }, operator?: string) => void;
   pushFieldReports: (reports: any[]) => void;
+  /** 直前に完了した現場回収を取り消す（誤操作の訂正）。最終検品キューも削除し状態を戻す。 */
+  undoRecovery: (orderId: string) => void;
+  /** 車両の稼働状態を変更。整備中にした場合は admin の整備キューにも登録する。 */
+  setVehicleStatus: (plate: string, status: string) => void;
+  /** 現場棚卸セッションを admin の棚卸履歴へ記録する。 */
+  recordStocktakeSession: (session: Record<string, any>) => void;
 }
 
 const MobileLiveContext = createContext<MobileLiveContextProps | null>(null);
@@ -142,6 +152,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const [returnInspections, setReturnInspections] = useState<any[]>([]);
   const [stockInRows, setStockIn] = useState<any[]>([]);
   const [stockOutRows, setStockOut] = useState<any[]>([]);
+  const completedDeliveryIdsRef = useRef<Set<string>>(new Set());
 
   // Subscriptions & Seeding
   useEffect(() => {
@@ -198,10 +209,19 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   // 返却済・検品待ち・一部返却・配送済みの注文は「これから配送する」対象ではないため除外する
   // （-R 返却分注文などが staffStatus 未設定のまま配送予定に出る「幽霊タスク」を防ぐ）。
   const DELIVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "一部返却", "検品待ち", "配送済み", "レンタル中"];
+  // スタッフ（APK）へは「受注確定」後のみ配信する。
+  // 受注確定 = admin が status:"確認済み" + staffStatus:"配送予定" にした注文。
+  // 顧客が出した直後の "処理中"（staffStatus 未設定）や却下/キャンセル分は配送タスクに出さない。
+  const DELIVERY_CONFIRMED_STATUS = ["確認済み", "確認済", "準備中", "配送予定", "配送中"];
   // 注文が多いと毎レンダーでの再計算が重い。入力（rawOrders）が変わった時だけ再計算する。
   const liveDeliveries = useMemo(() => [
     ...rawOrders
-      .filter(o => o.status && !DELIVERY_EXCLUDED_STATUS.includes(o.status) && (!o.staffStatus || o.staffStatus === "未割当" || o.staffStatus === "配送予定"))
+      .filter(o => {
+        if (!o.status || DELIVERY_EXCLUDED_STATUS.includes(o.status)) return false;
+        const ss = String((o as any).staffStatus || "");
+        // 受注確定済みのみ: status が確定系、または staffStatus が配送系/割当済み。
+        return DELIVERY_CONFIRMED_STATUS.includes(o.status) || ss === "配送予定" || ss === "配送中" || ss === "割当済み";
+      })
       .map(o => ({
         id: o.orderNumber || o.id || o.firestoreId,
         firestoreId: o.firestoreId || o.id,
@@ -230,21 +250,32 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
   // 返却済・検品待ち・完了などの注文や、未返却のレンタル品が残っていない注文は
   // 回収対象ではないため除外（-R 返却分注文が回収予定に出る「幽霊タスク」を防ぐ）。
-  const RECOVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "検品待ち"];
+  // 未確定（処理中/注文確認中）の注文は回収タスクにも出さない（受注確定後のみスタッフへ）。
+  const RECOVERY_EXCLUDED_STATUS = ["完了", "キャンセル", "返却済", "返却済み", "検品待ち", "処理中", "注文確認中"];
   const liveRecoveries = useMemo(() => [
     ...rawOrders
       .filter(o => {
         if (!o.rentalEndDate) return false;
         if (o.status && RECOVERY_EXCLUDED_STATUS.includes(o.status)) return false;
         if (o.staffStatus === "回収完了") return false;
+        const requestedReturn = o.requestedReturn || {};
+        const hasRequestedReturn = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
         // 未返却のレンタル品が 1 つも無ければ回収するものが無い
         const hasUnreturnedRent = (o.items || []).some(
-          (i: any) => i && i.type === "rent" && ((i.quantity || 0) - (i.returnedQuantity || 0)) > 0
+          (i: any) => {
+            if (!i || i.type !== "rent") return false;
+            const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+            if (remaining <= 0) return false;
+            return !hasRequestedReturn || Number(requestedReturn[i.id] || 0) > 0;
+          }
         );
         if (!hasUnreturnedRent) return false;
-        const end = new Date(o.rentalEndDate).getTime();
-        const now = new Date().getTime();
-        const daysLeft = Math.floor((end - now) / 86400000);
+        // JST日付境界で残日数を計算する。new Date("YYYY-MM-DD") は UTC 0時、new Date() は端末ローカル時刻で
+        // 9時間ずれ、Math.floor と相まって回収窓が1日早/遅れる。"/"区切りでローカル0時にし、今日のローカル0時と比較する。
+        const end = new Date(String(o.rentalEndDate).replace(/-/g, "/")).getTime();
+        const nowD = new Date();
+        const t0 = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate()).getTime();
+        const daysLeft = Math.floor((end - t0) / 86400000);
         return daysLeft <= 7 || o.staffStatus === "回収予定";
       })
       .map(o => ({
@@ -260,7 +291,20 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         phone: "",
         contact: ((o.personLastName || "") + " " + (o.personFirstName || "")).trim() || o.personName || o.companyName || "",
         note: "",
-        products: (o.items || []).filter((i: any) => i.type === "rent").map((i: any, idx: number) => {
+        products: (o.items || [])
+          .filter((i: any) => {
+            if (!i || i.type !== "rent") return false;
+            const requestedReturn = o.requestedReturn || {};
+            const hasRequestedReturn = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
+            const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+            return remaining > 0 && (!hasRequestedReturn || Number(requestedReturn[i.id] || 0) > 0);
+          })
+          .map((i: any, idx: number) => {
+          const requestedReturn = o.requestedReturn || {};
+          const hasRequestedReturn = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
+          const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+          const requestedQty = Math.max(0, Number(requestedReturn[i.id] || 0));
+          const expectedQty = hasRequestedReturn ? Math.min(requestedQty, remaining) : remaining;
           const master = products.find((p: any) => p && (p.id === i.id || p.name === i.name));
           const id = i.id || master?.id || "P-" + idx;
           return {
@@ -268,7 +312,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
             qr: master ? getProductQrCode(master) : getProductQrCode({ id } as any),
             qrPayload: master?.qrPayload,
             name: i.name,
-            expected: (i.quantity || 1) - (i.returnedQuantity || 0),
+            expected: expectedQty,
             icon: i.category === "カラーコーン" ? "cone" : "package",
             image: i.image,
             category: i.category
@@ -292,13 +336,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
 
   const completeDelivery = (id: string, signature?: string | null, photos?: any[], extra?: any) => {
     const ordersList0 = OrderBus.getAll<any>("orders");
-    const target0 = ordersList0.find(o => o.id === id || o.firestoreId === id);
+    const target0 = ordersList0.find(o => o.id === id || o.firestoreId === id || o.orderNumber === id);
+    if (!target0) return;
+    const deliveryKey = target0?.firestoreId || target0?.id || id;
+    if (completedDeliveryIdsRef.current.has(deliveryKey)) return;
+    if (target0 && (target0.staffStatus === "配送完了" || target0.deliverySignature || target0.signature)) return;
+    completedDeliveryIdsRef.current.add(deliveryKey);
 
     // 配送完了後はレンタル中（実際に貸出中）へ。顧客には「現在レンタル中」と表示される。
     const now = new Date();
     const deliveredDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     // レンタル開始日 = 実際に納品が完了した日。課金はこの日から開始する。
-    const updates: any = { staffStatus: "配送完了", status: "レンタル中", rentalStartDate: deliveredDate };
+    const updates: any = { staffStatus: "配送完了", status: "レンタル中", rentalStartDate: deliveredDate, deliveryConfirmedAt: now.toISOString() };
     // 開始日が変わるため、注文時に計算した請求スナップショットを破棄して再計算させる
     //（getOrGenerateInvoiceBlocks / ensureMonthlyBreakdowns が納品日基準で作り直す）。
     if (target0 && Array.isArray(target0.items)) {
@@ -315,51 +364,104 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (photos && photos.length > 0) updates.deliveryPhotos = photos;
     // 保安車両: 貸出時の走行距離・車両状態の記録（満タンで貸出）
     if (extra && extra.vehicleCheckout) updates.vehicleCheckout = extra.vehicleCheckout;
-    OrderBus.patch("orders", id, updates);
-
-    // Decrement stock and add stock out move
-    const ordersList = OrderBus.getAll<any>("orders");
-    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
-    if (targetOrder && targetOrder.items) {
-      targetOrder.items.forEach((item: any) => {
-        // 商品の特定は id を優先（管理側で商品名を変更しても在庫調整が外れないように）。
-        // 名前一致は id 未設定の旧データ向けフォールバック。回収側（liveRecoveries）と同じ規則。
-        const prod = products.find(p => p && (p.id === item.id || p.name === item.name));
-        const qty = item.quantity || 1;
-        if (prod) {
-          adjustStock(prod.id, -qty);
-          addStockMove("出庫", {
-            item: item.name,
-            qty: qty,
-            ref: `配送 ${targetOrder.orderNumber || targetOrder.id || ""}`,
-            icon: isVehicle(prod) ? "car" : "package"
-          });
-        }
-      });
+    // 受領者不在で完了した場合: サイン無しの根拠（理由）を記録し admin が後追いできるようにする。
+    if (extra && extra.deliveryUnsigned) {
+      updates.deliveryUnsigned = true;
+      updates.deliveryAbsentReason = extra.absentReason || "";
     }
+    // 配送時に報告された破損・不足を注文へ記録（admin の現場報告にも別途 push 済み）。
+    if (extra && extra.deliveryIssues && extra.deliveryIssues.length) {
+      updates.deliveryIssues = extra.deliveryIssues;
+    }
+    // 配送担当者（誰が納品したか）を記録 — admin で確認できるようにする。
+    if (extra && extra.deliveredBy) {
+      updates.deliveredBy = extra.deliveredBy;
+      updates.deliveredAt = now.toISOString();
+    }
+
+    // 在庫は受注確定で出庫済み。配送では減算しない。
+    // 受注確定前モデルの旧注文（未出庫）救済として deductOrderStock を冪等に呼ぶ
+    //（stockDeducted 済みなら何もしない）。出庫伝票（stockOut）も stockLedger 側で作成される。
+    Object.assign(updates, deductOrderStock(target0));
+    OrderBus.patch("orders", deliveryKey, updates);
   };
 
-  const completeRecovery = (id: string, signature?: string | null, photos?: any[]) => {
+  const completeRecovery = (id: string, signature?: string | null, photos?: any[], inspected?: any[], staffName?: string, extra?: any) => {
     // 現場回収の完了 = 注文の終了ではない。
     // 持ち帰った品は倉庫で「最終検品（再検品）」を行ってから確定・請求書発行する。
     // そのため在庫計上もここでは行わず、最終検品完了時（completeReturn）に行う。
+    // inspected = 現場検品の結果（品目ごとの counted / report）。最終検品へ引き継ぎ、
+    // 現場で見つかった不足・破損が最終検品で再入力されなくても弁償・在庫に反映されるようにする。
+    const inspMap: Record<string, any> = {};
+    (inspected || []).forEach((p: any) => { if (p) inspMap[String(p.id || p.name || "")] = p; });
     const ordersList = OrderBus.getAll<any>("orders");
-    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
+    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id || o.orderNumber === id);
+    if (!targetOrder) return;
+    const recoveryKey = targetOrder?.firestoreId || targetOrder?.id || id;
 
-    const updates: any = { staffStatus: "回収完了", status: "検品待ち" };
+    const now = new Date();
+    // 取消(undoRecovery)で正しく戻せるよう、回収前の status を控えておく。
+    const updates: any = { staffStatus: "回収完了", status: "検品待ち", statusBeforeRecovery: targetOrder.status || "レンタル中", collectionConfirmedAt: now.toISOString() };
     if (signature) updates.collectionSignature = signature;
     if (photos && photos.length > 0) updates.collectionPhotos = photos;
-    OrderBus.patch("orders", id, updates);
+    // 回収担当者（誰が回収したか）と、回収時の現場検品(1次検品)担当者を記録する。
+    // 現場回収と現場検品は同一スタッフが行うため collectedBy = fieldInspectedBy。
+    if (staffName) {
+      updates.collectedBy = staffName;
+      updates.fieldInspectedBy = staffName;
+      updates.collectedAt = now.toISOString();
+    }
+    // 受領者不在でサイン無し完了した場合: 根拠（理由）を記録し admin が後追いできるようにする。
+    if (extra && extra.collectionUnsigned) {
+      updates.collectionUnsigned = true;
+      updates.collectionAbsentReason = extra.absentReason || "";
+    }
+    OrderBus.patch("orders", recoveryKey, updates);
 
     // 倉庫の最終検品キューへ登録（stage: "recheck"）
     if (targetOrder) {
+      const requestedReturn = targetOrder.requestedReturn || {};
+      const hasRequestedReturn = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
+      const recoveryProducts = (targetOrder.items || [])
+        .filter((i: any) => {
+          if (!i || i.type !== "rent") return false;
+          const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+          return remaining > 0 && (!hasRequestedReturn || Number(requestedReturn[i.id] || 0) > 0);
+        })
+        .map((i: any, idx: number) => {
+          const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+          const requestedQty = Math.max(0, Number(requestedReturn[i.id] || 0));
+          const expectedQty = hasRequestedReturn ? Math.min(requestedQty, remaining) : remaining;
+          const master = products.find((p: any) => p && (p.id === i.id || p.name === i.name));
+          const itemId = i.id || master?.id || "P-" + idx;
+          // 現場検品結果を引き継ぐ: 現場の counted（実回収数）と report（破損等）を最終検品の初期値にする。
+          const field = inspMap[String(itemId)] || inspMap[String(i.name)];
+          const fieldCounted = field && field.counted != null ? Number(field.counted) : undefined;
+          return {
+            id: itemId,
+            qr: master ? getProductQrCode(master) : getProductQrCode({ id: itemId } as any),
+            qrPayload: master?.qrPayload,
+            name: i.name,
+            expected: expectedQty,
+            // 現場で回収できた数（未指定なら expected）。最終検品で確認・調整する。
+            counted: fieldCounted != null ? Math.min(fieldCounted, expectedQty) : expectedQty,
+            report: Array.isArray(field?.report) ? field.report : [],
+            icon: "package",
+            image: i.image,
+            category: i.category,
+          };
+        });
+      const totalRemaining = (targetOrder.items || [])
+        .filter((i: any) => i && i.type === "rent")
+        .reduce((sum: number, i: any) => sum + Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0)), 0);
+      const totalExpected = recoveryProducts.reduce((sum: number, p: any) => sum + (Number(p.expected) || 0), 0);
+      const returningEverything = totalRemaining > 0 && totalExpected >= totalRemaining;
       // 同じ注文の既存伝票があれば先に削除（二重登録＝幽霊伝票の防止）
       try {
         OrderBus.getAll<any>("walkinReturns")
           .filter(w => w && (w.orderId === targetOrder.id || (targetOrder.orderNumber && w.orderNumber === targetOrder.orderNumber)))
           .forEach(w => OrderBus.remove("walkinReturns", w.id));
       } catch { /* ignore */ }
-      const now = new Date();
       OrderBus.push("walkinReturns", {
         id: "WIN-" + String(targetOrder.orderNumber || targetOrder.id).replace(/[^A-Za-z0-9]/g, "") + "-" + Math.floor(Math.random() * 900 + 100),
         orderId: targetOrder.id,
@@ -377,23 +479,9 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         photos: (photos || [])
           .map((p: any) => (typeof p === "string" ? p : (p && p.dataUrl) || null))
           .filter((u: any) => typeof u === "string" && u.startsWith("data:")),
-        returningEverything: true,
-        products: (targetOrder.items || [])
-          .filter((i: any) => i.type === "rent")
-          .map((i: any, idx: number) => {
-            const master = products.find((p: any) => p && (p.id === i.id || p.name === i.name));
-            const itemId = i.id || master?.id || "P-" + idx;
-            return {
-              id: itemId,
-              qr: master ? getProductQrCode(master) : getProductQrCode({ id: itemId } as any),
-              qrPayload: master?.qrPayload,
-              name: i.name,
-              expected: (i.quantity || 1) - (i.returnedQuantity || 0),
-              icon: "package",
-              image: i.image,
-              category: i.category,
-            };
-          }),
+        requestedReturn,
+        returningEverything,
+        products: recoveryProducts,
       } as any);
     }
   };
@@ -404,6 +492,60 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (v) OrderBus.patch("vehicles", v.id || v.plate, updates);
   };
 
+  const undoRecovery = (orderId: string) => {
+    const ordersList = OrderBus.getAll<any>("orders");
+    const target = ordersList.find(o => o.id === orderId || o.firestoreId === orderId || o.orderNumber === orderId);
+    if (!target) return;
+    const key = target.firestoreId || target.id || orderId;
+    // 回収完了 → 回収予定 に戻す。最終検品キュー(recheck)も削除し、完了前の状態へ復元する。
+    OrderBus.patch("orders", key, {
+      staffStatus: "回収予定",
+      status: target.statusBeforeRecovery || "レンタル中",
+      collectionConfirmedAt: null,
+      collectionSignature: null,
+      collectionPhotos: null,
+      collectedBy: null,
+      fieldInspectedBy: null,
+      collectionUnsigned: null,
+      collectionAbsentReason: null,
+    });
+    try {
+      OrderBus.getAll<any>("walkinReturns")
+        .filter(w => w && w.stage === "recheck" && (w.orderId === target.id || (target.orderNumber && w.orderNumber === target.orderNumber)))
+        .forEach(w => OrderBus.remove("walkinReturns", w.id));
+    } catch { /* ignore */ }
+  };
+
+  const setVehicleStatus = (plate: string, status: string) => {
+    const vehs = OrderBus.getAll<any>("vehicles");
+    const v = vehs.find(x => x.plate === plate || x.id === plate);
+    if (!v) return;
+    OrderBus.patch("vehicles", v.id || v.plate, { status });
+    // 整備中に変更したら admin の整備キューにも登録（重複「予定」は作らない）。
+    if (status === "整備中") {
+      const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const today = jst.toISOString().slice(0, 10);
+      const exists = OrderBus.getAll<any>("maintenance").some(
+        (m: any) => m && (m.plate === v.plate || m.name === (v.model || v.name)) && m.status === "予定",
+      );
+      if (!exists) {
+        OrderBus.push("maintenance", {
+          id: "MNT-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 5),
+          name: v.model || v.name || v.plate,
+          plate: v.plate,
+          cat: v.category || "車両",
+          status: "予定",
+          last: today,
+          note: "現場で整備中に変更(STAFFアプリ)",
+        } as any);
+      }
+    }
+  };
+
+  const recordStocktakeSession = (session: Record<string, any>) => {
+    OrderBus.push("stocktake", session as any);
+  };
+
   const findProductByName = (name: string) => {
     return products.find(p => p && p.name === name);
   };
@@ -411,7 +553,9 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const adjustStock = (firestoreId: string, delta: number) => {
     const prods = OrderBus.getAll<any>("products");
     const p = prods.find(x => x && (x.id === firestoreId || x.firestoreId === firestoreId));
-    if (p) OrderBus.patch("products", p.id, { stock: (p.stock || 0) + delta });
+    // 0 未満にしない（手動出庫/取消で在庫数を上回る減算をしても負値にしない。stockLedger.adjustProductStock と同方針）。
+    if (p) OrderBus.patch("products", p.id, { stock: Math.max(0, (p.stock || 0) + delta) });
+    else console.warn(`[adjustStock] 商品が見つからず在庫調整がスキップされました: id=${firestoreId}, delta=${delta}`);
   };
 
   const setStock = (firestoreId: string, value: number) => {
@@ -424,13 +568,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     OrderBus.patch("maintenance", id, updates);
   };
 
-  const addStockMove = (type: string, { item, qty, ref, icon }: { item: string; qty: number; ref?: string; icon?: string }) => {
+  const addStockMove = (type: string, details?: { item: string; qty: number; ref?: string; icon?: string }, operator?: string) => {
+    const { item, qty, ref, icon } = details || ({} as { item?: string; qty?: number; ref?: string; icon?: string });
+    if (!item) return; // 品目未指定（QR未スキャン等の不正呼び出し）でのクラッシュ／空レコード生成を防ぐ
     const isIn = type === "入庫";
     const now = new Date();
     // 実際の日時を記録する（以前は日付が固定値になっていた）。形式: YYYY/MM/DD HH:MM。
     const date = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
-    const id = `${isIn ? "IN" : "OUT"}-${Math.floor(9000 + Math.random() * 999)}`;
-    const staffName = STAFF.souko.name;
+    // 衝突しにくいID。約999通り(IN/OUT-9000..9998)では入出庫が数百件で重複し、サーバ upsert で
+    // 同一IDの古い在庫履歴を上書き(消失)するため、タイムスタンプ+乱数で採番する。
+    const id = `${isIn ? "IN" : "OUT"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    // 実際にログインしているスタッフ名を記録（未指定時のみモックにフォールバック）。
+    const staffName = operator || STAFF.souko.name;
     // 区分は発生元（ref）から推定: 配送→レンタル(出庫) / 回収・返却→回収戻し(入庫) / それ以外→手動。
     const r = ref || "";
     let category = "手動" + type;
@@ -452,15 +601,16 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const stockMoves = useMemo(() => [
-    ...stockInRows.map(r => ({ id: r.id, type: "入庫", item: r.item, qty: r.qty, time: (r.date || "").slice(-5), ref: r.src || r.type || "", icon: r.icon || "boxIn", seq: r.seq || 0 })),
-    ...stockOutRows.map(r => ({ id: r.id, type: "出庫", item: r.item, qty: r.qty, time: (r.date || "").slice(-5), ref: r.dst || r.type || "", icon: r.icon || "boxOut", seq: r.seq || 0 })),
+    ...stockInRows.map(r => ({ id: r.id, type: "入庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.src || r.type || "", icon: r.icon || "boxIn", seq: r.seq || 0 })),
+    ...stockOutRows.map(r => ({ id: r.id, type: "出庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.dst || r.type || "", icon: r.icon || "boxOut", seq: r.seq || 0 })),
   ].sort((a, b) => (b.seq || 0) - (a.seq || 0)), [stockInRows, stockOutRows]);
 
   return (
     <MobileLiveContext.Provider value={{
       connected, liveDeliveries, liveRecoveries, completeDelivery, completeRecovery,
       vehicles, recordVehicleShaken, products, findProductByName, adjustStock, setStock,
-      maint, walkin, returnInspections, stockMoves, recordMaintenance, addStockMove, pushFieldReports
+      maint, walkin, returnInspections, stockMoves, recordMaintenance, addStockMove, pushFieldReports,
+      undoRecovery, setVehicleStatus, recordStocktakeSession
     }}>
       {children}
     </MobileLiveContext.Provider>

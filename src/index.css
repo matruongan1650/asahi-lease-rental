@@ -79,10 +79,10 @@
    ──────────────────────────────────────────────────────── */
 :root {
   /* Brand tokens */
-  --brand:        #3A4DE8;
-  --brand-strong: #141ED2;
-  --brand-accent: #8C9CFF;
-  --brand-tint:   rgba(58, 77, 232, 0.16);
+  --brand:        #2BA8A2;
+  --brand-strong: #1E8C86;
+  --brand-accent: #FFD23F;
+  --brand-tint:   rgba(43, 168, 162, 0.14);
 
   /* Radius scale */
   --radius-xs:   3px;
@@ -460,7 +460,155 @@ body {
 }
 
 /* ────────────────────────────────────────────────────────
-   9. Keyframe Animations
+   9. Admin Flip7 Theme Polish
+   ──────────────────────────────────────────────────────── */
+.admin-shell {
+  --admin-primary: #2BA8A2;
+  --admin-primary-dark: #1E8C86;
+  --admin-primary-bg: #E8F6F5;
+  --admin-gold: #FFD23F;
+  --admin-gold-soft: #FFF8E7;
+  --admin-coral: #EF6C4A;
+  --admin-coral-dark: #D45233;
+  --admin-sky: #5DADE2;
+  --admin-ink: #173B38;
+  --admin-muted: #46706C;
+  --admin-subtle: #7CA39F;
+  --admin-border: #CFE6E3;
+}
+
+.admin-shell h1,
+.admin-shell h2,
+.admin-shell h3,
+.admin-shell h4 {
+  letter-spacing: 0;
+}
+
+.admin-shell .rounded-2xl,
+.admin-shell .rounded-xl {
+  border-radius: 8px !important;
+}
+
+.admin-shell [class*="border-slate-"],
+.admin-shell [class*="divide-slate-"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--admin-border) !important;
+}
+
+.admin-shell .shadow-sm,
+.admin-shell .shadow-md {
+  box-shadow: 0 4px 20px rgba(43, 168, 162, 0.08) !important;
+}
+
+.admin-shell .bg-white {
+  background-color: #FFFFFF !important;
+}
+
+.admin-shell .bg-slate-50,
+.admin-shell .bg-slate-50\/60,
+.admin-shell .bg-slate-50\/70,
+.admin-shell .bg-slate-50\/80 {
+  background-color: #F7FBFA !important;
+}
+
+.admin-shell .bg-slate-100,
+.admin-shell .bg-slate-200 {
+  background-color: #E8F6F5 !important;
+}
+
+.admin-shell [class*="text-slate-800"],
+.admin-shell [class*="text-slate-900"] {
+  color: var(--admin-ink) !important;
+}
+
+.admin-shell [class*="text-slate-700"],
+.admin-shell [class*="text-slate-600"],
+.admin-shell [class*="text-slate-500"] {
+  color: var(--admin-muted) !important;
+}
+
+.admin-shell [class*="text-slate-400"] {
+  color: var(--admin-subtle) !important;
+}
+
+.admin-shell [class*="bg-blue-50"],
+.admin-shell [class*="bg-indigo-50"] {
+  background-color: rgba(43, 168, 162, 0.12) !important;
+}
+
+.admin-shell [class*="text-blue-"],
+.admin-shell [class*="text-indigo-"] {
+  color: var(--admin-primary-dark) !important;
+}
+
+.admin-shell [class*="border-blue-"],
+.admin-shell [class*="border-indigo-"] {
+  border-color: rgba(43, 168, 162, 0.35) !important;
+}
+
+.admin-shell [class*="bg-blue-500"],
+.admin-shell [class*="bg-blue-600"],
+.admin-shell [class*="bg-blue-700"],
+.admin-shell [class*="bg-indigo-500"],
+.admin-shell [class*="bg-indigo-600"],
+.admin-shell [class*="bg-indigo-700"] {
+  background-color: var(--admin-primary) !important;
+  color: #FFFFFF !important;
+}
+
+.admin-shell [class*="bg-purple-50"] {
+  background-color: rgba(93, 173, 226, 0.14) !important;
+}
+
+.admin-shell [class*="text-purple-"] {
+  color: #2F79A8 !important;
+}
+
+.admin-shell [class*="bg-amber-50"],
+.admin-shell [class*="bg-orange-50"] {
+  background-color: rgba(255, 210, 63, 0.22) !important;
+}
+
+.admin-shell [class*="text-amber-"],
+.admin-shell [class*="text-orange-"] {
+  color: #8A6A00 !important;
+}
+
+.admin-shell [class*="bg-amber-500"],
+.admin-shell [class*="bg-orange-500"] {
+  background-color: var(--admin-gold) !important;
+  color: #4A3800 !important;
+}
+
+.admin-shell [class*="bg-red-50"] {
+  background-color: rgba(239, 108, 74, 0.12) !important;
+}
+
+.admin-shell [class*="text-red-"] {
+  color: var(--admin-coral-dark) !important;
+}
+
+.admin-shell [class*="bg-red-500"],
+.admin-shell [class*="bg-red-600"] {
+  background-color: var(--admin-coral) !important;
+  color: #FFFFFF !important;
+}
+
+.admin-shell table thead {
+  background-color: var(--admin-gold-soft);
+}
+
+.admin-shell table tbody tr:hover {
+  background-color: rgba(232, 246, 245, 0.72) !important;
+}
+
+.admin-shell input,
+.admin-shell select,
+.admin-shell textarea {
+  border-color: #B5DAD6;
+}
+
+/* ────────────────────────────────────────────────────────
+   10. Keyframe Animations
    ──────────────────────────────────────────────────────── */
 @keyframes fadeIn {
   from {
@@ -510,5 +658,44 @@ body {
   }
   100% {
     background-position: 200% 0;
+  }
+}
+
+/* スタッフアプリで参照されていたが未定義だったアニメーション。
+   Sheet（ボトムシート）のせり上がり、QR スキャン線、完了バッジのポップ。 */
+@keyframes sheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-66px);
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(66px);
+    opacity: 0.45;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
   }
 }

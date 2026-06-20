@@ -15,8 +15,9 @@ import {
   Row,
   triggerToast
 } from "../../components/AdminUI";
-import { FMT, VENDOR_HISTORY } from "../../data/adminMockData";
+import { FMT } from "../../data/adminMockData";
 import { KV, DetailHead } from "./AdminSuppliers";
+import { confirmDialog } from "../../components/AppDialog";
 import OrderBus from "../../lib/orderBus";
 
 export default function AdminVendors() {
@@ -24,15 +25,21 @@ export default function AdminVendors() {
   const [tab, setTab] = useState("info");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { rows: vendors, live } = useAdminCollection("vendors");
+  // 修理履歴・件数は repairs ストアから業者名で実データを集計する（モックを廃止）。
+  const { rows: repairs } = useAdminCollection("repairs");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  // State for add vendor form
+  // State for add/edit vendor form
   const [newVendorName, setNewVendorName] = useState("");
   const [newVendorCat, setNewVendorCat] = useState("金属・溶接");
   const [newVendorTel, setNewVendorTel] = useState("");
   const [newVendorContact, setNewVendorContact] = useState("");
   const [newVendorAddr, setNewVendorAddr] = useState("");
-  const [newVendorJobs, setNewVendorJobs] = useState(0);
-  const [newVendorActive, setNewVendorActive] = useState(0);
+
+  const resetForm = () => {
+    setNewVendorName(""); setNewVendorCat("金属・溶接"); setNewVendorTel("");
+    setNewVendorContact(""); setNewVendorAddr("");
+  };
 
   const handleSaveVendor = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,29 +47,42 @@ export default function AdminVendors() {
       triggerToast("業者名を入力してください", "warn");
       return;
     }
-    const newId = "V-" + Math.floor(304 + Math.random() * 900);
     const item = {
-      id: newId,
-      name: newVendorName,
+      name: newVendorName.trim(),
       cat: newVendorCat,
-      tel: newVendorTel || "03-0000-0000",
+      tel: newVendorTel || "—",
       contact: newVendorContact || "—",
       addr: newVendorAddr || "—",
-      jobs: Number(newVendorJobs) || 0,
-      active: Number(newVendorActive) || 0
     };
-
-    OrderBus.push("vendors", item);
-    triggerToast(`修理業者 ${newVendorName} を追加しました`, "ok");
+    if (editingId) {
+      OrderBus.patch("vendors", editingId, item);
+      setSel((prev: any) => prev && prev.id === editingId ? { ...prev, ...item } : prev);
+      triggerToast(`修理業者 ${item.name} を更新しました`, "ok");
+    } else {
+      OrderBus.push("vendors", { id: "V-" + Date.now().toString().slice(-5), ...item });
+      triggerToast(`修理業者 ${item.name} を追加しました`, "ok");
+    }
     setIsAddModalOpen(false);
+    setEditingId(null);
+    resetForm();
+  };
 
-    // Reset fields
-    setNewVendorName("");
-    setNewVendorTel("");
-    setNewVendorContact("");
-    setNewVendorAddr("");
-    setNewVendorJobs(0);
-    setNewVendorActive(0);
+  const openAdd = () => { setEditingId(null); resetForm(); setIsAddModalOpen(true); };
+  const openEdit = (v: any) => {
+    setEditingId(v.id);
+    setNewVendorName(v.name || "");
+    setNewVendorCat(v.cat || "金属・溶接");
+    setNewVendorTel(v.tel && v.tel !== "—" ? v.tel : "");
+    setNewVendorContact(v.contact && v.contact !== "—" ? v.contact : "");
+    setNewVendorAddr(v.addr && v.addr !== "—" ? v.addr : "");
+    setIsAddModalOpen(true);
+  };
+  const handleDeleteVendor = async (v: any) => {
+    if (await confirmDialog(`修理業者「${v.name}」を削除しますか？`, { danger: true, okText: "削除" })) {
+      OrderBus.remove("vendors", v.id);
+      triggerToast(`${v.name} を削除しました`, "ok");
+      setSel(null);
+    }
   };
 
   if (sel) {
@@ -74,15 +94,13 @@ export default function AdminVendors() {
       { id: "warranty", label: "修理・保証情報" },
     ];
 
-    const staffRows = [
-      { n: sel.contact || "—", s: "金属溶接", t: sel.tel || "—" },
-      { n: "高田 学", s: "電装", t: "03-0000-9999" },
-    ];
+    // この業者に紐づく修理を実データ（repairs）から集計する。
+    const vendorRepairs = (repairs || []).filter((r: any) => r && (r.vendor === sel.name || r.vendorId === sel.id));
+    const activeCount = vendorRepairs.filter((r: any) => r.status !== "完了").length;
+    const warrantyCount = vendorRepairs.filter((r: any) => r.warranty).length;
 
-    const addrRows = [
-      { n: "本社工場", a: sel.addr || "—" },
-      { n: "第二整備センター", a: "東京都江東区新木場2-3" },
-    ];
+    const staffRows = [{ n: sel.contact || "—", s: sel.cat || "—", t: sel.tel || "—" }];
+    const addrRows = [{ n: "拠点", a: sel.addr || "—" }];
 
     return (
       <div className="space-y-4">
@@ -92,29 +110,35 @@ export default function AdminVendors() {
           sub={`${sel.cat} ・ ${sel.id}`}
           onBack={() => setSel(null)}
           actions={
-            <Btn icon="build" variant="primary" onClick={() => triggerToast(`修理依頼書を作成しました (業者: ${sel.name})`, "ok")}>
+            <div className="flex gap-2">
+            <Btn icon="edit" variant="secondary" onClick={() => openEdit(sel)}>編集</Btn>
+            <Btn icon="delete" variant="secondary" onClick={() => handleDeleteVendor(sel)}>削除</Btn>
+            <Btn icon="build" variant="primary" onClick={() => {
+              // 以前はトーストのみ（何も保存しない）。実際に修理依頼レコードを作成して
+              // 修理依頼タブ・サーバーへ反映する。詳細(対象資産等)は修理依頼タブで編集。
+              const id = "RP-" + Date.now().toString().slice(-6);
+              OrderBus.push("repairs", {
+                id,
+                asset: "（対象資産を入力）",
+                vendor: sel.name,
+                vendorId: sel.id,
+                status: "修理待ち",
+                req: new Date().toISOString().split("T")[0],
+                cost: null,
+                warranty: false,
+                issue: "修理業者画面からの依頼",
+              });
+              triggerToast(`修理依頼 ${id} を作成しました（修理依頼タブで詳細を編集）`, "ok");
+            }}>
               修理を依頼
             </Btn>
+            </div>
           }
         />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 mb-4">
-          <KPI
-            label="進行中の依頼"
-            value={(sel.active || 0) + " 件"}
-            icon="build"
-          />
-          <KPI
-            label="累計対応"
-            value={(sel.jobs || 0) + " 件"}
-            icon="task_alt"
-            accent="var(--color-neutral-600)"
-          />
-          <KPI
-            label="保証対応"
-            value="2 件"
-            icon="shield"
-            accent="var(--color-teal)"
-          />
+          <KPI label="進行中の依頼" value={activeCount + " 件"} icon="build" />
+          <KPI label="累計対応" value={vendorRepairs.length + " 件"} icon="task_alt" accent="var(--color-neutral-600)" />
+          <KPI label="保証対応" value={warrantyCount + " 件"} icon="shield" accent="var(--color-teal)" />
         </div>
         <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
@@ -163,11 +187,11 @@ export default function AdminVendors() {
               cols={[
                 { h: "依頼番号", cell: (r) => <span className="font-mono text-blue-700 font-bold">{r.id}</span> },
                 { h: "対象", wrap: true, cell: (r) => <span>{r.asset}</span> },
-                { h: "費用", align: "right", cell: (r) => <span className="font-mono font-bold">{FMT(r.cost)}</span> },
+                { h: "費用", align: "right", cell: (r) => <span className="font-mono font-bold">{r.cost ? FMT(r.cost) : "見積中"}</span> },
                 { h: "日付", cell: (r) => <span className="font-mono text-slate-500">{r.date}</span> },
                 { h: "状態", align: "right", cell: (r) => <Badge>{r.status}</Badge> },
               ]}
-              rows={VENDOR_HISTORY}
+              rows={vendorRepairs.map((r: any) => ({ id: r.id, asset: r.asset, cost: r.cost, date: r.req || r.date || "—", status: r.status }))}
             />
           </Panel>
         )}
@@ -181,7 +205,7 @@ export default function AdminVendors() {
                 { h: "保証", cell: (r) => r.warranty ? <Badge tone="ok">完了</Badge> : <span className="text-slate-400">対象外</span> },
                 { h: "日付", align: "right", cell: (r) => <span className="font-mono text-slate-500">{r.date}</span> },
               ]}
-              rows={VENDOR_HISTORY}
+              rows={vendorRepairs.map((r: any) => ({ id: r.id, asset: r.asset, warranty: r.warranty, date: r.req || r.date || "—" }))}
             />
           </Panel>
         )}
@@ -202,8 +226,8 @@ export default function AdminVendors() {
       ),
     },
     { h: "担当者", cell: (r: any) => <span>{r.contact || "—"}</span> },
-    { h: "進行中", align: "right" as const, cell: (r: any) => <span className="font-mono font-bold">{r.active}</span> },
-    { h: "累計", align: "right" as const, cell: (r: any) => <span className="font-mono">{r.jobs}</span> },
+    { h: "進行中", align: "right" as const, cell: (r: any) => <span className="font-mono font-bold">{(repairs || []).filter((x: any) => x && (x.vendor === r.name || x.vendorId === r.id) && x.status !== "完了").length}</span> },
+    { h: "累計", align: "right" as const, cell: (r: any) => <span className="font-mono">{(repairs || []).filter((x: any) => x && (x.vendor === r.name || x.vendorId === r.id)).length}</span> },
     {
       h: "",
       align: "right" as const,
@@ -217,7 +241,7 @@ export default function AdminVendors() {
     <div className="space-y-4">
       <Toolbar
         right={
-          <Btn icon="add" variant="primary" onClick={() => setIsAddModalOpen(true)}>
+          <Btn icon="add" variant="primary" onClick={openAdd}>
             修理業者を追加
           </Btn>
         }
@@ -234,8 +258,8 @@ export default function AdminVendors() {
       {/* Add Vendor Modal */}
       <Modal
         open={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        title="新規修理業者を追加"
+        onClose={() => { setIsAddModalOpen(false); setEditingId(null); }}
+        title={editingId ? "修理業者を編集" : "新規修理業者を追加"}
         width={460}
         footer={
           <>
@@ -262,14 +286,7 @@ export default function AdminVendors() {
           <Field label="住所拠点">
             <TextInput value={newVendorAddr} onChange={e => setNewVendorAddr(e.target.value)} placeholder="例：東京都品川区東品川3-1" />
           </Field>
-          <Row>
-            <Field label="進行中の依頼数">
-              <TextInput type="number" min="0" value={newVendorActive} onChange={e => setNewVendorActive(Number(e.target.value))} />
-            </Field>
-            <Field label="累計対応数">
-              <TextInput type="number" min="0" value={newVendorJobs} onChange={e => setNewVendorJobs(Number(e.target.value))} />
-            </Field>
-          </Row>
+          <div className="text-[11px] text-slate-400">※ 進行中／累計件数は修理依頼から自動集計されます。</div>
         </form>
       </Modal>
     </div>

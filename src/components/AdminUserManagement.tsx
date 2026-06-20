@@ -3,7 +3,7 @@ import { useUser, UserProfile } from "../context/UserContext";
 import { confirmDialog, alertDialog } from "./AppDialog";
 
 export default function AdminUserManagement() {
-  const { users, addUser, updateUser, deleteUser } = useUser();
+  const { users, addUser, updateUser, isEmailTaken, deleteUser } = useUser();
   const [activeSubTab, setActiveSubTab] = useState<
     "our_company" | "client_company"
   >("our_company");
@@ -70,13 +70,23 @@ export default function AdminUserManagement() {
       phone: formData.get("phone"),
       address: formData.get("address"),
       avatarUrl: formData.get("avatarUrl") || "",
-      position: formData.get("position") || "",
-      team: formData.get("team") || "",
-      employeeCode: formData.get("employeeCode") || "",
-      status: formData.get("status") || "active",
+      // 取引先(client)の編集フォームには position/team/employeeCode/status の入力が無い。
+      // FormData.get は欄が無いと null を返すため、?? で既存値を温存する（編集で勝手に
+      // status が active へ戻る／部署・社員番号が空になる不具合を防ぐ）。
+      position: (formData.get("position") as string | null) ?? editingUser?.position ?? "",
+      team: (formData.get("team") as string | null) ?? editingUser?.team ?? "",
+      employeeCode: (formData.get("employeeCode") as string | null) ?? editingUser?.employeeCode ?? "",
+      status: (formData.get("status") as string | null) ?? editingUser?.status ?? "active",
       role: roleVal,
       companyType: activeSubTab,
     };
+
+    // メール重複はログインID衝突（双方ログイン不可）になるため拒否。
+    const emailVal = (userData.email as string | null) || "";
+    if (emailVal.trim() && isEmailTaken(emailVal, editingUser?.id)) {
+      void alertDialog("このメールアドレスは既に他のアカウントで使用されています。");
+      return;
+    }
 
     // パスワード: 入力があれば設定/変更。新規作成で空欄なら自動生成して通知する。
     const passwordInput = ((formData.get("password") as string) || "").trim();
@@ -89,13 +99,14 @@ export default function AdminUserManagement() {
     if (editingUser?.id) {
       updateUser(editingUser.id, userData);
     } else {
-      addUser({
-        id: userData.employeeCode || "USR_" + Date.now(),
+      // ID は addUser 側で一意性を担保（employeeCode 重複や同時作成での衝突を再採番で防止）。
+      const saved = addUser({
+        id: userData.employeeCode || "",
         ...userData,
       } as UserProfile);
       if (!passwordInput) {
         void alertDialog(
-          `${userData.lastName} ${userData.firstName} のログイン情報\n\nログインID: ${userData.email}\nパスワード: ${userData.password}\n\n必ず控えて本人に共有してください。`,
+          `${userData.lastName} ${userData.firstName} のログイン情報\n\nログインID: ${saved.email}\nパスワード: ${userData.password}\n\n必ず控えて本人に共有してください。`,
         );
       }
     }

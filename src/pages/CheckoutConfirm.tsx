@@ -2,8 +2,16 @@ import React, { useState } from "react";
 import { useLocation, useNavigate, Navigate } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useCart } from "../context/CartContext";
+import { alertDialog } from "../components/AppDialog";
+import { getItemUnit } from "../utils/productUtils";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import CheckoutConfirmDesktop from "./desktop/CheckoutConfirmDesktop";
 
 export default function CheckoutConfirm() {
+  return useIsDesktop() ? <CheckoutConfirmDesktop /> : <CheckoutConfirmMobile />;
+}
+
+function CheckoutConfirmMobile() {
   const location = useLocation();
   const navigate = useNavigate();
   const { addOrder } = useOrders();
@@ -17,34 +25,42 @@ export default function CheckoutConfirm() {
   }
 
   const handleOrderConfirm = async () => {
+    if (isSubmitting) return; // 連打による二重注文を防止
     setIsSubmitting(true);
-    // Add the order
-    const newOrder = await addOrder({
-      items: orderData.items,
-      total: orderData.total,
-      subtotal: orderData.subtotal,
-      tax: orderData.tax,
-      deliveryLocation: orderData.deliveryLocation,
-      deliveryDate: orderData.deliveryDate,
-      siteName: orderData.siteName,
-      constructionNumber: orderData.constructionNumber,
-      companyName: orderData.companyName,
-      personName: orderData.personName,
-      personLastName: orderData.personLastName,
-      personFirstName: orderData.personFirstName,
-      rentalStartDate: orderData.rentalStartDate,
-      rentalEndDate: orderData.rentalEndDate,
-      // 発注アカウント情報（admin / 帳票で参照）
-      userId: orderData.userId,
-      userEmail: orderData.userEmail,
-      userPhone: orderData.userPhone,
-      notes: orderData.notes,
-    });
-    
-    // In many apps, placing an order clears the cart
-    clearCart();
-    
-    navigate("/order-confirmation", { state: { order: newOrder }, replace: true });
+    try {
+      // Add the order
+      const newOrder = await addOrder({
+        items: orderData.items,
+        total: orderData.total,
+        subtotal: orderData.subtotal,
+        tax: orderData.tax,
+        deliveryLocation: orderData.deliveryLocation,
+        deliveryDate: orderData.deliveryDate,
+        siteName: orderData.siteName,
+        constructionNumber: orderData.constructionNumber,
+        companyName: orderData.companyName,
+        personName: orderData.personName,
+        personLastName: orderData.personLastName,
+        personFirstName: orderData.personFirstName,
+        rentalStartDate: orderData.rentalStartDate,
+        rentalEndDate: orderData.rentalEndDate,
+        // 発注アカウント情報（admin / 帳票で参照）
+        userId: orderData.userId,
+        userEmail: orderData.userEmail,
+        userPhone: orderData.userPhone,
+        notes: orderData.notes,
+      });
+
+      // In many apps, placing an order clears the cart
+      clearCart();
+
+      navigate("/order-confirmation", { state: { order: newOrder }, replace: true });
+    } catch (e) {
+      // 失敗時はスピナーで固まらせず、エラーを知らせて再試行できるようにする。
+      console.error("[checkout] 注文の確定に失敗しました", e);
+      void alertDialog("注文の確定に失敗しました。通信状況をご確認のうえ、もう一度お試しください。");
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -107,7 +123,7 @@ export default function CheckoutConfirm() {
                 <div className="min-w-0 flex-1">
                   <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.name}</h4>
                   <p className="text-xs text-slate-500">
-                    {item.type === 'rent' ? 'レンタル' : '販売'} × {item.quantity}
+                    {item.type === 'rent' ? 'レンタル' : '販売'} × {item.quantity}{getItemUnit(item)}
                     {item.guaranteeFeeFlat && item.guaranteeFeeFlat > 0 ? <span className="block text-[10px] text-slate-400 mt-0.5">※初回保証料(¥{Math.round(item.guaranteeFeeFlat).toLocaleString()})含む</span> : null}
                   </p>
                 </div>

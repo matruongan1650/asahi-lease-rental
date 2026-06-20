@@ -11,6 +11,9 @@ import {
   triggerToast
 } from "./AdminUI";
 import { useAdminCollection } from "../context/AdminDataContext";
+import { useUser } from "../context/UserContext";
+import { useProducts } from "../context/ProductContext";
+import { getTaxRate } from "../utils/billing";
 
 export const ITEM_OPTS = [
   "カラーコーン 赤",
@@ -51,7 +54,7 @@ export function LineItems({ items, setItems, unitLabel = "単価" }: LineItemsPr
   const rm = (id: number) => setItems(x => x.filter(i => i.id !== id));
   
   const total = items.reduce((a, i) => a + i.qty * i.price, 0);
-  const tax = Math.round(total * 0.1);
+  const tax = Math.round(total * getTaxRate());
 
   return (
     <div>
@@ -116,7 +119,7 @@ export function LineItems({ items, setItems, unitLabel = "単価" }: LineItemsPr
       <div className="mt-4 ml-auto w-[220px]">
         {[
           ["小計", total],
-          ["消費税 (10%)", tax],
+          [`消費税 (${Math.round(getTaxRate() * 100)}%)`, tax],
           ["合計", total + tax]
         ].map(([l, v], i) => (
           <div
@@ -158,10 +161,20 @@ export default function AdminDocDrawer({
   const [d2, setD2] = useState("");
   const [items, setItems] = useState<LineItem[]>([]);
   const [note, setNote] = useState("");
+  // レンタル契約登録時の初期ステータス（既存稼働中の登録 or 新規手配）。
+  const [rentalStatus, setRentalStatus] = useState<"レンタル中" | "確認済み">("レンタル中");
+  // 伝票番号は「開いた時に一度だけ」採番する。以前はレンダー毎に Math.random() で再計算され、
+  // 入力中に番号が変わり、3桁乱数(900通り)で衝突して onCreate の id 重複(上書き)を起こしていた。
+  const [docNo, setDocNo] = useState("");
 
-  const customersCol = useAdminCollection("customers");
   const vendorsCol = useAdminCollection("vendors");
-  const assetsCol = useAdminCollection("assets");
+  const { users } = useUser();
+  const { products } = useProducts();
+  // 顧客 = client_company ユーザー（"customers" ストアは存在せず常に空だった）。会社名で重複排除。
+  const customerCompanies = React.useMemo(
+    () => Array.from(new Set((users || []).filter((u: any) => u && u.companyType === "client_company").map((u: any) => u.companyName).filter(Boolean))),
+    [users],
+  );
 
   useEffect(() => {
     if (open) {
@@ -194,25 +207,40 @@ export default function AdminDocDrawer({
         ]
       );
       setNote("");
+      // 開いた時に一度だけ採番（ミリ秒タイムスタンプ下6桁で衝突回避。表示中は固定）。
+      setDocNo(m.code + "-" + String(Date.now()).slice(-6));
     }
   }, [open, kind, presetCustomer, presetItems]);
 
   if (!kind) return null;
   const isRepair = kind === "repair";
-  const docNo = m.code + "-" + String(Math.floor(4400 + Math.random() * 900));
 
   const submit = () => {
+    // 修理依頼は対象保安品・修理業者が必須（空のまま「一般顧客」で登録されるのを防ぐ）。
+    if (isRepair && (!customer || !site)) {
+      triggerToast("対象保安品・修理業者を選択してください", "warn");
+      return;
+    }
+    // 品目ゼロでの契約/請求の作成を禁止（消費側で商品の無い注文が生成されるのを防ぐ）。修理は対象品で別途検証済み。
+    if (!isRepair && items.length === 0) {
+      triggerToast("品目を1件以上追加してください", "warn");
+      return;
+    }
     triggerToast(m.done + "（" + docNo + "）", "ok");
     if (onCreate) {
       onCreate({
         id: docNo,
         kind,
         customer: customer || "一般顧客",
-        site: site || (isRepair ? "—" : "東京中央現場"),
+        site: site || "—",
         items: items.length,
-        amount: items.reduce((a, i) => a + i.qty * i.price, 0) * 1.1,
+        lineItems: items, // 実際の明細（消費側で注文/請求の生成に使う）
+        amount: items.reduce((a, i) => a + i.qty * i.price, 0) * (1 + getTaxRate()),
         date: d1 || new Date().toISOString().split("T")[0],
-        status: isRepair ? "修理待ち" : "進行中"
+        dateStart: d1 || "",
+        dateEnd: d2 || "",
+        // レンタル契約はユーザー選択のステータスで登録（既存稼働中 or 手配中）。
+        status: kind === "rental-contract" ? rentalStatus : (isRepair ? "修理待ち" : "進行中"),
       });
     }
     onClose();
@@ -250,7 +278,7 @@ export default function AdminDocDrawer({
               <SelectInput
                 value={customer}
                 onChange={e => setCustomer(e.target.value)}
-                options={["", ...assetsCol.rows.map(a => a.name)].map(v => ({ v, l: v || "選択してください" }))}
+                options={["", ...products.map((p: any) => p.name)].map(v => ({ v, l: v || "選択してください" }))}
               />
             </Field>
             <Field label="修理業者" required>
@@ -267,7 +295,7 @@ export default function AdminDocDrawer({
               <SelectInput
                 value={customer}
                 onChange={e => setCustomer(e.target.value)}
-                options={["", ...customersCol.rows.map(c => c.company)].map(v => ({ v, l: v || "選択してください" }))}
+                options={["", ...customerCompanies].map(v => ({ v, l: v || "選択してください" }))}
               />
             </Field>
             <Field label="現場 / 工事名">
@@ -289,6 +317,18 @@ export default function AdminDocDrawer({
             </Field>
           )}
         </Row>
+        {kind === "rental-contract" && (
+          <Field label="登録ステータス">
+            <SelectInput
+              value={rentalStatus}
+              onChange={e => setRentalStatus(e.target.value as "レンタル中" | "確認済み")}
+              options={[
+                { v: "レンタル中", l: "レンタル中（既に納品済み・稼働中の契約）" },
+                { v: "確認済み", l: "確認済み（これから配送手配する）" },
+              ]}
+            />
+          </Field>
+        )}
       </FormSection>
 
       <FormSection title={isRepair ? "不具合内容" : "品目"}>

@@ -3,6 +3,7 @@ import { Btn, Field, Modal, Row, SelectInput, TextInput, triggerToast } from "..
 import { useAdminCollection } from "../../context/AdminDataContext";
 import OrderBus from "../../lib/orderBus";
 import { usePagedList } from "../../hooks/usePagedList";
+import { isVehicleCategory } from "../../utils/productUtils";
 
 function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: string; value: string | number; tone?: "blue" | "emerald" | "amber" | "rose" }) {
   const toneClass = {
@@ -26,7 +27,13 @@ function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: 
 
 export default function AdminStockOut() {
   const { rows } = useAdminCollection("stockOut");
-  const { rows: warehouseRows } = useAdminCollection("warehouse");
+  // 在庫は products.stock（現物在庫）が唯一の正。以前は未シードの "warehouse" コレクションを
+  // 参照していたため出庫が実在庫に反映されなかった（常に「倉庫に見つかりません」）。products へ統一。
+  const { rows: products } = useAdminCollection("products");
+  const supplyProducts = useMemo(
+    () => (products || []).filter((p: any) => p && !isVehicleCategory(p.category)),
+    [products],
+  );
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [actionKind, setActionKind] = useState<"レンタル" | "販売">("レンタル");
   const [query, setQuery] = useState("");
@@ -42,9 +49,9 @@ export default function AdminStockOut() {
   const [dst, setDst] = useState("");
   const [staff, setStaff] = useState("佐藤");
 
-  const itemOptions = ["", ...warehouseRows.map((w: any) => w.name).filter(Boolean)];
+  const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean)];
   const totalOutQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
-  const availableTotal = warehouseRows.reduce((sum: number, row: any) => sum + Number(row.available || 0), 0);
+  const availableTotal = supplyProducts.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
   const rentalOutCount = rows.filter((row: any) => row.type === "レンタル").length;
   const saleOutCount = rows.filter((row: any) => row.type === "販売").length;
 
@@ -75,17 +82,22 @@ export default function AdminStockOut() {
       return;
     }
 
-    const match = warehouseRows.find((w: any) => w.name === itemSelect);
+    const match = supplyProducts.find((p: any) => p.name === itemSelect);
     if (!match) {
-      triggerToast("選択された品目が倉庫に見つかりません", "err");
+      triggerToast("選択された品目が見つかりません", "err");
       return;
     }
-    if (Number(match.available || 0) < qty) {
-      triggerToast(`在庫不足です (利用可能: ${match.available}点)`, "warn");
+    // 在庫チェックと書き込みは「最新在庫」を基準に行う。レンダー時のスナップショット(match.stock)で
+    // 判定・減算すると、別端末/受注確定の減算と競合してオーバーセル(二重出庫)や在庫ドリフトを招くため。
+    const fresh = OrderBus.getAll<any>("products").find((p: any) => String(p?.id || "") === String(match.id));
+    const onHand = Number((fresh?.stock ?? match.stock) || 0);
+    if (onHand < qty) {
+      triggerToast(`在庫不足です (現在庫: ${onHand}点)`, "warn");
       return;
     }
 
-    const newId = "OUT-" + Math.floor(9900 + Math.random() * 90);
+    const now = Date.now();
+    const newId = "OUT-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);
     const dateStr = new Date().toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
     const stockOutItem = {
       id: newId,
@@ -94,15 +106,13 @@ export default function AdminStockOut() {
       date: dateStr,
       dst: dst || "現場未設定",
       type: actionKind,
-      staff
+      staff,
+      seq: now,
+      icon: "boxOut",
     };
 
     OrderBus.push("stockOut", stockOutItem);
-    OrderBus.patch("warehouse", match.id, {
-      available: Number(match.available || 0) - Number(qty),
-      rented: actionKind === "レンタル" ? Number(match.rented || 0) + Number(qty) : Number(match.rented || 0),
-      total: actionKind === "販売" ? Number(match.total || 0) - Number(qty) : Number(match.total || 0)
-    });
+    OrderBus.patch("products", match.id, { stock: Math.max(0, onHand - Number(qty)) });
 
     triggerToast(`${itemSelect} を -${qty} 出庫しました`, "ok");
     setIsAddModalOpen(false);

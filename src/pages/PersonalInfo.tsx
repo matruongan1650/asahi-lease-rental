@@ -2,8 +2,14 @@ import React, { useState, useRef } from "react";
 import { alertDialog } from "../components/AppDialog";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import PersonalInfoDesktop from "./desktop/PersonalInfoDesktop";
 
 export default function PersonalInfo() {
+  return useIsDesktop() ? <PersonalInfoDesktop /> : <PersonalInfoMobile />;
+}
+
+function PersonalInfoMobile() {
   const navigate = useNavigate();
   const { profile, setProfile } = useUser();
   const [formData, setFormData] = useState(profile);
@@ -25,8 +31,15 @@ export default function PersonalInfo() {
     }
   };
 
+  // 会社担当者(customer_staff)は会社名を変更できない（会社マスタの共有項目を個人が書き換えて
+  // 会社グループが壊れるのを防ぐ）。会社情報の変更は会社代表(customer)または管理者のみ。
+  const isSubUser = profile.role === "customer_staff";
+
   const handleSave = () => {
-    setProfile(formData);
+    setProfile({
+      ...formData,
+      companyName: isSubUser ? profile.companyName : formData.companyName,
+    });
     void alertDialog("保存しました。");
     navigate(-1);
   };
@@ -63,12 +76,16 @@ export default function PersonalInfo() {
         <div className="flex flex-col gap-4 bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
           <div>
             <label className="block text-xs font-bold text-slate-500 mb-1">会社名</label>
-            <input 
+            <input
               name="companyName"
               value={formData.companyName}
               onChange={handleChange}
-              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20" 
+              readOnly={isSubUser}
+              className={`w-full border border-slate-200 dark:border-slate-700 rounded-lg h-12 px-4 shadow-sm outline-none focus:ring-2 focus:ring-primary/20 ${isSubUser ? "bg-slate-100 dark:bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-slate-50 dark:bg-slate-900"}`}
             />
+            {isSubUser && (
+              <p className="mt-1 text-[11px] text-slate-400">会社名の変更は会社のご担当責任者または管理者へご依頼ください。</p>
+            )}
           </div>
           <div className="flex gap-3">
             <div className="flex-1">

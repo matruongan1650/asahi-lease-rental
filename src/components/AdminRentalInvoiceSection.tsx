@@ -2,11 +2,17 @@ import React, { useMemo, useRef, useState } from "react";
 import { Panel, Btn, triggerToast } from "./AdminUI";
 import { groupOrdersByCompany, RenterGroup, aggregateTotals } from "../utils/rentalInvoiceGrouping";
 import {
+  buildCompanyInvoice,
+  buildRenterInvoice,
+  buildOrderInvoice,
+  buildAggregatedBreakdown,
   issueCompanyInvoice,
   issueRenterInvoice,
   issueOrderInvoice,
   issueAggregatedBreakdown,
 } from "../utils/invoiceTemplatesAdmin";
+import InvoicePreviewModal from "./InvoicePreviewModal";
+import { getOrGenerateInvoiceBlocks } from "../utils/billing";
 
 interface Props {
   orders: any[];
@@ -14,11 +20,15 @@ interface Props {
   companyFilter?: string;
 }
 
+const yen = (value: number) => `¥${Math.round(Number(value) || 0).toLocaleString("ja-JP")}`;
+
 export default function AdminRentalInvoiceSection({ orders, monthPeriod, companyFilter }: Props) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const busyRef = useRef(false); // 二重クリック防止（Reactのバッチレンダリング用）
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // プレビュー（表示用ノード + ダウンロード処理。PDF はモーダル内のボタンで保存）
+  const [preview, setPreview] = useState<{ title: string; pages: HTMLElement[]; download: () => Promise<void> } | null>(null);
 
   const baseGroups = useMemo(
     () => groupOrdersByCompany(orders, { monthPeriod, companyName: companyFilter || undefined }),
@@ -49,13 +59,29 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
       return next;
     });
 
-  const wrap = async (key: string, fn: () => Promise<void>) => {
-    if (busyRef.current) return; // ボタンがdisabledになるまでの二重クリック防止
+  // ボタン押下 → 表示用ノードを組み立ててプレビュー表示（ダウンロードはモーダル内で実行）。
+  // 内訳請求書など多ページの組み立ては重いので、まず「準備中」を描画してから次フレームでビルドする。
+  const openPreview = (
+    key: string,
+    title: string,
+    build: () => { nodes: HTMLElement[]; filename: string },
+    download: () => Promise<void>,
+  ) => {
+    if (busyRef.current) return; // 二重クリック防止
     busyRef.current = true;
     setBusy(key);
-    try { await fn(); triggerToast("PDFを生成しました", "ok"); }
-    catch (e: any) { console.error(e); triggerToast("PDF生成に失敗しました: " + (e?.message || ""), "err"); }
-    finally { busyRef.current = false; setBusy(null); }
+    setTimeout(() => {
+      try {
+        const { nodes } = build();
+        setPreview({ title, pages: nodes, download });
+      } catch (e: any) {
+        console.error(e);
+        triggerToast("プレビューの作成に失敗しました: " + (e?.message || ""), "err");
+      } finally {
+        busyRef.current = false;
+        setBusy(null);
+      }
+    }, 0);
   };
 
   return (
@@ -76,7 +102,7 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
             icon="summarize"
             size="sm"
             disabled={busy !== null || filtered.length === 0}
-            onClick={() => wrap("aggregated", () => issueAggregatedBreakdown(filtered, monthPeriod))}
+            onClick={() => openPreview("aggregated", "内訳請求書", () => buildAggregatedBreakdown(filtered, monthPeriod), () => issueAggregatedBreakdown(filtered, monthPeriod))}
           >
             内訳請求書を発行
           </Btn>
@@ -88,7 +114,7 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
         <Stat label="会社" value={`${filtered.length} 社`} />
         <Stat label="担当者" value={`${totals.renterCount} 名`} />
         <Stat label="注文" value={`${totals.orderCount} 件`} />
-        <Stat label="合計 (税込)" value={`¥${totals.total.toLocaleString()}`} accent />
+        <Stat label="合計 (税込)" value={yen(totals.total)} accent />
       </div>
 
       {filtered.length === 0 ? (
@@ -116,12 +142,12 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
                   </button>
                   <div className="text-right shrink-0">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">合計</div>
-                    <div className="font-extrabold text-blue-700 text-base font-mono">¥{g.total.toLocaleString()}</div>
+                    <div className="font-extrabold text-blue-700 text-base font-mono">{yen(g.total)}</div>
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button
                       disabled={busy !== null}
-                      onClick={() => wrap(`company:${g.companyName}`, () => issueCompanyInvoice(g, monthPeriod))}
+                      onClick={() => openPreview(`company:${g.companyName}`, `会社請求書 — ${g.companyName}`, () => buildCompanyInvoice(g, monthPeriod), () => issueCompanyInvoice(g, monthPeriod))}
                       className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
@@ -145,13 +171,22 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
                         companyName={g.companyName}
                         renter={r}
                         busy={busy}
+                        monthPeriod={monthPeriod}
                         onIssueRenter={() =>
-                          wrap(`renter:${g.companyName}:${r.personName}`, () =>
-                            issueRenterInvoice(g.companyName, r, monthPeriod),
+                          openPreview(
+                            `renter:${g.companyName}:${r.personName}`,
+                            `担当者請求書 — ${r.personName}`,
+                            () => buildRenterInvoice(g.companyName, r, monthPeriod),
+                            () => issueRenterInvoice(g.companyName, r, monthPeriod),
                           )
                         }
                         onIssueOrder={(o: any) =>
-                          wrap(`order:${o.id || o.orderNumber}`, () => issueOrderInvoice(o))
+                          openPreview(
+                            `order:${o.id || o.orderNumber}`,
+                            `請求書 — ${o.orderNumber || ""}`,
+                            () => buildOrderInvoice(o, monthPeriod),
+                            () => issueOrderInvoice(o, monthPeriod),
+                          )
                         }
                       />
                     ))}
@@ -163,13 +198,22 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
         </div>
       )}
 
-      {busy && (
+      {busy && !preview && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl px-6 py-5 shadow-xl flex items-center gap-3">
             <div className="h-6 w-6 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-            <span className="text-sm font-bold text-slate-800">PDFを生成中…</span>
+            <span className="text-sm font-bold text-slate-800">プレビューを準備中…</span>
           </div>
         </div>
+      )}
+
+      {preview && (
+        <InvoicePreviewModal
+          title={preview.title}
+          pages={preview.pages}
+          onDownload={preview.download}
+          onClose={() => setPreview(null)}
+        />
       )}
     </Panel>
   );
@@ -185,14 +229,25 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 function RenterRow({
-  renter, busy, onIssueRenter, onIssueOrder,
+  renter, busy, monthPeriod, onIssueRenter, onIssueOrder,
 }: {
   companyName: string;
   renter: RenterGroup;
   busy: string | null;
+  monthPeriod?: string;
   onIssueRenter: () => void;
   onIssueOrder: (o: any) => void;
 }) {
+  const amountFor = (order: any) => {
+    if (!monthPeriod) {
+      const blocks = getOrGenerateInvoiceBlocks(order);
+      if (blocks.length > 0) return blocks.reduce((sum, block) => sum + Number(block.total || 0), 0);
+      return Number(order.total || 0);
+    }
+    const block = getOrGenerateInvoiceBlocks(order).find((b) => b.monthPeriod === monthPeriod);
+    return Number(block?.total || 0);
+  };
+
   return (
     <div className="px-4 py-3 bg-slate-50/30">
       <div className="flex items-center justify-between gap-3 mb-2">
@@ -202,7 +257,7 @@ function RenterRow({
           <span className="text-[10px] text-slate-400">({renter.orders.length}件)</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-bold font-mono text-sm text-slate-700">¥{renter.total.toLocaleString()}</span>
+          <span className="font-bold font-mono text-sm text-slate-700">{yen(renter.total)}</span>
           <button
             disabled={busy !== null}
             onClick={onIssueRenter}
@@ -223,7 +278,7 @@ function RenterRow({
               <span className="text-slate-300">· {o.date}</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="font-mono font-bold text-slate-800">¥{(o.total || 0).toLocaleString()}</span>
+              <span className="font-mono font-bold text-slate-800">{yen(amountFor(o))}</span>
               <button
                 disabled={busy !== null}
                 onClick={() => onIssueOrder(o)}

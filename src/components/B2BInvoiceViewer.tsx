@@ -3,9 +3,7 @@ import { alertDialog } from "./AppDialog";
 import { groupOrdersByCompany } from "../utils/rentalInvoiceGrouping";
 import {
   renderCompanyCoverPage,
-  renderRenterInvoicePage,
-  paginateRows,
-  PrintRow,
+  buildCompanyInvoice,
   issueCompanyInvoice
 } from "../utils/invoiceTemplatesAdmin";
 import { renderSectionsToPdf, mountOffscreen } from "../utils/pdfMultiPage";
@@ -55,53 +53,14 @@ export default function B2BInvoiceViewer({
       return [cover];
     }
 
-    // Detailed breakdown: Cover + Renter details paginated
-    const renterPagesList: PrintRow[][][] = [];
-    let totalDetailPages = 0;
-
-    for (const r of group.renters) {
-      const rows: PrintRow[] = r.orders.flatMap(o => {
-        const headerRow: PrintRow = { type: "order-header", order: o };
-        const itemRows: PrintRow[] = (o.items || []).map((it: any, idx: number) => ({
-          type: "item-row",
-          order: o,
-          item: it,
-          index: idx
-        }));
-        return [headerRow, ...itemRows];
-      });
-
-      const paginated = paginateRows(rows, true);
-      totalDetailPages += paginated.length;
-      renterPagesList.push(paginated);
+    // 内訳プレビューは PDF と同じ buildCompanyInvoice を使う。
+    // （以前は生の o.items を描画していたため、単価・金額が ¥NaN・区分/内容が空・保証料/弁償費行が欠落していた）。
+    try {
+      return buildCompanyInvoice(group, monthPeriod).nodes;
+    } catch (err) {
+      console.error("invoice preview build error:", err);
+      return [];
     }
-
-    const totalPages = 1 + totalDetailPages;
-    const coverNode = renderCompanyCoverPage(group, totalPages, monthPeriod, 0);
-    const detailNodes: HTMLElement[] = [];
-    let overallIndex = 1;
-
-    group.renters.forEach((r, ri) => {
-      const paginated = renterPagesList[ri];
-      paginated.forEach((pageRows, pi) => {
-        const node = renderRenterInvoicePage({
-          mode: "company-invoice",
-          companyName: group.companyName,
-          renter: r,
-          companyTotal: group,
-          pageRows,
-          pageIndex: pi,
-          pageCount: paginated.length,
-          overallPageIndex: overallIndex,
-          overallPageCount: totalPages,
-          monthPeriod,
-        });
-        detailNodes.push(node);
-        overallIndex++;
-      });
-    });
-
-    return [coverNode, ...detailNodes];
   }, [group, type, monthPeriod]);
 
   const handleDownloadPdf = async () => {

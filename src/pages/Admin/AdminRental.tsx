@@ -1,10 +1,14 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { Badge, Btn, triggerToast } from "../../components/AdminUI";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
-import DocumentViewer from "../../components/DocumentViewer";
+import AdminRentalRegisterModal from "../../components/AdminRentalRegisterModal";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
+import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
+import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
+import { confirmDialog } from "../../components/AppDialog";
+import OrderBus from "../../lib/orderBus";
 
 type RentalQueue = "new" | "arranged" | "active" | "closed";
 
@@ -60,6 +64,7 @@ function toRentalRow(o: any) {
     firestoreId: o.firestoreId || o.id,
     date: o.date || "",
     customer: o.companyName || `${o.personLastName || ""} ${o.personFirstName || ""}`.trim() || o.personName || "ゲスト",
+    person: o.personName || `${o.personLastName || ""} ${o.personFirstName || ""}`.trim() || "—",
     site: o.siteName || "—",
     start: (o.rentalStartDate || "").replace(/-/g, "/") || "—",
     end: (o.rentalEndDate || "").replace(/-/g, "/") || "—",
@@ -75,7 +80,7 @@ export default function AdminRental() {
   const [queue, setQueue] = useState<RentalQueue>("new");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  const [viewingDocOrder, setViewingDocOrder] = useState<any>(null);
+  const [docDrawerOpen, setDocDrawerOpen] = useState(false);
 
   // 数万件でも 1 ページのみ取得（サーバー側でフィルタ＋ページング）。
   const { rows, total, statusCounts, hasMore, loading, loadMore, refresh } = useServerQuery(
@@ -95,21 +100,92 @@ export default function AdminRental() {
   const handleAccept = (row: any) => {
     const id = orderKey(row._raw);
     if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
-    liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "配送予定" });
-    triggerToast(`${row.id} を受注確定し、配送手配へ送りました`, "ok");
+    // 受注確定 = 現物在庫を減算（出庫）。最新の注文を解決してから台帳を更新する。
+    const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id || o.orderNumber === id)) || row._raw;
+    const flags = deductOrderStock(raw);
+    // 受注確定でのみ staffStatus:"配送予定" を付与 → スタッフ APK の配送タスクに配信される。
+    liveOrders.patchOrder(id, { status: "確認済み", staffStatus: "配送予定", ...flags });
+    triggerToast(`${row.id} を受注確定し、在庫を出庫・配送手配へ送りました`, "ok");
+    setTimeout(refresh, 300);
+  };
+
+  // 受注待ちの注文を却下する。staffStatus は付けないためスタッフ APK には配信されない。
+  const handleReject = async (row: any) => {
+    const id = orderKey(row._raw);
+    if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
+    const ok = await confirmDialog(`${row.id} を却下しますか？\nこの注文は配送手配されず、キャンセル扱いになります。`, {
+      okText: "却下する",
+      cancelText: "戻る",
+      danger: true,
+    });
+    if (!ok) return;
+    liveOrders.patchOrder(id, { status: "キャンセル", staffStatus: "" });
+    triggerToast(`${row.id} を却下しました`, "ok");
     setTimeout(refresh, 300);
   };
 
   const handleMoveToActive = (row: any) => {
     const id = orderKey(row._raw);
     if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
-    liveOrders.patchOrder(id, { status: "レンタル中", staffStatus: "完了" });
+    // staffStatus:"完了" は倉庫の貸出中カウントから除外されてしまう（在庫が水増し）。
+    // 配送完了として稼働中にし、現物は貸出中のまま正しくカウントさせる。
+    liveOrders.patchOrder(id, { status: "レンタル中", staffStatus: "配送完了", deliveryConfirmedAt: new Date().toISOString() });
     triggerToast(`${row.id} をレンタル中に更新しました`, "ok");
     setTimeout(refresh, 300);
   };
 
   const openDetail = (row: any) => setSelectedOrder(row._raw);
-  const openDeliveryDoc = (row: any) => setViewingDocOrder(row._raw);
+
+  // 既存/進行中のレンタル契約を「完全な注文」として登録して管理対象にする。
+  // draft は AdminRentalRegisterModal が顧客マスタ・商品マスタと連携して作る完全なドラフト。
+  const handleRentalContractCreate = (draft: any) => {
+    const items = Array.isArray(draft.items) ? draft.items : [];
+    if (items.length === 0) { triggerToast("品目を1件以上追加してください", "warn"); return; }
+
+    const now = new Date();
+    const ongoing = draft.status === "レンタル中"; // 既に納品済み・稼働中の契約
+    const orderNumber = `RN-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // 在庫を出庫（フラグ未設定のオブジェクトに対して減算 → 確実に1回だけ引く）。
+    const seed: any = {
+      orderNumber,
+      companyName: draft.companyName,
+      personName: draft.personName,
+      personLastName: draft.personLastName,
+      personFirstName: draft.personFirstName,
+      userId: draft.userId,
+      userEmail: draft.userEmail,
+      userPhone: draft.userPhone,
+      siteName: draft.siteName,
+      constructionNumber: draft.constructionNumber,
+      deliveryLocation: draft.deliveryLocation,
+      deliveryDate: draft.deliveryDate,
+      items,
+      notes: draft.notes,
+      rentalStartDate: draft.rentalStartDate || "",
+      rentalEndDate: draft.rentalEndDate || "",
+      status: draft.status,
+      orderType: "rent",
+      date: now.toLocaleDateString("ja-JP") + " • " + now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
+      createdAt: now.toISOString(),
+    };
+    const flags = deductOrderStock(seed);
+    const finalOrder: any = {
+      ...seed,
+      ...flags,
+      ...(ongoing
+        ? { staffStatus: "配送完了", deliveryConfirmedAt: now.toISOString() }
+        : { staffStatus: "配送予定" }),
+    };
+    const blocks = getOrGenerateInvoiceBlocks(finalOrder);
+    const t = (blocks || []).reduce(
+      (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+      { subtotal: 0, tax: 0, total: 0 },
+    );
+    OrderBus.push("orders", { ...finalOrder, invoiceBlocks: blocks, subtotal: t.subtotal, tax: t.tax, total: t.total });
+    triggerToast(`レンタル契約 ${orderNumber} を${ongoing ? "稼働中として" : ""}登録しました`, "ok");
+    setDocDrawerOpen(false);
+    setTimeout(refresh, 300);
+  };
 
   const queues = [
     { id: "new" as const, label: "受注待ち", icon: "inbox", count: queueCounts.new },
@@ -131,6 +207,7 @@ export default function AdminRental() {
             <span>{total.toLocaleString()} 件{loading ? "（読込中…）" : ""}</span>
           </div>
         </div>
+        <Btn icon="add" variant="primary" onClick={() => setDocDrawerOpen(true)}>レンタル契約を登録</Btn>
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
@@ -179,6 +256,7 @@ export default function AdminRental() {
               <tr className="border-b border-slate-100 bg-white">
                 <th className="px-4 py-3 text-[11px] font-black text-slate-500">注文</th>
                 <th className="px-4 py-3 text-[11px] font-black text-slate-500">顧客 / 現場</th>
+                <th className="px-4 py-3 text-[11px] font-black text-slate-500">担当者</th>
                 <th className="px-4 py-3 text-[11px] font-black text-slate-500">レンタル期間</th>
                 <th className="px-4 py-3 text-right text-[11px] font-black text-slate-500">品目</th>
                 <th className="px-4 py-3 text-right text-[11px] font-black text-slate-500">金額</th>
@@ -197,6 +275,7 @@ export default function AdminRental() {
                     <div className="max-w-[260px] truncate text-sm font-black text-slate-900">{row.customer || "—"}</div>
                     <div className="mt-1 max-w-[260px] truncate text-xs font-bold text-slate-500">{row.site || "現場未設定"}</div>
                   </td>
+                  <td className="px-4 py-3 max-w-[160px] truncate text-sm font-bold text-slate-700">{row.person || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs font-bold text-slate-600">{row.start} - {row.end}</td>
                   <td className="px-4 py-3 text-right font-mono text-sm font-black text-slate-800">{row.items}</td>
                   <td className="px-4 py-3 text-right font-mono text-sm font-black text-slate-900">¥{(row.amount || 0).toLocaleString()}</td>
@@ -208,19 +287,24 @@ export default function AdminRental() {
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center justify-end gap-2">
                       {queue === "new" && (
-                        <Btn size="sm" variant="primary" icon="send" onClick={() => handleAccept(row)}>
-                          受注確定
-                        </Btn>
+                        <>
+                          <Btn size="sm" variant="primary" icon="send" onClick={() => handleAccept(row)}>
+                            受注確定
+                          </Btn>
+                          <button
+                            onClick={() => handleReject(row)}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-black text-rose-600 hover:bg-rose-100"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">block</span>
+                            却下
+                          </button>
+                        </>
                       )}
                       {queue === "arranged" && (
                         <Btn size="sm" variant="secondary" icon="play_arrow" onClick={() => handleMoveToActive(row)}>
                           稼働開始
                         </Btn>
                       )}
-                      <button onClick={() => openDeliveryDoc(row)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 hover:bg-slate-50">
-                        <span className="material-symbols-outlined text-[16px]">description</span>
-                        納品書
-                      </button>
                       <button onClick={() => openDetail(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50" title="詳細">
                         <span className="material-symbols-outlined text-[17px]">edit_note</span>
                       </button>
@@ -255,7 +339,10 @@ export default function AdminRental() {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}) });
+          // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
+          const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);
         }}
@@ -266,9 +353,11 @@ export default function AdminRental() {
         }}
       />
 
-      {viewingDocOrder && (
-        <DocumentViewer order={viewingDocOrder} type="納品書" onClose={() => setViewingDocOrder(null)} />
-      )}
+      <AdminRentalRegisterModal
+        open={docDrawerOpen}
+        onClose={() => setDocDrawerOpen(false)}
+        onCreate={handleRentalContractCreate}
+      />
     </div>
   );
 }

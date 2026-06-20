@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Drawer, Badge, triggerToast } from "./AdminUI";
-import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock } from "../utils/billing";
+import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock, getTaxRate } from "../utils/billing";
 import DocumentViewer from "./DocumentViewer";
+import ProductCombobox from "./ProductCombobox";
+import { useProducts } from "../context/ProductContext";
+import { useUser } from "../context/UserContext";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 
 type FieldPhoto = {
@@ -27,6 +30,19 @@ function collectFieldPhotos(label: string, ...values: any[]): FieldPhoto[] {
     .flatMap((value) => Array.isArray(value) ? value : value ? [value] : [])
     .map((photo) => normalizeFieldPhoto(photo, label))
     .filter((photo): photo is FieldPhoto => Boolean(photo));
+}
+
+function formatConfirmedAt(value: any): string {
+  if (!value) return "—";
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function FieldPhotoGrid({ photos, alt }: { photos: FieldPhoto[]; alt: string }) {
@@ -72,13 +88,14 @@ function FieldPhotoGrid({ photos, alt }: { photos: FieldPhoto[]; alt: string }) 
 }
 
 function buildOrderEditDraft(order: any) {
+  const o = order || {};
   return {
-    ...order,
-    items: (order.items || []).map((item: any) => ({ ...item })),
-    subtotal: Number(order.subtotal || 0),
-    tax: Number(order.tax || 0),
-    total: Number(order.total || 0),
-    delivery: Number(order.delivery || 0),
+    ...o,
+    items: (o.items || []).map((item: any) => ({ ...item })),
+    subtotal: Number(o.subtotal || 0),
+    tax: Number(o.tax || 0),
+    total: Number(o.total || 0),
+    delivery: Number(o.delivery || 0),
   };
 }
 
@@ -97,8 +114,10 @@ interface AdminOrderDrawerProps {
 }
 
 export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus, onUpdateOrder }: AdminOrderDrawerProps) {
-  if (!order) return null;
-
+  // フックは常に同じ順序・同じ数で呼ぶ必要がある（React のルール）。
+  // ドロワーは selectedOrder=null でも常にマウントされるため、early return をフックより
+  // 前に置くと order が null→object になった瞬間にフック数が変わりクラッシュする。
+  // そのため null ガードは全フックの後ろに置く。
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [costName, setCostName] = useState("追加配送費");
   const [costAmount, setCostAmount] = useState("");
@@ -110,6 +129,31 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
   const [viewingDoc, setViewingDoc] = useState<"請求書" | "回収書" | "納品書" | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState<any>(() => buildOrderEditDraft(order));
+  const { products } = useProducts();
+  const { users } = useUser();
+
+  // 注文が切り替わったら（開閉時にも）ローカルのフォーム状態をリセット。
+  // ドロワーは常時マウントのため、別注文の入力（追加費用・編集ドラフト）が持ち越されるのを防ぐ。
+  useEffect(() => {
+    setActiveBlockId(null);
+    setCostName("追加配送費");
+    setCostAmount("");
+    setCostTaxable(true);
+    setCostNote("");
+    setCostPhoto("");
+    setEditOpen(false);
+    setEditDraft(buildOrderEditDraft(order));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.firestoreId, order?.id, open]);
+
+  if (!order) return null;
+
+  // メール・電話番号は注文作成時のスナップショットではなく、顧客マスター（発注者 userId）の
+  // 現在値を表示・連携する。お客様が登録情報を更新すると admin の注文にも自動反映される。
+  // マスターに該当ユーザーが無い場合のみ、注文に保存された値へフォールバックする。
+  const liveUser = (users || []).find((u: any) => u && order.userId && u.id === order.userId) || null;
+  const liveEmail = (liveUser?.email || order.userEmail || "") as string;
+  const livePhone = (liveUser?.phone || order.userPhone || "") as string;
 
   const blocks = getOrGenerateInvoiceBlocks(order);
   const deliveryPhotos = collectFieldPhotos("納品写真", order.deliveryPhotos);
@@ -152,14 +196,21 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       note: costNote || undefined
     };
 
+    let matched = false;
     const updatedBlocks = blocks.map(b => {
       if (b.id === activeBlockId) {
+        matched = true;
         const extraCosts = [...(b.extraCosts || []), newCost];
         const updated = { ...b, extraCosts };
         return recalculateInvoiceBlock(updated);
       }
       return b;
     });
+    if (!matched) {
+      // 対象の請求ブロックが見つからない（古い activeBlockId 等）。成功トーストの空振りを防ぐ。
+      triggerToast("対象の請求ブロックが見つかりません", "err");
+      return;
+    }
 
     const overallSubtotal = updatedBlocks.reduce((sum, b) => sum + b.subtotal, 0);
     const overallTax = updatedBlocks.reduce((sum, b) => sum + b.tax, 0);
@@ -203,7 +254,9 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
         invoiceBlocks: updatedBlocks,
         subtotal: overallSubtotal,
         tax: overallTax,
-        total: overallTotal
+        total: overallTotal,
+        // 自動計上の弁償費を admin が削除した場合は再計上を抑止する。
+        ...(costId === "compensation-charge" ? { compensationDismissed: true } : {}),
       });
       triggerToast("追加費用を削除しました", "ok");
     }
@@ -225,10 +278,32 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
     }));
   };
 
+  // 商品コンボボックスで商品を選んだとき、その明細に商品マスタの情報を引き込む。
+  const pickDraftProduct = (index: number, p: any) => {
+    setEditDraft((prev: any) => ({
+      ...prev,
+      items: (prev.items || []).map((item: any, i: number) =>
+        i === index
+          ? {
+              ...item,
+              id: p.id || item.id,
+              name: p.name,
+              image: p.image ?? item.image,
+              category: p.category ?? item.category,
+              unit: p.unit ?? item.unit,
+              rentPrice: p.rentPrice ?? item.rentPrice,
+              rentPriceLongTerm: p.rentPriceLongTerm ?? item.rentPriceLongTerm,
+              buyPrice: p.buyPrice ?? item.buyPrice,
+            }
+          : item,
+      ),
+    }));
+  };
+
   const recalcEditDraftTotals = () => {
     setEditDraft((prev: any) => {
       const subtotal = (prev.items || []).reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + Number(prev.delivery || 0);
-      const tax = Math.floor(subtotal * 0.1);
+      const tax = Math.floor(subtotal * getTaxRate());
       return { ...prev, subtotal, tax, total: subtotal + tax };
     });
   };
@@ -244,13 +319,35 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       guaranteeFeeFlat: Number(item.guaranteeFeeFlat || 0),
     }));
 
+    // 品目ゼロでの保存を禁止する。空のまま保存すると注文の items が空になり（金額¥0・受注/レンタル一覧から消える等）、
+    // 過去に RN-2026-9091 が items を失った原因でもある。最低1品目を必須にする。
+    if (normalizedItems.length === 0) {
+      triggerToast("商品が1件もない注文は保存できません。品目を1件以上追加してください。", "err");
+      return;
+    }
+
+    // 請求ブロックは課金に関わる項目（期間・明細・配送料）が変わった時だけ作り直す。
+    // 連絡先など課金に無関係な編集で消すと、入金ステータスや追加費用（追加配送費など）が
+    // 失われてしまうため温存する。
+    const itemBillingSig = (its: any[]) =>
+      JSON.stringify((its || []).map((i: any) => [
+        i.id, Number(i.quantity || 0), i.calculatedPrice, i.rentPrice, i.buyPrice, Number(i.guaranteeFeeFlat || 0),
+      ]));
+    const billingChanged =
+      (editDraft.rentalStartDate || "") !== (order.rentalStartDate || "") ||
+      (editDraft.rentalEndDate || "") !== (order.rentalEndDate || "") ||
+      (editDraft.actualReturnDate || "") !== (order.actualReturnDate || "") ||
+      Number(editDraft.delivery || 0) !== Number(order.delivery || 0) ||
+      itemBillingSig(normalizedItems) !== itemBillingSig(order.items);
+
     const updates: any = {
       companyName: editDraft.companyName || "",
       personName: editDraft.personName || "",
       personLastName: editDraft.personLastName || "",
       personFirstName: editDraft.personFirstName || "",
-      userEmail: editDraft.userEmail || "",
-      userPhone: editDraft.userPhone || "",
+      // 連絡先は顧客マスターの現在値を保存（注文のスナップショットを最新に同期）。
+      userEmail: liveEmail || "",
+      userPhone: livePhone || "",
       siteName: editDraft.siteName || "",
       constructionNumber: editDraft.constructionNumber || "",
       deliveryLocation: editDraft.deliveryLocation || "",
@@ -268,10 +365,28 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       subtotal: Number(editDraft.subtotal || 0),
       tax: Number(editDraft.tax || 0),
       total: Number(editDraft.total || 0),
-      invoiceBlocks: undefined,
     };
+    // 課金項目が変わった時のみブロックを破棄して納品日基準で再生成させる。
+    if (billingChanged) {
+      updates.invoiceBlocks = undefined;
+      // 「金額を再計算」ボタンの押し忘れで明細と合計が乖離したまま保存されるのを防ぐため、
+      // 保存時に明細＋配送料から subtotal/tax/total を確定的に再計算する。
+      const recomputedSubtotal = normalizedItems.reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + Number(editDraft.delivery || 0);
+      const recomputedTax = Math.floor(recomputedSubtotal * getTaxRate());
+      updates.subtotal = recomputedSubtotal;
+      updates.tax = recomputedTax;
+      updates.total = recomputedSubtotal + recomputedTax;
+    }
 
     onUpdateOrder(order.firestoreId || order.id, updates);
+    // 編集モーダルでステータスを変更した場合は在庫台帳を必ず通す。
+    // onUpdateOrder は在庫を動かさないため、別途 onUpdateStatus 経由で
+    // 確認済み→出庫 / キャンセル・返却済・完了→入庫 を各画面の配線に委譲する
+    // （これをしないと、出庫済み注文をモーダルでキャンセルしても在庫が戻らない）。
+    const statusChanged = (updates.status || order.status) !== order.status;
+    if (statusChanged && onUpdateStatus) {
+      onUpdateStatus(order.firestoreId || order.id, updates.status, updates.staffStatus || undefined);
+    }
     triggerToast("注文情報を更新しました", "ok");
     setEditOpen(false);
   };
@@ -415,6 +530,33 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
               <span className="text-slate-500 block text-[10px]">レンタル終了予定</span>
               <span className="font-bold text-slate-800">{order.rentalEndDate ? order.rentalEndDate.replace(/-/g, "/") : "—"}</span>
             </div>
+            <div>
+              <span className="text-slate-500 block text-[10px]">納品確認時刻</span>
+              <span className="font-bold text-slate-800">{formatConfirmedAt(order.deliveryConfirmedAt)}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block text-[10px]">回収確認時刻</span>
+              <span className="font-bold text-slate-800">{formatConfirmedAt(order.collectionConfirmedAt)}</span>
+            </div>
+            {/* 作業担当者（誰が対応したか）— スタッフAPKのログイン中ユーザーを記録。 */}
+            {order.deliveredBy && (
+              <div>
+                <span className="text-slate-500 block text-[10px]">配送担当</span>
+                <span className="font-bold text-slate-800">{order.deliveredBy}</span>
+              </div>
+            )}
+            {order.collectedBy && (
+              <div>
+                <span className="text-slate-500 block text-[10px]">回収・現場検品担当（1回目）</span>
+                <span className="font-bold text-slate-800">{order.collectedBy}</span>
+              </div>
+            )}
+            {order.finalInspectedBy && (
+              <div>
+                <span className="text-slate-500 block text-[10px]">最終検品担当</span>
+                <span className="font-bold text-slate-800">{order.finalInspectedBy}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -651,8 +793,8 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       {/* Extra Cost Modal */}
       {activeBlockId && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/55 p-4 animate-fadeIn">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scaleIn">
-            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[88vh] overflow-hidden flex flex-col animate-scaleIn">
+            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 flex-shrink-0">
               <h3 className="font-bold text-slate-800">追加費用の入力</h3>
               <button 
                 onClick={() => setActiveBlockId(null)}
@@ -661,7 +803,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                 ✕
               </button>
             </div>
-            <div className="p-5 space-y-4 text-sm">
+            <div className="p-5 space-y-4 text-sm flex-1 min-h-0 overflow-y-auto">
               <div>
                 <label className="text-xs font-bold text-slate-500 block mb-1">費用項目</label>
                 <select
@@ -709,7 +851,12 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      setCostPhoto(URL.createObjectURL(file));
+                      // base64 data URL で保持する。保存時に externalizeImages がサーバへ
+                      // アップロードして URL 化するため、リロード後も他端末でも表示できる。
+                      // （blob: URL はタブ内限定で失効するため使わない。）
+                      const reader = new FileReader();
+                      reader.onload = () => setCostPhoto(typeof reader.result === "string" ? reader.result : "");
+                      reader.readAsDataURL(file);
                     }
                   }}
                   className="w-full text-xs text-slate-500 border border-slate-200 rounded-lg p-2 bg-slate-50 cursor-pointer"
@@ -727,7 +874,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                 />
               </div>
             </div>
-            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0">
               <button
                 onClick={() => setActiveBlockId(null)}
                 className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
@@ -764,31 +911,31 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
             <div className="p-5 overflow-y-auto space-y-5 text-sm">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                  <h4 className="text-xs font-bold text-slate-500 mb-3">顧客情報</h4>
+                  <h4 className="text-xs font-bold text-slate-500 mb-3">顧客情報 <span className="font-medium text-slate-400">（氏名・会社名・連絡先は顧客マスター連携・自動反映のため変更不可）</span></h4>
                   <div className="grid grid-cols-2 gap-3">
                     <label className="col-span-2">
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">会社名</span>
-                      <input value={editDraft.companyName || ""} onChange={(e) => setDraftValue("companyName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={editDraft.companyName || ""} readOnly title="顧客マスターの会社名です。変更はできません。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                     <label className="col-span-2">
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">担当者名</span>
-                      <input value={editDraft.personName || ""} onChange={(e) => setDraftValue("personName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={editDraft.personName || ""} readOnly title="顧客マスターの担当者名です。変更はできません。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                     <label>
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">姓</span>
-                      <input value={editDraft.personLastName || ""} onChange={(e) => setDraftValue("personLastName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={editDraft.personLastName || ""} readOnly title="顧客マスターの担当者名です。変更はできません。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                     <label>
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">名</span>
-                      <input value={editDraft.personFirstName || ""} onChange={(e) => setDraftValue("personFirstName", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={editDraft.personFirstName || ""} readOnly title="顧客マスターの担当者名です。変更はできません。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                     <label>
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">メール</span>
-                      <input value={editDraft.userEmail || ""} onChange={(e) => setDraftValue("userEmail", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={liveEmail} readOnly title="顧客マスターのメールアドレスです（登録情報の更新が自動反映されます）。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                     <label>
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">電話番号</span>
-                      <input value={editDraft.userPhone || ""} onChange={(e) => setDraftValue("userPhone", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                      <input value={livePhone} readOnly title="顧客マスターの電話番号です（登録情報の更新が自動反映されます）。" className="w-full border border-slate-200 bg-slate-100 text-slate-500 rounded-lg p-2 outline-none cursor-not-allowed" />
                     </label>
                   </div>
                 </div>
@@ -908,8 +1055,14 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                     <tbody className="divide-y divide-slate-100">
                       {(editDraft.items || []).map((item: any, idx: number) => (
                         <tr key={`${item.id || idx}-${idx}`}>
-                          <td className="p-2 min-w-[220px]">
-                            <input value={item.name || ""} onChange={(e) => setDraftItemValue(idx, "name", e.target.value)} className="w-full border border-slate-200 rounded p-1.5 outline-none focus:border-blue-500" />
+                          <td className="p-2 min-w-[240px]">
+                            <ProductCombobox
+                              products={products}
+                              value={item.name || ""}
+                              onChange={(text) => setDraftItemValue(idx, "name", text)}
+                              onPick={(p) => pickDraftProduct(idx, p)}
+                              placeholder="商品名で検索 / 選択（自由入力可）"
+                            />
                           </td>
                           <td className="p-2">
                             <select value={item.type || "rent"} onChange={(e) => setDraftItemValue(idx, "type", e.target.value)} className="border border-slate-200 rounded p-1.5 bg-white outline-none focus:border-blue-500">

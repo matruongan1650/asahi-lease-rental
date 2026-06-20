@@ -2,16 +2,25 @@ import React from "react";
 import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
-import { calculateRentalPrice, getOrGenerateInvoiceBlocks } from "../utils/billing";
+import { calculateRentalPrice, getOrGenerateInvoiceBlocks, getTaxRate } from "../utils/billing";
 import { isVehicleCategory } from '../utils/productUtils';
 import OrderBus from "../lib/orderBus";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ReturnConfirmationDesktop from "./desktop/ReturnConfirmationDesktop";
 
 export default function ReturnConfirmation() {
+  return useIsDesktop() ? <ReturnConfirmationDesktop /> : <ReturnConfirmationMobile />;
+}
+
+function ReturnConfirmationMobile() {
   const navigate = useNavigate();
   const location = useLocation();
   const { updateOrder, addCustomOrder } = useOrders();
 
   const { returnQuantities, order, method, address, pickupDate, pickupTime, photos } = location.state || {};
+  // 二度押しガード（モバイルの連打で updateOrder/alert が二重発火するのを防ぐ）。成功時は /orders へ遷移し
+  // アンマウントされるため解除不要。
+  const submittingRef = React.useRef(false);
 
   if (!order || !returnQuantities) {
     return <div className="p-10 text-center">エラーが発生しました。もう一度やり直してください。</div>;
@@ -21,6 +30,8 @@ export default function ReturnConfirmation() {
   const totalItemsCount = itemsToReturn.reduce((sum: number, item: any) => sum + returnQuantities[item.id], 0);
 
   const handleSubmit = () => {
+    if (submittingRef.current) return; // 連打ガード
+    submittingRef.current = true;
     // Determine actual return date (pickupDate or today)
     let actualReturnDate = pickupDate;
     if (!actualReturnDate) {
@@ -35,9 +46,12 @@ export default function ReturnConfirmation() {
     const remainingItemsList: any[] = [];
     
     let returnedTotalRentalPrice = 0;
-    let returnedTotalBuyPrice = 0; 
+    let returnedTotalBuyPrice = 0;
     let remainingTotalRentalPrice = 0;
     let remainingTotalBuyPrice = 0;
+    // 「全量返却か」は実際の残数で判定する。rentPrice=0/未設定の品目をリストから落とす実装だと
+    // remainingItemsList.length では一部返却を全量返却と誤判定するため、数量で集計する。
+    let totalRemainingQty = 0;
 
     order.items.forEach((item: any) => {
       const returningQty = returnQuantities[item.id] || 0;
@@ -45,14 +59,14 @@ export default function ReturnConfirmation() {
       const currentRemainingQty = item.quantity - alreadyReturnedQty;
       const newRemainingQty = currentRemainingQty - returningQty;
 
-      // 1. Calculate Returned Item
+      // 1. Calculate Returned Item（価格の有無ではなく type で判定。0/未設定価格でも品目は計上する）
       if (returningQty > 0) {
-        if (item.type === 'rent' && item.rentPrice) {
+        if (item.type === 'rent') {
           const { totalPrice, breakdown } = calculateRentalPrice(
-            item.rentPrice, order.rentalStartDate, actualReturnDate, hasVehicle, isVehicleCategory(item.category), item.rentPriceLongTerm
+            item.rentPrice || 0, order.rentalStartDate, actualReturnDate, hasVehicle, isVehicleCategory(item.category), item.rentPriceLongTerm
           );
           returnedTotalRentalPrice += totalPrice * returningQty;
-          
+
           returnedItemsList.push({
             ...item,
             quantity: returningQty,
@@ -61,19 +75,28 @@ export default function ReturnConfirmation() {
             calculatedPrice: totalPrice,
             monthlyBreakdown: breakdown,
           });
+        } else if (item.type === 'buy') {
+          // 販売品の返却分も金額に計上（残存側の計算と対称）。
+          returnedTotalBuyPrice += (item.buyPrice || 0) * returningQty;
+          returnedItemsList.push({
+            ...item,
+            quantity: returningQty,
+            returnedQuantity: returningQty,
+            actualReturnDate,
+          });
         }
       }
 
-      // 2. Calculate Remaining Item
-      if (newRemainingQty > 0 || item.type === 'buy') {
-        const remainingQtyToKeep = item.type === 'rent' ? newRemainingQty : item.quantity;
-        
-        if (item.type === 'rent' && item.rentPrice) {
+      // 2. Calculate Remaining Item（rent / buy とも残った数量 newRemainingQty を使う）
+      const remainingQtyToKeep = Math.max(0, newRemainingQty);
+      totalRemainingQty += remainingQtyToKeep;
+      if (remainingQtyToKeep > 0) {
+        if (item.type === 'rent') {
           const { totalPrice, breakdown } = calculateRentalPrice(
-            item.rentPrice, order.rentalStartDate, order.rentalEndDate, hasVehicle, isVehicleCategory(item.category), item.rentPriceLongTerm
+            item.rentPrice || 0, order.rentalStartDate, order.rentalEndDate, hasVehicle, isVehicleCategory(item.category), item.rentPriceLongTerm
           );
           remainingTotalRentalPrice += totalPrice * remainingQtyToKeep;
-          
+
           remainingItemsList.push({
             ...item,
             quantity: remainingQtyToKeep,
@@ -82,27 +105,35 @@ export default function ReturnConfirmation() {
             monthlyBreakdown: breakdown,
           });
         } else if (item.type === 'buy') {
-          remainingTotalBuyPrice += item.buyPrice * item.quantity;
-          remainingItemsList.push({ ...item });
+          // 残った販売数量分のみ計上（元数量ではない＝二重請求防止）。
+          remainingTotalBuyPrice += (item.buyPrice || 0) * remainingQtyToKeep;
+          remainingItemsList.push({ ...item, quantity: remainingQtyToKeep });
         }
       }
     });
 
+    const taxRate = getTaxRate();
     const returnedSubtotal = returnedTotalRentalPrice + returnedTotalBuyPrice;
-    const returnedTax = Math.floor(returnedSubtotal * 0.1);
+    const returnedTax = Math.floor(returnedSubtotal * taxRate);
     const returnedTotal = returnedSubtotal + returnedTax;
 
     const remainingSubtotal = remainingTotalRentalPrice + remainingTotalBuyPrice;
-    const remainingTax = Math.floor(remainingSubtotal * 0.1);
+    const remainingTax = Math.floor(remainingSubtotal * taxRate);
     const remainingTotal = remainingSubtotal + remainingTax;
 
-    const returningEverything = remainingItemsList.length === 0;
+    const returningEverything = totalRemainingQty === 0;
 
     // 直接持ち込み（全量・一部いずれも）は倉庫の「持込返却 検品」へ回す。
     // 業者集荷（pickup）の場合は、スタッフの「回収予定」タスクとして登録する。
     const returnReqType = returningEverything ? "full" : "partial";
 
-    if (method === "pickup") {
+    // 【ルール】一部返却（partial）は「直接持ち込み」のみ。業者集荷は不可。
+    // 万一 method=pickup で一部返却が来た場合でも、回収（集荷）パイプラインには
+    // 流さず必ず持込検品キューへ回す。これにより admin の「回収手配」/
+    // staff の「回収」一覧に顧客発の一部集荷が混入しない。
+    const usePickupFlow = method === "pickup" && returningEverything;
+
+    if (usePickupFlow) {
       updateOrder(order.id, {
         status: "回収中",
         staffStatus: "回収予定",
@@ -167,15 +198,15 @@ export default function ReturnConfirmation() {
     }
 
     void alertDialog(
-      method === "direct"
-        ? "返却を受け付けました。倉庫での検品後に内容が確定します。"
-        : "返却リクエストを送信しました。"
+      usePickupFlow
+        ? "返却リクエストを送信しました。"
+        : "返却を受け付けました。倉庫での検品後に内容が確定します。"
     );
     navigate("/orders");
   };
 
   return (
-    <div className="w-full max-w-md bg-white dark:bg-slate-900 min-h-screen shadow-xl relative flex flex-col pb-32 mx-auto">
+    <div className="w-full max-w-md bg-white dark:bg-slate-900 min-h-screen shadow-xl relative flex flex-col pb-[calc(160px+env(safe-area-inset-bottom))] mx-auto">
       <header className="sticky top-0 z-10 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center px-4 py-3 justify-between">
           <button onClick={() => window.history.length > 2 ? navigate(-1) : navigate("/orders")} className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-200">
@@ -190,7 +221,7 @@ export default function ReturnConfirmation() {
       <main className="flex-1 px-4 py-6 flex flex-col gap-6 text-slate-900 dark:text-slate-100">
         
         <section className="flex flex-col gap-3">
-          <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 px-1 border-b border-slate-200 dark:border-slate-800 pb-2">集荷情報</h3>
+          <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 px-1 border-b border-slate-200 dark:border-slate-800 pb-2">{method === "direct" ? "返却情報" : "集荷情報"}</h3>
           <div className="bg-slate-50 dark:bg-slate-800/80 rounded-xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="flex items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0 size-10">
@@ -258,7 +289,7 @@ export default function ReturnConfirmation() {
         </div>
       </main>
 
-      <div className="fixed bottom-0 w-full max-w-[480px] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 pb-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 pb-safe">
+      <div className="fixed bottom-0 w-full max-w-[480px] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pt-4 px-4 pb-[calc(2rem+env(safe-area-inset-bottom))] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
         <div className="flex flex-col gap-3">
           <button onClick={handleSubmit} className="w-full bg-primary hover:bg-primary/90 text-white font-bold text-base py-4 px-6 rounded-xl shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
             <span>返却依頼を送信</span>

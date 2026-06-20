@@ -6,6 +6,7 @@ import React, {
   useEffect,
 } from "react";
 import OrderBus from "../lib/orderBus";
+import { acquireUserToken, setUserToken } from "../lib/dataBackend";
 
 export interface UserProfile {
   id: string;
@@ -20,6 +21,9 @@ export interface UserProfile {
   companyType?: "our_company" | "client_company";
   password?: string;
   position?: string;
+  team?: string;
+  employeeCode?: string;
+  status?: "active" | "inactive" | string;
   fax?: string;
   registrationNumber?: string;
   companyPhone?: string;
@@ -29,14 +33,42 @@ interface UserContextType {
   profile: UserProfile;
   setProfile: (profile: UserProfile) => void;
   users: UserProfile[];
-  addUser: (user: UserProfile) => void;
+  /** users マスタが（ローカルキャッシュ or サーバー初回スナップショットで）読み込み済みか。
+   *  起動直後（空のうち）にログインを試すと誤って「アカウントが見つかりません」になるため、ゲートで使う。 */
+  usersLoaded: boolean;
+  /** ユーザーを追加する。ID/メールの一意化を行い、実際に保存されたレコードを返す。 */
+  addUser: (user: UserProfile) => UserProfile;
   updateUser: (id: string, updates: Partial<UserProfile>) => void;
+  /** 指定メールが他ユーザー（exceptId 以外）で既に使われているか判定する。 */
+  isEmailTaken: (email: string, exceptId?: string) => boolean;
   deleteUser: (id: string) => void;
   /** ログイン中ユーザー（未ログインなら null）。お客様サイトの認証ゲートで使用。 */
   currentUser: UserProfile | null;
-  /** メールアドレス or ユーザーID + パスワードでログイン。成功時 true。 */
-  login: (loginId: string, password: string) => boolean;
+  /**
+   * メールアドレス or ユーザーID + パスワードでログイン。成功時 true。
+   * allowedRoles を渡すと、その役割以外のアカウントはログインを拒否する
+   * （お客様サイトで社内アカウント(admin/staff)のログインを防ぐ等）。
+   */
+  login: (loginId: string, password: string, allowedRoles?: string[]) => boolean;
   logout: () => void;
+}
+
+/** admin の作成フォームが空欄時に入れていた共有プレースホルダ。これらは一意でないためログインID衝突の原因になる。 */
+const SHARED_PLACEHOLDER_EMAILS = new Set([
+  "contact@example.com",
+  "staff@example.com",
+]);
+
+/** 衝突しない一意のユーザーIDを生成する（既存ユーザーと重複しないことを保証）。 */
+function makeUniqueUserId(existing: UserProfile[]): string {
+  const taken = new Set(existing.map((u) => String(u?.id || "")));
+  const rand = () =>
+    typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+      ? (crypto as any).randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  let id = `USR_${rand()}`;
+  while (taken.has(id)) id = `USR_${rand()}`;
+  return id;
 }
 
 const defaultProfile: UserProfile = {
@@ -134,6 +166,10 @@ const initialUsers: UserProfile[] = [
     role: "staff",
     companyType: "our_company",
     password: "1234",
+    employeeCode: "STF-004",
+    team: "東京中央ベース",
+    position: "配送・回収・倉庫スタッフ",
+    status: "active",
   },
 ];
 
@@ -187,6 +223,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     return () => unsub();
   }, []);
 
+  // users が（ローカルキャッシュ/シード/サーバースナップショットで）1件でも入れば読み込み済みとみなす。
+  const usersLoaded = users.length > 0;
+
   const currentUser =
     (sessionUserId && users.find((u) => u && u.id === sessionUserId)) || null;
 
@@ -204,22 +243,47 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const login = (loginId: string, password: string): boolean => {
+  const login = (
+    loginId: string,
+    password: string,
+    allowedRoles?: string[],
+  ): boolean => {
     const key = (loginId || "").trim().toLowerCase();
     if (!key) return false;
-    const user = users.find(
+    // 空パスワードは不可（パスワード未設定アカウントへの素通りログインを防ぐ）。
+    if (!password) return false;
+
+    // メール or ID が一致するアカウントを全件取得。
+    // 一意に定まらない（0件 or 複数）場合は fail-closed。
+    // → 重複メール/重複IDの混入時に「別アカウントにログインしてしまう」事故を防ぐ。
+    const matches = users.filter(
       (u) =>
         u &&
         ((u.email || "").trim().toLowerCase() === key ||
           (u.id || "").trim().toLowerCase() === key),
     );
-    if (!user) return false;
-    if ((user.password || "") !== password) return false;
+    if (matches.length !== 1) return false;
+
+    const user = matches[0];
+    // 保存パスワードが空のアカウントはログイン不可（作成漏れの素通りを防ぐ）。
+    if (!user.password) return false;
+    if (user.password !== password) return false;
+    // 停止中アカウントは不可（admin/staff ゲートと同じ扱いを login に集約）。
+    if ((user.status || "active") === "inactive") return false;
+    // 役割制限（お客様サイトでは customer / customer_staff のみ許可など）。
+    if (allowedRoles && !allowedRoles.includes(user.role || "customer")) return false;
+
     persistSession(user.id);
+    // サーバが呼び出し元を信頼できるよう、署名付きユーザートークンを取得して保持する（非同期・失敗は無害）。
+    void acquireUserToken(loginId, password);
     return true;
   };
 
-  const logout = () => persistSession(null);
+  const logout = () => {
+    // 次のユーザーへトークンが引き継がれないようクリアする。
+    setUserToken(null);
+    persistSession(null);
+  };
 
   // setProfile 互換: 既存ユーザーならマスタを更新しつつそのユーザーでセッションを張る
   // （admin の「代理ログイン」や Checkout の連絡先更新が従来どおり動く）。
@@ -233,10 +297,44 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const addUser = (user: UserProfile) => {
-    OrderBus.push("users", user as any);
+    // 最新の users ストアを直接参照（同一tick内の連続追加=一括登録でも重複を検出するため）。
+    const list = OrderBus.getAll("users") as unknown as UserProfile[];
+
+    // ① 一意なID。未指定 or 既存と重複する場合は衝突しないIDを再採番する。
+    //    （ランダム4桁IDの衝突で「別アカウントにログイン」「サーバ側で別アカウントを上書き」する事故を防ぐ）
+    const idTaken =
+      user.id && list.some((u) => u && String(u.id) === String(user.id));
+    const id = !user.id || idTaken ? makeUniqueUserId(list) : user.id;
+
+    // ② 一意なログインID(メール)。空欄/共有プレースホルダ/既存重複は一意な代替に置換する。
+    //    （同一メールだと login() が fail-closed となりログインできなくなるため）
+    const emailNorm = (user.email || "").trim().toLowerCase();
+    const emailDup =
+      !!emailNorm &&
+      list.some((u) => u && (u.email || "").trim().toLowerCase() === emailNorm);
+    const email =
+      !emailNorm || SHARED_PLACEHOLDER_EMAILS.has(emailNorm) || emailDup
+        ? `usr-${id.toLowerCase()}@asahi.local`
+        : user.email;
+
+    const record = { ...user, id, email } as UserProfile;
+    OrderBus.push("users", record as any);
+    return record;
   };
   const updateUser = (id: string, updates: Partial<UserProfile>) => {
     OrderBus.patch("users", id, updates as any);
+  };
+  /** 指定メールが他ユーザー（exceptId 以外）で既に使われているか。編集時のログインID衝突防止に使う。 */
+  const isEmailTaken = (email: string, exceptId?: string): boolean => {
+    const norm = (email || "").trim().toLowerCase();
+    if (!norm) return false;
+    const list = OrderBus.getAll("users") as unknown as UserProfile[];
+    return list.some(
+      (u) =>
+        u &&
+        String(u.id) !== String(exceptId) &&
+        (u.email || "").trim().toLowerCase() === norm,
+    );
   };
   const deleteUser = (id: string) => {
     OrderBus.remove("users", id);
@@ -249,8 +347,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         profile,
         setProfile,
         users,
+        usersLoaded,
         addUser,
         updateUser,
+        isEmailTaken,
         deleteUser,
         currentUser,
         login,

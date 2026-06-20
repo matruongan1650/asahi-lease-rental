@@ -7,8 +7,17 @@ import { useUser } from "../context/UserContext";
 import { useProducts } from "../context/ProductContext";
 import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
+import { SALES_ENABLED } from "../config/features";
+import { LONG_TERM_THRESHOLD_DAYS } from "../utils/billing";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import HomeDesktop from "./desktop/HomeDesktop";
 
+// PC はデスクトップ専用 UI、スマホは従来のモバイル UI。
 export default function Home() {
+  return useIsDesktop() ? <HomeDesktop /> : <HomeMobile />;
+}
+
+function HomeMobile() {
   const navigate = useNavigate();
   const { products } = useProducts();
   const { featuredIds, isFeatured, toggleFeatured } = useFeatured();
@@ -95,9 +104,10 @@ export default function Home() {
             rentPriceLongTerm: product.rentPriceLongTerm,
             buyPrice: product.buyPrice,
             quantity: quantities[id],
-            type: product.rentPrice ? 'rent' : 'buy', // Default to rent if available
+            type: (!SALES_ENABLED || product.rentPrice) ? 'rent' : 'buy', // 販売無効時はレンタル固定
             rentalDays: 1, // Default 1 day
             category: product.category,
+            unit: product.unit,
           });
         }
       }
@@ -244,7 +254,7 @@ export default function Home() {
               <span className="w-1 h-4 bg-primary rounded-full"></span>
               {activeTab === 'supplies' ? '保安用品アイテム' : '保安車両アイテム'}
             </h2>
-            <Link to="/products" className="text-xs font-medium text-primary hover:text-primary/80">すべて見る</Link>
+            <Link to={activeTab === 'supplies' ? '/products?group=supplies' : '/products?group=vehicles'} className="text-xs font-medium text-primary hover:text-primary/80">すべて見る</Link>
           </div>
           <div className="flex overflow-x-auto hide-scrollbar gap-2 px-5 pb-2">
             {activeTab === 'supplies' ? (
@@ -281,8 +291,8 @@ export default function Home() {
               <div className="absolute inset-0 p-6 flex flex-col justify-center items-start text-white">
                 <span className="bg-primary/90 text-[10px] font-bold px-2.5 py-1 rounded-md mb-2 tracking-wider">キャンペーン</span>
                 <h3 className="text-xl font-black leading-tight mb-1">保安商品レンタル 20%OFF</h3>
-                <p className="text-xs text-white/80 mb-4 max-w-[60%]">1ヶ月以上の長期レンタルがお得に。</p>
-                <button className="bg-white text-slate-900 text-xs font-bold px-4 py-2 rounded-full shadow-lg active:scale-95 transition-transform flex items-center gap-1">
+                <p className="text-xs text-white/80 mb-4 max-w-[60%]">{LONG_TERM_THRESHOLD_DAYS}日以上の長期レンタルがお得に。</p>
+                <button onClick={() => navigate("/categories")} className="bg-white text-slate-900 text-xs font-bold px-4 py-2 rounded-full shadow-lg active:scale-95 transition-transform flex items-center gap-1">
                   詳細を見る <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
                 </button>
               </div>
@@ -290,7 +300,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className={`mt-8 bg-white dark:bg-slate-900/40 py-6 border-y border-slate-100 dark:border-slate-800/50 ${totalItems > 0 ? "pb-24" : ""}`}>
+        <div className={`mt-8 bg-white dark:bg-slate-900/40 py-6 border-y border-slate-100 dark:border-slate-800/50 ${totalItems > 0 ? "pb-[calc(6rem+env(safe-area-inset-bottom))]" : ""}`}>
           <div className="px-5 flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">注目商品</h2>
             <Link to="/products?featured=true" className="text-xs font-bold text-primary hover:text-primary/80 flex items-center gap-0.5">
@@ -372,7 +382,7 @@ const ProductCard: React.FC<{id: string, name: string, price: string, salePrice:
               <span className="text-primary text-base font-extrabold">¥{price}</span>
               <span className="text-slate-400 text-xs">/日</span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-1">販売価格: ¥{salePrice}</p>
+            {SALES_ENABLED && <p className="text-[10px] text-slate-500 mt-1">販売価格: ¥{salePrice}</p>}
           </Link>
           <div className="mt-2 flex items-center justify-between">
             <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>

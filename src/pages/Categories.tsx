@@ -2,8 +2,15 @@ import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useProducts } from "../context/ProductContext";
 import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
+import CustomerNotificationBell from "../components/CustomerNotificationBell";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import CategoriesDesktop from "./desktop/CategoriesDesktop";
 
 export default function Categories() {
+  return useIsDesktop() ? <CategoriesDesktop /> : <CategoriesMobile />;
+}
+
+function CategoriesMobile() {
   const location = useLocation();
   const { products } = useProducts();
   const supplyCategories = getSupplyCategories(products);
@@ -19,7 +26,6 @@ export default function Categories() {
   }, [location.search]);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [showNotifications, setShowNotifications] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -48,27 +54,8 @@ export default function Categories() {
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">商品カテゴリー</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">必要な機材や資材を探す</p>
           </div>
-          <button onClick={() => setShowNotifications(!showNotifications)} className="relative p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group">
-            <span className="material-symbols-outlined text-slate-700 dark:text-slate-200 group-active:scale-95 transition-transform">notifications</span>
-            <span className="absolute top-2 right-2 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-background-light dark:border-background-dark"></span>
-          </button>
+          <CustomerNotificationBell />
         </div>
-        
-        {showNotifications && (
-          <div className="absolute top-16 right-4 w-72 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 p-4 z-50 animate-in fade-in slide-in-from-top-2">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-2 pb-2 border-b border-slate-100 dark:border-slate-700">お知らせ</h3>
-            <div className="flex flex-col gap-3">
-              <div className="text-sm">
-                <p className="text-primary font-bold text-xs mb-1">新着</p>
-                <p className="text-slate-700 dark:text-slate-300">新しい保安車両が入荷しました。</p>
-              </div>
-              <div className="text-sm">
-                <p className="text-slate-400 font-bold text-xs mb-1">システム</p>
-                <p className="text-slate-700 dark:text-slate-300">メンテナンス計画のお知らせ</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="px-4 pb-4" ref={searchContainerRef}>
           <div className="flex items-center bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden h-12 focus-within:ring-2 focus-within:ring-primary/20 transition-shadow">

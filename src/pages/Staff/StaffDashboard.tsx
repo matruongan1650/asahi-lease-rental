@@ -14,8 +14,10 @@ import {
   IconBtn,
   MetricCard,
   SegmentControl,
-  formatCount
+  formatCount,
+  PhotoCaptureButton
 } from "../../components/staff/StaffUI";
+import { uploadDataUrl } from "../../lib/imageUpload";
 import {
   MobileLiveProvider,
   useMobileLive,
@@ -34,10 +36,15 @@ import { useOrders } from "../../context/OrderContext";
 import { useUser, UserProfile } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { finalizePartialReturn } from "../../utils/returnProcessing";
+import { computeCompensationCharge } from "../../utils/billing";
 import { byOrderDateDesc } from "../../utils/orderSort";
 import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { buildStaffNotifications, AppNotification } from "../../utils/notifications";
+import { useNotificationReads } from "../../lib/notificationReads";
+import { useStaffNotificationAlerts, initStaffNotify } from "../../lib/staffNotify";
+import { alertDialog } from "../../components/AppDialog";
+import { loadDraft, saveDraft } from "./flowDraft";
 
 const todayLabel = () => new Date().toLocaleDateString("ja-JP", {
   year: "numeric",
@@ -46,7 +53,8 @@ const todayLabel = () => new Date().toLocaleDateString("ja-JP", {
   weekday: "short",
 });
 
-function StaffNotificationPopover({ items }: { items: AppNotification[] }) {
+function StaffNotificationPopover({ items, isRead, markRead, onClose, onNavigate }: { items: AppNotification[]; isRead: (n: AppNotification) => boolean; markRead: (ns: AppNotification[]) => void; onClose: () => void; onNavigate?: (n: AppNotification) => void }) {
+  const unread = items.reduce((c, n) => c + (isRead(n) ? 0 : 1), 0);
   const toneStyle = (tone: AppNotification["tone"]): React.CSSProperties => {
     if (tone === "danger") return { background: "var(--danger-tint)", color: "var(--danger-bright)", borderColor: "var(--danger-bright)" };
     if (tone === "warning") return { background: "var(--warning-tint)", color: "var(--warning-bright)", borderColor: "var(--warning-bright)" };
@@ -55,22 +63,35 @@ function StaffNotificationPopover({ items }: { items: AppNotification[] }) {
   };
 
   return (
-    <div style={{ position: "absolute", right: 0, top: 48, zIndex: 70, width: 318, maxWidth: "calc(100vw - 24px)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, boxShadow: "var(--shadow-pop)", padding: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, borderBottom: "1px solid var(--border)", marginBottom: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 900, color: "var(--fg)" }}>通知</div>
-        <Badge variant={items.length ? "warning" : "neutral"}>{items.length}件</Badge>
+    <>
+      <div style={{ position: "fixed", inset: 0, zIndex: 69 }} onClick={onClose} />
+      <div style={{ position: "absolute", right: 0, top: 48, zIndex: 70, width: 318, maxWidth: "calc(100vw - 24px)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, boxShadow: "var(--shadow-pop)", padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, borderBottom: "1px solid var(--border)", marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: "var(--fg)" }}>通知{unread > 0 ? `（未読 ${unread}）` : ""}</div>
+          {unread > 0 ? (
+            <button onClick={() => markRead(items)} style={{ fontSize: 11.5, fontWeight: 800, color: "var(--brand-accent)", background: "none", border: "none", cursor: "pointer" }}>すべて既読</button>
+          ) : (
+            <Badge variant="neutral">{items.length}件</Badge>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "60vh", overflowY: "auto" }}>
+          {items.length === 0 ? (
+            <div style={{ padding: "20px 8px", textAlign: "center", color: "var(--fg-muted)", fontSize: 13, fontWeight: 700 }}>現在の通知はありません</div>
+          ) : items.map((item) => {
+            const read = isRead(item);
+            const canNav = !!(item.target || item.relatedOrderId);
+            return (
+              <button key={item.id} onClick={() => { markRead([item]); if (canNav && onNavigate) { onNavigate(item); onClose(); } }} style={{ position: "relative", textAlign: "left", border: "1px solid", borderRadius: 13, padding: "10px 11px", cursor: "pointer", opacity: read ? 0.5 : 1, ...toneStyle(item.tone) }}>
+                {!read && <span style={{ position: "absolute", top: 9, right: 9, width: 8, height: 8, borderRadius: 9999, background: "var(--danger-bright)" }} />}
+                <div style={{ fontSize: 12.5, fontWeight: 900, paddingRight: 12 }}>{item.title}</div>
+                <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontWeight: 700, marginTop: 3 }}>{item.body}</div>
+                {canNav && <div style={{ fontSize: 11, fontWeight: 800, marginTop: 5, display: "flex", alignItems: "center", gap: 3, opacity: 0.85 }}>開く<Icon name="arrowRight" size={12} /></div>}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {items.length === 0 ? (
-          <div style={{ padding: "20px 8px", textAlign: "center", color: "var(--fg-muted)", fontSize: 13, fontWeight: 700 }}>現在の通知はありません</div>
-        ) : items.map((item) => (
-          <div key={item.id} style={{ border: "1px solid", borderRadius: 13, padding: "10px 11px", ...toneStyle(item.tone) }}>
-            <div style={{ fontSize: 12.5, fontWeight: 900 }}>{item.title}</div>
-            <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontWeight: 700, marginTop: 3 }}>{item.body}</div>
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -195,7 +216,8 @@ function StatTile({ label, value, unit, icon, variant = "neutral", outdoorMode, 
 // High-Contrast Alert Row
 // ---------------------------------------------------------------------------
 function AlertRow({ title, sub, outdoorMode, onClick }: any) {
-  const c = outdoorMode ? "#FF3333" : "#EF4444";
+  // 危険色はトークンに統一（以前はハードコードの赤で danger 系 MetricCard/Badge と不一致だった）。
+  const c = "var(--danger-bright)";
   return (
     <div
       onClick={onClick}
@@ -252,7 +274,7 @@ function DeliveryCard({ o, done, outdoorMode, onClick }: any) {
               {o.priority === "急ぎ" && !done && <Badge variant="warning">急ぎ</Badge>}
             </div>
             <div style={{ fontSize: 16.5, fontWeight: 900, color: "var(--fg)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>{o.site}</div>
-            <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 4, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.company}</div>
+            <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 4, fontWeight: 700, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", wordBreak: "break-word" }}>{o.company}</div>
           </div>
         </div>
         <Badge variant={done ? "success" : "brand"}>{done ? "完了" : o.window}</Badge>
@@ -270,7 +292,7 @@ function DeliveryCard({ o, done, outdoorMode, onClick }: any) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: outdoorMode ? "2px solid #00FF66" : "1px solid var(--border)" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, color: "var(--fg-muted)", fontSize: 12.5, fontWeight: 700 }}>
           <Icon name="mapPin" size={14} color="var(--fg-subtle)" />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.addr || "住所未設定"}</span>
+          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{o.addr || "住所未設定"}</span>
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3, color: "var(--brand-accent)", fontWeight: 900, whiteSpace: "nowrap", fontSize: 12.5 }}>
           {done ? "詳細を表示" : "業務を開始"}<Icon name="chevronRight" size={15} />
@@ -309,7 +331,7 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
               {o.returnRequestType === "full" && <Badge variant="brand">一括返却</Badge>}
             </div>
             <div style={{ fontSize: 16.5, fontWeight: 900, color: outdoorMode ? "#FFFFFF" : "var(--fg)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>{o.site}</div>
-            <div style={{ fontSize: 12.5, color: outdoorMode ? "rgba(255,255,255,0.7)" : "var(--fg-muted)", marginTop: 4, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.company}</div>
+            <div style={{ fontSize: 12.5, color: outdoorMode ? "rgba(255,255,255,0.7)" : "var(--fg-muted)", marginTop: 4, fontWeight: 700, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", wordBreak: "break-word" }}>{o.company}</div>
           </div>
         </div>
         <Badge variant={done ? "success" : (outdoorMode ? "warning" : "neutral")} icon={done ? "check" : "clock"}>{done ? "完了" : o.window}</Badge>
@@ -331,7 +353,7 @@ function RecoveryCard({ o, done, outdoorMode, onClick }: any) {
       }}>
         <span style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, color: outdoorMode ? "#F59E0B" : "inherit" }}>
           <Icon name="mapPin" size={14} color={outdoorMode ? "#F59E0B" : "var(--fg-subtle)"} />
-          <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.addr || o.dist || "住所未設定"}</span>
+          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{o.addr || o.dist || "住所未設定"}</span>
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3, color: outdoorMode ? "#F59E0B" : "var(--brand-accent)", fontWeight: 800 }}>
           {done ? "詳細を表示" : "業務を開始"}<Icon name="chevronRight" size={15} />
@@ -361,6 +383,7 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   const ml = useMobileLive();
   const { orders } = useOrders();
   const [subTab, setSubTab] = useState("haisou");
+  const [q, setQ] = useState("");
   const [viewingDoc, setViewingDoc] = useState<{ order: any; type: "納品書" | "回収書" } | null>(null);
   const deliveries = ml.liveDeliveries;
   const recoveries = ml.liveRecoveries;
@@ -382,10 +405,12 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   ).sort(byOrderDateDesc);
 
   // 大量データでも重くならないよう各リストを段階表示（subTab 切替で先頭に戻す）。
-  const dlvPage = usePagedList(deliveries, 50, subTab);
-  const rtnPage = usePagedList(recoveries, 50, subTab);
-  const dlvHistPage = usePagedList(deliveryHistory, 50, subTab);
-  const rtnHistPage = usePagedList(recoveryHistory, 50, subTab);
+  const qn = q.trim().toLowerCase();
+  const matchQ = (o: any) => !qn || [o.orderNumber, o.id, o.companyName, o.company, o.siteName, o.site, o.deliveryLocation, o.address, o.addr].some((v) => String(v || "").toLowerCase().includes(qn));
+  const dlvPage = usePagedList(deliveries.filter(matchQ), 50, subTab + "|" + qn);
+  const rtnPage = usePagedList(recoveries.filter(matchQ), 50, subTab + "|" + qn);
+  const dlvHistPage = usePagedList(deliveryHistory.filter(matchQ), 50, subTab + "|" + qn);
+  const rtnHistPage = usePagedList(recoveryHistory.filter(matchQ), 50, subTab + "|" + qn);
 
   // 完了済み(doneDlv/doneRtn)はリストから外れるため、単純な引き算だと
   // 件数がマイナスになる。実際に残っているタスクを filter で数える。
@@ -409,6 +434,8 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
           <MetricCard label="未完了回収" value={pendingRtnCount} unit="件" icon="package" tone="success" onClick={() => setSubTab("kaishu")} />
         </div>
         <SegmentControl items={tabs} active={subTab} onChange={setSubTab} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="注文番号・会社・現場・住所で検索"
+          style={{ width: "100%", marginTop: 10, boxSizing: "border-box", border: "1px solid var(--border-2)", borderRadius: 12, padding: "10px 13px", fontSize: 14, fontWeight: 700, color: "var(--fg)", background: "var(--surface)", outline: "none" }} />
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px", minHeight: 0 }}>
@@ -484,8 +511,8 @@ function HistoryCard({ order, kind, date, onViewDoc }: any) {
           <Icon name={kind === "納品" ? "truck" : "package"} size={22} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company}</div>
-          <div style={{ fontSize: 12, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{num}{site ? " ・ " + site : ""}</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "var(--fg)", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{company}</div>
+          <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 3, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-all" }}>{num}{site ? " ・ " + site : ""}</div>
         </div>
         <Badge variant="success">{kind}済</Badge>
       </div>
@@ -506,11 +533,24 @@ function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, 
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>(user || {});
+  const { orders } = useOrders();
 
+  // 本日完了 = このセッションで完了にした件数（doneDlv/doneRtn）。残り業務 = ライブの未完了件数。
+  const completedCount = doneDlv.length + doneRtn.length;
+  const remainingCount = deliveries.length + recoveries.length;
+
+  // 完了履歴は実データ（注文）から導出する（ライブリストは完了分を落とすため空になる）。
+  // DeliveryRecoveryTab の deliveryHistory/recoveryHistory と同じ判定。
   const completedItems = [
-    ...deliveries.filter((o: any) => doneDlv.includes(o.id)).map((o: any) => ({ ...o, kind: "配送" })),
-    ...recoveries.filter((o: any) => doneRtn.includes(o.id)).map((o: any) => ({ ...o, kind: "回収" }))
-  ];
+    ...(orders || [])
+      .filter((o: any) => o && (o.staffStatus === "配送完了" || o.signature || o.deliverySignature))
+      .map((o: any) => ({ id: o.orderNumber || o.id, site: o.siteName || o.site || o.deliveryLocation || "—", kind: "配送", _d: o.deliveryDate || o.date || "" })),
+    ...(orders || [])
+      .filter((o: any) => o && (o.staffStatus === "回収完了" || o.collectionSignature || ["完了", "返却済", "返却済み"].includes(String(o.status || ""))))
+      .map((o: any) => ({ id: o.orderNumber || o.id, site: o.siteName || o.site || "—", kind: "回収", _d: o.actualReturnDate || o.rentalEndDate || o.date || "" })),
+  ]
+    .sort((a: any, b: any) => String(b._d).localeCompare(String(a._d)))
+    .slice(0, 50);
 
   if (showHistory) {
     return (
@@ -594,6 +634,19 @@ function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, 
               />
             </label>
           ))}
+          {/* プロフィール画像をその場でカメラ撮影/選択（URL 手入力の代替）。 */}
+          <PhotoCaptureButton
+            onCapture={async (dataUrl) => {
+              try { const url = await uploadDataUrl(dataUrl); setValue("avatarUrl", url); }
+              catch { setValue("avatarUrl", dataUrl); }
+            }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, height: 44, borderRadius: 12, border: "1px dashed var(--border-strong)", background: "var(--surface-2)", color: "var(--brand-accent)", fontSize: 13.5, fontWeight: 800, cursor: "pointer" }}
+          >
+            <Icon name="camera" size={16} />写真を撮影して設定
+          </PhotoCaptureButton>
+          {draft.avatarUrl ? (
+            <img src={draft.avatarUrl} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", alignSelf: "center" }} />
+          ) : null}
           <Btn full variant="primary" icon="check" onClick={save}>保存する</Btn>
         </div>
       </Screen>
@@ -622,8 +675,8 @@ function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, 
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-        <MetricCard label="本日完了" value={completedItems.length} unit="件" icon="checkCircle" tone="success" onClick={() => setShowHistory(true)} />
-        <MetricCard label="残り業務" value={(deliveries.length + recoveries.length) - completedItems.length} unit="件" icon="clock" tone="warning" />
+        <MetricCard label="本日完了" value={completedCount} unit="件" icon="checkCircle" tone="success" onClick={() => setShowHistory(true)} />
+        <MetricCard label="残り業務" value={remainingCount} unit="件" icon="clock" tone="warning" />
       </div>
 
       <Btn full variant="secondary" icon="fileCheck" onClick={() => setShowHistory(true)}>
@@ -663,8 +716,20 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   const [flow, setFlow] = useState<any>(null);
   const [showNotifications, setShowNotifications] = useState(false);
 
-  const [doneDlv, setDoneDlv] = useState<string[]>([]);
-  const [doneRtn, setDoneRtn] = useState<string[]>([]);
+  // 「本日完了」は端末再起動でも当日分を維持する（以前はメモリのみで再起動毎に 0 に戻っていた）。
+  // ユーザ別・JST日付別キーで保存し、日付が変われば自動的に空から開始する。
+  const todayStrJst = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const doneKey = `done:${currentUser?.id || "anon"}:${todayStrJst}`;
+  const savedDone = loadDraft(doneKey, { dlv: [] as string[], rtn: [] as string[] });
+  const [doneDlv, setDoneDlv] = useState<string[]>(() => Array.isArray(savedDone.dlv) ? savedDone.dlv : []);
+  const [doneRtn, setDoneRtn] = useState<string[]>(() => Array.isArray(savedDone.rtn) ? savedDone.rtn : []);
+  useEffect(() => {
+    saveDraft(doneKey, { dlv: doneDlv, rtn: doneRtn });
+  }, [doneDlv, doneRtn, doneKey]);
+
+  // 端末通知の権限 + チャンネルを起動時に確立しておく（初回アラートを取りこぼさない）。
+  useEffect(() => { void initStaffNotify(); }, []);
+
   // 最終検品の確定が二重送信されるのを防ぐ（連打で -R 注文が複数作られ在庫が二重計上されるのを防止）。
   const finalizingRef = useRef(false);
 
@@ -682,6 +747,8 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
         OrderBus.patch("walkinReturns", walkinOrder.id, {
           stage: "recheck",
           receptionAt: new Date().toLocaleString("ja-JP"),
+          // 一次受付検品(検品1回目)の担当者を記録。
+          fieldInspector: staff.name,
           receptionSignature: signature || null,
           fieldSignature: signature || walkinOrder.fieldSignature || null,
           products: productsList.map((p: any) => ({
@@ -692,6 +759,7 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             report: p.report || [],
           })),
           note: (walkinOrder.note ? walkinOrder.note + " / " : "") + "一次受付検品済み — 倉庫最終検品待ち",
+          inspectionMemo: extra?.overallMemo || walkinOrder.inspectionMemo || "",
         } as any);
       } catch (e) {
         console.warn("[completeReturn] 一次検品の保存に失敗しました。", e);
@@ -706,13 +774,54 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
     if (finalizingRef.current) return;
     finalizingRef.current = true;
     try {
-    // 入庫 + 在庫調整（既存処理）
-    if (ml.addStockMove) {
-      valid.forEach(p => ml.addStockMove("入庫", { item: p.name, qty: p.counted, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" }));
+    // 関連注文を解決（あれば）。出庫前(deliveryConfirmedAt 無し)や既に在庫戻し済み(stockRestored)の
+    // 注文は、ここで現物在庫を二重加算しないようガードする。
+    // 注文に紐づかない持込（来客の直接返却など）は現物が戻っているので従来どおり加算する。
+    const linkedOrder = walkinOrder && walkinOrder.orderId
+      ? (orders || []).find((o: any) =>
+          o.id === walkinOrder.orderId ||
+          o.firestoreId === walkinOrder.orderId ||
+          (walkinOrder.orderNumber && o.orderNumber === walkinOrder.orderNumber))
+      : null;
+    const shouldRestock = !linkedOrder || (((!!(linkedOrder as any).stockDeducted) || (!!(linkedOrder as any).deliveryConfirmedAt)) && !(linkedOrder as any).stockRestored);
+
+    // 入庫 + 在庫調整。良品数 = 検品実数(counted) − 「現物が戻っているが不良」な報告分。
+    // 「数量不足」は現物が戻っていない（counted に含まれない）ため差し引かない（二重控除防止）。
+    // 不足は counted（expected − counted）で計上され、破損・汚損等は counted 内の不良として差し引く。
+    const isShortageReason = (reason: any) => String(reason || "").includes("不足") || String(reason || "").includes("紛失");
+    const defectiveQtyOf = (p: any) =>
+      (p.report || []).filter((r: any) => !isShortageReason(r?.reason)).reduce((s: number, r: any) => s + Number(r?.qty || 0), 0);
+    const goodQtyOf = (p: any) => Math.max(0, Number(p.counted || 0) - defectiveQtyOf(p));
+    // 紐づく注文がある場合は、その明細の出庫数(stockDeductedQty)を上限に良品戻しをクランプする。
+    // （過去に在庫不足で過剰予約された注文を返却した際、出庫した以上に在庫が増える over-restock を防ぐ。
+    //   restoreOrderStock の cap と同じ方針。注文に紐づかない持込は現物が戻っているので従来どおり無制限。）
+    const cappedGoodOf = (p: any) => {
+      const good = goodQtyOf(p);
+      if (!linkedOrder) return good;
+      const oi = ((linkedOrder as any).items || []).find((x: any) => x.id === p.id || x.name === p.name);
+      if (!oi) return good;
+      const cap = oi.stockDeductedQty != null ? Math.max(0, Number(oi.stockDeductedQty)) : Number(oi.quantity || good);
+      return Math.max(0, Math.min(good, cap));
+    };
+    // 多端末で同じ最終検品を同時確定した際の二重入庫を防ぐ:
+    // restock 直前にライブの注文を再取得し、既に stockRestored 済みならスキップする
+    //（restoreOrderStock と同じライブガード。先に確定した端末のフラグが同期していれば二重加算しない）。
+    const freshLinked = linkedOrder
+      ? OrderBus.getAll<any>("orders").find((o: any) => o.id === (linkedOrder as any).id || o.firestoreId === (linkedOrder as any).firestoreId)
+      : null;
+    const liveAlreadyRestored = !!(freshLinked && (freshLinked as any).stockRestored);
+    if (ml.addStockMove && shouldRestock && !liveAlreadyRestored) {
+      valid.forEach(p => {
+        const good = cappedGoodOf(p);
+        if (good <= 0) return; // 全数が不良/不足なら在庫へ戻さない
+        ml.addStockMove("入庫", { item: p.name, qty: good, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" });
+      });
       if (ml.adjustStock && ml.findProductByName) {
         valid.forEach(p => {
+          const good = cappedGoodOf(p);
+          if (good <= 0) return;
           const fp = ml.findProductByName(p.name);
-          if (fp) ml.adjustStock(fp.firestoreId || fp.id, p.counted);
+          if (fp) ml.adjustStock(fp.firestoreId || fp.id, good);
         });
       }
     }
@@ -736,7 +845,10 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
           returnQuantities[p.id] = p.counted || 0;
         });
 
-        // 不足・破損を itemIssues として記録
+        // 不足・破損を itemIssues として記録。
+        // 不足(missing)は counted の差分(expected−counted)で 1 回だけ計上する。
+        // report の「数量不足/紛失」は counted と重複するため除外（二重計上防止）。
+        // それ以外の report（破損あり・汚損・部品欠品 等）は破損(broken)として計上する。
         const itemIssues: any[] = [];
         productsList.forEach((p: any) => {
           const shortage = (p.expected || 0) - (p.counted || 0);
@@ -744,11 +856,13 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             itemIssues.push({ itemId: p.id, type: "missing", quantity: shortage, notes: "倉庫検品で不足を確認" });
           }
           (p.report || []).forEach((r: any) => {
+            const reason = String(r?.reason || "");
+            if (reason.includes("不足") || reason.includes("紛失")) return; // counted で計上済み
             itemIssues.push({
               itemId: p.id,
-              type: r.reason === "破損" ? "broken" : "missing",
+              type: "broken",
               quantity: r.qty || 1,
-              notes: r.note || r.reason || "倉庫検品報告",
+              notes: r.note || reason || "倉庫検品報告",
               photo: (r.photos && r.photos[0]) || undefined,
             });
           });
@@ -761,6 +875,16 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
           const extraFields: Record<string, any> = {};
           if (extra?.vehicleCheckin) extraFields.vehicleCheckin = extra.vehicleCheckin;
           if (extra?.fuelCharge && Number(extra.fuelCharge.amount) > 0) extraFields.fuelCharge = extra.fuelCharge;
+          // 倉庫最終検品で在庫を検品実数（counted）分すでに戻した場合のみ stockRestored を記録する。
+          // 実際に戻していない（未出庫・既に戻し済み等で shouldRestock=false）注文に印を付けると、
+          // 後続の正当な入庫が永久にブロックされるため、条件付きで設定する。
+          if (shouldRestock) extraFields.stockRestored = true;
+          // 最終検品(検品最終回)の担当者を注文に記録し、admin で確認できるようにする。
+          extraFields.finalInspectedBy = staff.name;
+          extraFields.finalInspectedAt = new Date().toISOString();
+          // 破損・紛失の弁償費を自動計上（最終検品で確定）。請求書に ExtraCost として載る。
+          const compensation = computeCompensationCharge({ items: targetOrder.items, itemIssues }, ml.products || []);
+          if (compensation) extraFields.compensationCharge = compensation;
 
           await finalizePartialReturn(
             targetOrder,
@@ -814,8 +938,10 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
         company: walkinOrder?.company,
         contact: walkinOrder?.contact,
         inspectedAt: now.toLocaleString("ja-JP"),
-        inspector: (STAFF as any)?.souko?.name || "倉庫スタッフ",
+        // 最終検品の担当者 = ログイン中のスタッフ（固定モックではなく実担当者を記録）。
+        inspector: staff.name || "倉庫スタッフ",
         returningEverything: !!walkinOrder?.returningEverything,
+        memo: extra?.overallMemo || walkinOrder?.inspectionMemo || "",
         products: recProducts,
         totalExpected: recProducts.reduce((a: number, p: any) => a + p.expected, 0),
         totalCounted: recProducts.reduce((a: number, p: any) => a + p.counted, 0),
@@ -836,47 +962,9 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
     }
   };
 
-  if (flow) {
-    if (flow.type === "dlv") {
-      return (
-        <DeliveryFlow
-          o={flow.order}
-          onExit={() => setFlow(null)}
-          onComplete={(id, signature, photos, extra) => {
-            setDoneDlv(d => d.includes(id) ? d : [...d, id]);
-            // お客様の受領サインと写真、保安車両の貸出記録を注文に保存。
-            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos, extra);
-            setFlow(null);
-            setTab("delivery_recovery");
-          }}
-        />
-      );
-    } else if (flow.type === "rtn") {
-      return (
-        <RecoveryFlow
-          o={flow.order}
-          onExit={() => setFlow(null)}
-          onComplete={(id, signature, photos) => {
-            setDoneRtn(d => d.includes(id) ? d : [...d, id]);
-            // お客様の回収サインと写真を注文に保存（回収書 PDF に反映される）。
-            if (ml.completeRecovery) ml.completeRecovery(flow.order.firestoreId || id, signature, photos);
-            setFlow(null);
-            setTab("delivery_recovery");
-          }}
-        />
-      );
-    } else if (flow.type === "walkin") {
-      return (
-        <WalkInReturnFlow
-          onExit={() => setFlow(null)}
-          onComplete={completeReturn}
-        />
-      );
-    }
-  }
-
-  if (subView === "stocktake") return <WhStocktake onBack={() => setSubView(null)} />;
-
+  // 【フック順序の固定】以下の集計とフック(useStaffNotificationAlerts)は、必ず
+  // flow / subView による早期 return より前で実行する。早期 return の後ろにフックがあると、
+  // 業務（flow）を開いた瞬間に「呼ばれるフック数が減る」ため React error #300 でクラッシュする。
   const deliveries = ml.liveDeliveries;
   const recoveries = ml.liveRecoveries;
   const walkinCount = ml.walkin ? ml.walkin.length : 0;
@@ -890,12 +978,70 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   // 件数がマイナスになる。実際に残っているタスクを filter で数える。
   const pendingDlvCount = deliveries.filter((o: any) => !doneDlv.includes(o.id)).length;
   const pendingRtnCount = recoveries.filter((o: any) => !doneRtn.includes(o.id)).length;
-  const totalTasks = deliveries.length + recoveries.length;
   const completedTasks = doneDlv.length + doneRtn.length;
+  // 完了済みはライブリストから外れるため、分母に完了分を足して
+  // 「完了 / 総数」が 100% を超えない・分子が分母を超えないようにする。
+  const totalTasks = deliveries.length + recoveries.length + completedTasks;
   const staffNotifications = buildStaffNotifications({ deliveries, recoveries, walkin: ml.walkin || [], vehicles: VL, maintenance: ML });
+  const notifReads = useNotificationReads("staff:" + (currentUser?.id || ""));
+  const staffUnread = notifReads.unreadCount(staffNotifications);
+  // 新しい業務通知を検知したら端末通知（音付き）を鳴らす（APK のみ。Web は no-op）。
+  useStaffNotificationAlerts(staffNotifications);
 
+  // ↓ ここから先は早期 return 可（全フック呼び出し済み）。
+  if (flow) {
+    if (flow.type === "dlv") {
+      return (
+        <DeliveryFlow
+          o={flow.order}
+          staffName={staff.name}
+          onExit={() => setFlow(null)}
+          onComplete={async (id, signature, photos, extra) => {
+            // 完了集合は表示 id（live list の o.id = orderNumber）で記録する。
+            // 受け取る id は firestoreId のことがあり、消費側 (o.id) と一致しないため。
+            setDoneDlv(d => d.includes(flow.order.id) ? d : [...d, flow.order.id]);
+            // お客様の受領サインと写真、保安車両の貸出記録 + 配送担当者(ログイン中スタッフ)を注文に保存。
+            if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos, { ...(extra || {}), deliveredBy: staff.name });
+            setFlow(null);
+            setTab("delivery_recovery");
+            // サーバー反映を確認。電波不良なら送信待ち（自動再送）を明示してデータ消失の誤解を防ぐ。
+            const ok = await OrderBus.flush(8000);
+            if (!ok) void alertDialog("通信が不安定なため送信待ちです。電波の良い場所で自動的に再送信されます（記録は保持されています）。");
+          }}
+        />
+      );
+    } else if (flow.type === "rtn") {
+      return (
+        <RecoveryFlow
+          o={flow.order}
+          onExit={() => setFlow(null)}
+          onComplete={async (id, signature, photos, inspected, extra) => {
+            setDoneRtn(d => d.includes(flow.order.id) ? d : [...d, flow.order.id]);
+            // お客様の回収サインと写真 + 現場検品結果（counted/report）を最終検品へ引き継ぐ + 回収担当者・不在記録を保存。
+            if (ml.completeRecovery) ml.completeRecovery(flow.order.firestoreId || id, signature, photos, inspected, staff.name, extra);
+            setFlow(null);
+            setTab("delivery_recovery");
+            const ok = await OrderBus.flush(8000);
+            if (!ok) void alertDialog("通信が不安定なため送信待ちです。電波の良い場所で自動的に再送信されます（記録は保持されています）。");
+          }}
+        />
+      );
+    } else if (flow.type === "walkin") {
+      return (
+        <WalkInReturnFlow
+          onExit={() => setFlow(null)}
+          onComplete={completeReturn}
+        />
+      );
+    }
+  }
+
+  if (subView === "stocktake") return <WhStocktake onBack={() => setSubView(null)} staffName={staff.name} />;
+
+  // 通知ベルはホームにしか無いため、他タブ作業中でも未読が分かるよう
+  // ボトムナビの「ホーム」に未読件数バッジを出す（タップでホーム→ベル）。
   const tabs = [
-    { key: "home", label: "ホーム", icon: "home" },
+    { key: "home", label: "ホーム", icon: "home", badge: staffUnread > 0 ? staffUnread : null },
     { key: "delivery_recovery", label: "配送・回収", icon: "truck", badge: pendingDlvCount + pendingRtnCount || null },
     { key: "stock", label: "入出庫", icon: "layers" },
     { key: "inspect", label: "点検・車両", icon: "clipboardCheck", badge: overdueVeh + overdueMnt || null },
@@ -916,9 +1062,18 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             sub={todayLabel()}
             accent
             right={
-              <div style={{ position: "relative" }}>
-                <IconBtn name="bell" badge={staffNotifications.length > 0} onClick={() => setShowNotifications(!showNotifications)} />
-                {showNotifications && <StaffNotificationPopover items={staffNotifications} />}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* 同期状態（オフライン/送信待ちを現場で気づけるように） */}
+                {!ml.connected ? (
+                  <span title="オフライン" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 900, color: "var(--danger-bright)", background: "var(--danger-tint)", border: "1px solid var(--danger-bright)", borderRadius: 99, padding: "3px 8px" }}><Icon name="alert" size={12} />オフライン</span>
+                ) : null}
+                <div style={{ position: "relative" }}>
+                  <IconBtn name="bell" badge={staffUnread > 0} onClick={() => setShowNotifications(!showNotifications)} />
+                  {showNotifications && <StaffNotificationPopover items={staffNotifications} isRead={notifReads.isRead} markRead={notifReads.markRead} onClose={() => setShowNotifications(false)} onNavigate={(n) => {
+                    if (n.target === "walkin") { setFlow({ type: "walkin" }); return; }
+                    if (n.target) setTab(n.target);
+                  }} />}
+                </div>
               </div>
             }
           />
@@ -944,7 +1099,7 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13, fontWeight: 900 }}>
               <span style={{ color: "var(--fg-muted)" }}>業務進捗</span>
-              <span style={{ color: "var(--brand-strong)", fontFamily: "var(--font-mono)" }}>{completedTasks} / {totalTasks} 件 ({totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0}%)</span>
+              <span style={{ color: "var(--brand-strong)", fontFamily: "var(--font-mono)" }}>{completedTasks} / {totalTasks} 件 ({totalTasks ? Math.min(100, Math.round((completedTasks / totalTasks) * 100)) : 0}%)</span>
             </div>
             <ProgressBar value={completedTasks} max={totalTasks} color="#10B981" />
           </Card>
@@ -956,6 +1111,16 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
           <MetricCard label="持込返却" value={walkinCount} unit="件" icon="clipboardCheck" tone="warning" onClick={() => setFlow({ type: "walkin" })} />
           <MetricCard label="点検要対応" value={overdueVeh + overdueMnt} unit="件" icon="alert" tone={hasAlerts ? "danger" : "neutral"} onClick={() => setTab("inspect")} />
         </div>
+
+        <SectionLabel>クイック操作</SectionLabel>
+        <ActionStrip
+          items={[
+            { icon: "clipboardCheck", label: "持込返却", sub: "一次受付・最終検品", onClick: () => setFlow({ type: "walkin" }) },
+            { icon: "boxIn", label: "入出庫", sub: "入庫・出庫を登録", onClick: () => setTab("stock") },
+            { icon: "layers", label: "棚卸し", sub: "実在庫の確認", onClick: () => setSubView("stocktake") },
+            { icon: "car", label: "点検・車両", sub: "車検と整備状況", onClick: () => setTab("inspect") },
+          ]}
+        />
 
         <SectionLabel>優先タスク</SectionLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
@@ -971,24 +1136,14 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             <Empty icon="checkCircle" title="すぐ対応する業務はありません" sub="配送・回収・点検の予定が入るとここに表示されます" />
           )}
         </div>
-
-        <SectionLabel>クイック操作</SectionLabel>
-        <ActionStrip
-          items={[
-            { icon: "clipboardCheck", label: "持込返却", sub: "一次受付・最終検品", onClick: () => setFlow({ type: "walkin" }) },
-            { icon: "boxIn", label: "入出庫", sub: "入庫・出庫を登録", onClick: () => setTab("stock") },
-            { icon: "layers", label: "棚卸し", sub: "実在庫の確認", onClick: () => setSubView("stocktake") },
-            { icon: "car", label: "点検・車両", sub: "車検と整備状況", onClick: () => setTab("inspect") },
-          ]}
-        />
       </Screen>
     );
   } else if (tab === "delivery_recovery") {
     content = <DeliveryRecoveryTab setFlow={setFlow} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} />;
   } else if (tab === "stock") {
-    content = <WhStock moves={ml.stockMoves} addMove={ml.addStockMove} onReturn={() => setFlow({ type: "walkin" })} />;
+    content = <WhStock moves={ml.stockMoves} addMove={ml.addStockMove} onReturn={() => setFlow({ type: "walkin" })} staffName={staff.name} />;
   } else if (tab === "inspect") {
-    content = <WhInspect />;
+    content = <WhInspect staffName={staff.name} />;
   } else if (tab === "profile") {
     content = (
       <ProfileTab

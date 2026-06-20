@@ -2,6 +2,43 @@ import { type Product, type CartItem, type Order, type MonthlyBreakdown, type In
 import { isVehicleCategory } from "./productUtils";
 import { isFullyReturned } from "./orderStatus";
 
+/**
+ * 長期割引（単価B / rentPriceLongTerm）が適用される累計レンタル日数のしきい値。
+ * この日数「以上」で長期単価に切り替わる（例: 17 → 17日目以降は長期単価）。
+ * 課金ロジックとお客様サイトの表示（「長期(17日〜)」）で同じ値を使い、表示と請求のズレを防ぐ。
+ */
+export const LONG_TERM_THRESHOLD_DAYS = 17;
+
+/**
+ * 商品の保証料設定（flat / tiered）と数量から、その明細1行分の保証料合計を算出する。
+ * Checkout の計算と同じロジック（管理画面のレンタル登録でも同じ金額になるよう共通化）。
+ */
+export function computeGuaranteeFeeFlat(product: any, qty: number): number {
+  if (!product?.isGuarantee) return 0;
+  const n = (v: any) => Number(v) || 0;
+  if (product.guaranteeType === 'flat') return n(product.guaranteeRate) * qty;
+  const g = product.guaranteeFees;
+  if (!g) return 0;
+  if (qty <= 50) return n(g.range1);
+  if (qty <= 100) return n(g.range2);
+  if (qty <= 150) return n(g.range3);
+  if (qty <= 200) return n(g.range4);
+  if (qty <= 250) return n(g.range5) || n(g.range4);
+  return n(g.range6) || n(g.range5) || n(g.range4);
+}
+
+// 消費税率（既定 10%）。設定（systemSettings.taxRate）から setTaxRate で上書きできる。
+// 既定値は現行動作と同じなので、未設定でも挙動は変わらない。
+let _taxRate = 0.10;
+/** 税率を設定（0 < rate < 1）。例: 8% → 0.08。 */
+export function setTaxRate(rate: number): void {
+  if (typeof rate === "number" && rate > 0 && rate < 1) _taxRate = rate;
+}
+/** 現在の消費税率を返す。 */
+export function getTaxRate(): number {
+  return _taxRate;
+}
+
 export interface RentalPeriodDetailed {
   monthStr: string; // e.g. "2026-06"
   days: number;
@@ -108,8 +145,8 @@ export function calculateRentalPrice(
     const minApplied = isFirst && actual < minChargeableDays;
     const billed = minApplied ? minChargeableDays : actual;
     
-    // Tier B Long-term discount applies if cumulative days >= 17 days
-    const tier = cumActual >= 17 ? 'B' : 'A';
+    // Tier B Long-term discount applies if cumulative days >= LONG_TERM_THRESHOLD_DAYS
+    const tier = cumActual >= LONG_TERM_THRESHOLD_DAYS ? 'B' : 'A';
     const applyDiscount = tier === 'B';
     
     const rawPricePerDay = (applyDiscount && rentPriceLongTerm !== undefined)
@@ -138,7 +175,7 @@ export function calculateRentalPrice(
  * Calculates totals including 10% consumer tax.
  */
 export function calculateTotalPayment(subtotal: number): { subtotal: number; tax: number; total: number } {
-  const tax = Math.floor(subtotal * 0.10);
+  const tax = Math.floor(subtotal * _taxRate);
   const total = subtotal + tax;
   return { subtotal, tax, total };
 }
@@ -172,6 +209,7 @@ export function billingEndDate(order: any): string | undefined {
 }
 
 export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
+  if (!order) return [];
   const hasVehicle = (order.items || []).some(
     (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
   );
@@ -186,7 +224,7 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
       endDate
     ) {
       try {
-        const { totalPrice, breakdown } = calculateRentalPrice(
+        const { totalPrice, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(
           item.rentPrice,
           order.rentalStartDate,
           endDate,
@@ -194,13 +232,31 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
           isVehicleCategory(item.category),
           item.rentPriceLongTerm
         );
-        return { ...item, monthlyBreakdown: breakdown, calculatedPrice: item.calculatedPrice ?? totalPrice };
+        // rentalDays/billedDays も補完して、請求明細の「○日間」が "-日間" にならないようにする。
+        return {
+          ...item,
+          monthlyBreakdown: breakdown,
+          calculatedPrice: item.calculatedPrice ?? totalPrice,
+          rentalDays: item.rentalDays ?? totalActualDays,
+          billedDays: item.billedDays ?? totalBilledDays,
+        };
       } catch {
         return item;
       }
     }
     return item;
   });
+}
+
+/**
+ * 注文日(order.date, "YYYY/M/D • HH:MM" など)から請求対象月キー "YYYY-MM" を得る。
+ * 0埋め無し(2026/6/8)や ja-JP 形式、返却分(-R)注文でも正しく "2026-06" を返す。
+ * （旧実装の slice(0,7) は "2026-6-" のように壊れて月別請求の突合に失敗していた）。
+ */
+export function orderMonthKey(order: any): string {
+  const clean = String(order?.date || "").split("•")[0]?.trim() || "";
+  const m = clean.match(/(\d{4})[\/\-.](\d{1,2})/);
+  return m ? `${m[1]}-${String(Number(m[2])).padStart(2, "0")}` : "";
 }
 
 /**
@@ -214,7 +270,7 @@ export function calculateMonthlyInvoice(order: Order, monthStr: string): { subto
   items.forEach(item => {
     if (item.type === 'buy') {
       // Buy items are billed in the order month
-      const orderMonth = order.date?.split('•')[0]?.trim().replace(/\//g, "-").slice(0, 7) || "";
+      const orderMonth = orderMonthKey(order);
       if (orderMonth === monthStr) {
         const itemPrice = (item.buyPrice || 0) * item.quantity;
         subtotal += itemPrice;
@@ -281,8 +337,10 @@ export function recalculateInvoiceBlock(block: InvoiceBlock): InvoiceBlock {
   const baseTaxable = block.baseSubtotal + block.guaranteeFee;
   
   const totalTaxable = baseTaxable + taxableExtra;
-  const tax = Math.floor(totalTaxable * 0.1);
-  
+  // 値引/返金（マイナス課税額）が混ざるブロックでは Math.floor が ¥1 過大控除になるため
+  // 0方向への切り捨て(Math.trunc)を使う。正の額では floor と同値。
+  const tax = Math.trunc(totalTaxable * _taxRate);
+
   block.subtotal = block.baseSubtotal + block.guaranteeFee + extraCosts.reduce((sum, e) => sum + e.amount, 0);
   block.tax = tax;
   block.total = totalTaxable + nonTaxableExtra + tax;
@@ -293,8 +351,9 @@ export function recalculateInvoiceBlock(block: InvoiceBlock): InvoiceBlock {
  * Generates monthly invoice blocks dynamically from order items and dates if not already present.
  */
 export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
+  if (!order) return [];
   if (order.invoiceBlocks && order.invoiceBlocks.length > 0) {
-    return order.invoiceBlocks.map((block) => {
+    const cached = order.invoiceBlocks.map((block) => {
       const extraCosts = (block.extraCosts || []).map((cost) => ({
         ...cost,
         amount: Math.round(Number(cost.amount) || 0),
@@ -319,6 +378,9 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
         extraCosts,
       });
     });
+    // 弁償費が未計上ならここで注入（キャッシュ済みブロックにも反映。冪等・削除尊重）。
+    injectCompensationCharge(order, cached);
+    return cached;
   }
 
   // breakdown が無い品目は補完してから月ブロックを構築（¥0 請求書の防止）
@@ -336,7 +398,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
   });
 
   const orderDateClean = order.date?.split("•")[0]?.trim() || "";
-  const orderMonth = orderDateClean.replace(/\//g, "-").slice(0, 7); // e.g. "2026-06"
+  const orderMonth = orderMonthKey(order); // "2026-06"（0埋め無し/ja-JP/返却分にも対応）
 
   const hasBuy = ensuredItems.some(i => i.type === 'buy');
   if (hasBuy || monthsSet.size === 0) {
@@ -464,5 +526,81 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
     }
   }
 
+  injectCompensationCharge(order, blocks);
+
   return blocks;
+}
+
+export interface CompensationLine {
+  itemId?: string;
+  name: string;
+  type: "missing" | "broken";
+  qty: number;
+  unit: number;
+  amount: number;
+}
+export interface CompensationCharge {
+  amount: number;
+  note: string;
+  lines: CompensationLine[];
+}
+
+/**
+ * itemIssues（紛失・破損）から弁償費を算出する。
+ * 単価 = 商品マスタの弁償価格(compensationPrice) ?? 販売価格(buyPrice) ?? 注文明細の buyPrice。
+ * 最終検品の確定時に呼び、結果を order.compensationCharge に保存する（価格を確定時点で固定）。
+ */
+export function computeCompensationCharge(order: any, products: any[]): CompensationCharge | null {
+  const issues = Array.isArray(order?.itemIssues) ? order.itemIssues : [];
+  if (!issues.length) return null;
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const lines: CompensationLine[] = [];
+  let amount = 0;
+  issues.forEach((iss: any) => {
+    const qtyReported = Number(iss?.quantity || 0);
+    if (qtyReported <= 0) return;
+    const item = items.find((i: any) => i && (i.id === iss.itemId || i.name === iss.itemName));
+    // 報告数量はレンタル数量を上限にクランプ（過大入力による過剰弁償を防ぐ多層防御）。
+    const maxQty = Number(item?.quantity || 0);
+    const qty = maxQty > 0 ? Math.min(qtyReported, maxQty) : qtyReported;
+    const prod = (products || []).find((p: any) => p && (p.id === iss.itemId || (item && p.name === item.name)));
+    const unit = Number(prod?.compensationPrice ?? prod?.buyPrice ?? item?.buyPrice ?? 0);
+    if (unit <= 0) return;
+    const sub = unit * qty;
+    amount += sub;
+    lines.push({
+      itemId: iss.itemId,
+      name: item?.name || prod?.name || iss.itemName || "品目",
+      type: iss.type === "broken" ? "broken" : "missing",
+      qty,
+      unit,
+      amount: sub,
+    });
+  });
+  if (amount <= 0) return null;
+  const note = "破損・紛失弁償（" + lines.map((l) => `${l.name} ${l.type === "broken" ? "破損" : "紛失"}×${l.qty}`).join("、") + "）";
+  return { amount: Math.round(amount), note, lines };
+}
+
+/**
+ * order.compensationCharge を最終ブロックへ ExtraCost(id="compensation-charge") として注入する。
+ * 冪等（既にあれば再追加しない＝admin の金額編集を保持）。order.compensationDismissed なら注入しない（admin 削除を尊重）。
+ */
+function injectCompensationCharge(order: any, blocks: InvoiceBlock[]): void {
+  const comp = (order as any)?.compensationCharge;
+  if (!comp || !(Number(comp.amount) > 0)) return;
+  if ((order as any)?.compensationDismissed) return;
+  if (!blocks.length) return;
+  const already = blocks.some((b) => (b.extraCosts || []).some((e: any) => e.id === "compensation-charge"));
+  if (already) return;
+  const last = blocks[blocks.length - 1];
+  last.extraCosts = last.extraCosts || [];
+  last.extraCosts.push({
+    id: "compensation-charge",
+    itemName: "破損・紛失弁償費",
+    note: comp.note || "破損・紛失弁償費",
+    amount: Math.round(Number(comp.amount)),
+    isTaxable: true,
+  } as any);
+  recalculateInvoiceBlock(last);
 }

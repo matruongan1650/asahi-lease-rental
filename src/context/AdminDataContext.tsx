@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import OrderBus, { type BusRecord, type AdminDerivedData, deriveAdminData } from "../lib/orderBus";
 import { COLLECTIONS_MOCK_DATA } from "../data/adminMockData";
-import { patchOrder as patchFirebaseOrder, subscribeOrders } from "../lib/firebase";
 
 interface AdminDataContextProps {
   raw: any[];
@@ -29,22 +28,26 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     "stockIn",
     "stockOut",
     "repairs",
+    "purchaseOrders",
     "maintenance",
     "customers",
     "suppliers",
     "vendors",
     "fieldReports",
     "vehicles",
-    "returnInspections"
+    "walkinReturns",
+    "returnInspections",
+    "roles",
+    "systemSettings"
   ];
 
-  // 1. Subscribe to orders via Firebase
+  // 1. Subscribe to orders via the shared XServer/API-backed OrderBus.
+  // Staff APK writes delivery/recovery results to /api/store, so admin reads
+  // the same XServer source.
   useEffect(() => {
-    const unsubscribe = subscribeOrders((firebaseOrders) => {
-      setRaw(firebaseOrders);
+    const unsubscribe = OrderBus.subscribe("orders", (rows) => {
+      setRaw(rows);
       setConnected(true);
-      // Keep OrderBus in sync
-      OrderBus.setAll("orders", firebaseOrders as any);
     });
     return unsubscribe;
   }, []);
@@ -70,20 +73,13 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
 
   const hasCheckedSeeding = useRef(false);
 
-  // 4. Auto-seed missing B2B orders on startup (single run, chunked to avoid browser lockup)
+  // 4. Auto-seeding is disabled: orders come only from real XServer data.
   useEffect(() => {
-    // 削除：自動でモック注文データをFirebaseやDBに追加しないようにする。
+    // 削除：自動でモック注文データをDBに追加しないようにする。
   }, [connected]);
 
   const patchOrder = (id: string, updates: Record<string, any>) => {
     OrderBus.patch("orders", id, updates);
-    const ordersList = OrderBus.getAll<any>("orders");
-    const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id);
-    if (targetOrder && targetOrder.firestoreId) {
-      patchFirebaseOrder(targetOrder.firestoreId, updates).catch(err => {
-        console.warn("Failed to patch order in Firebase from admin:", err);
-      });
-    }
   };
 
   // Seed all collections from mock dataset (idempotent)
@@ -186,12 +182,13 @@ export function useAdminOrders() {
       end: o.rentalEnd?.replace(/-/g, "/") || "—",
       items: (o.items || []).length,
       amount: o.total,
-      // 返却・検品系のステータスは注文ステータスを優先表示（未割当で上書きしない）。
-      status: ["返却済", "返却済み", "一部返却", "検品待ち", "完了", "キャンセル"].includes(o.status as string)
+      // 稼働中・返却・検品系のステータスは注文ステータスを優先表示（配送完了などの staffStatus で上書きしない）。
+      // ※「レンタル中」を保持しないと回収手配(AdminRecovery)に出てこなくなる。
+      status: ["レンタル中", "進行中", "延滞", "返却済", "返却済み", "一部返却", "検品待ち", "完了", "キャンセル"].includes(o.status as string)
         ? (o.status as string)
         : mapStatus(o.staffStatus || o.status),
       returnRequestType: o.returnRequestType,
-      invoice: "INV-R-" + (o.orderNumber || "").replace(/\D/g, "").slice(-4),
+      invoice: "INV-R-" + (o.orderNumber || "").replace(/\D/g, "").slice(-6),
     })),
     sales: d.sales.map((o) => ({
       id: o.orderNumber,
@@ -202,7 +199,7 @@ export function useAdminOrders() {
       items: (o.items || []).length,
       amount: o.total,
       status: mapStatus(o.status),
-      invoice: "INV-S-" + (o.orderNumber || "").replace(/\D/g, "").slice(-4),
+      invoice: "INV-S-" + (o.orderNumber || "").replace(/\D/g, "").slice(-6),
     })),
     recentTx: d.recentTx,
     kpis: {

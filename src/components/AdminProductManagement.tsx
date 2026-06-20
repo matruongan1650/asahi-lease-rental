@@ -4,8 +4,9 @@ import QRCode from "qrcode";
 import { useProducts } from "../context/ProductContext";
 import { useVehicles, type VehicleDetail, type VehicleFile } from "../context/VehicleContext";
 import { Product } from "../types";
-import { isVehicleCategory, SUPPLY_CATEGORY_ICONS } from "../utils/productUtils";
+import { isVehicleCategory, SUPPLY_CATEGORY_ICONS, UNIT_OPTIONS } from "../utils/productUtils";
 import { getProductQrCode, getProductQrPayload, makeProductQrFields } from "../utils/productQr";
+import { SALES_ENABLED } from "../config/features";
 
 const PRODUCT_IMAGE_FALLBACK = "https://images.unsplash.com/photo-1544473244-f6895e69da8a?w=500&h=500&fit=crop";
 const VEHICLE_IMAGE_FALLBACK = "https://imagedelivery.net/W-O2N6-kYOfvEexU-w0YSA/6ca65aee-8da0-466f-ff84-9de55ae2ee00/public";
@@ -211,7 +212,10 @@ export default function AdminProductManagement() {
       stock: Number(formData.get("stock")),
       rentPrice: Number(formData.get("rentPrice")),
       rentPriceLongTerm: Number(formData.get("rentPriceLongTerm")),
-      buyPrice: Number(formData.get("buyPrice")),
+      // 販売無効時は入力欄を隠すため、既存の販売価格をそのまま保持（再有効化で復活）。
+      buyPrice: SALES_ENABLED ? Number(formData.get("buyPrice")) : (editingProduct?.buyPrice ?? undefined),
+      compensationPrice: Number(formData.get("compensationPrice")) || undefined,
+      unit: (formData.get("unit") || "").toString().trim() || undefined,
       image: productImageDraft || formData.get("image") || PRODUCT_IMAGE_FALLBACK,
       description: formData.get("description"),
       isGuarantee: isGuaranteeChecked,
@@ -287,8 +291,9 @@ export default function AdminProductManagement() {
 
       const rentPrice = Number(parts[2]) || 0;
       const rentPriceLongTerm = Number(parts[3]) || 0;
-      const buyPrice = Number(parts[4]) || 0;
-      const stock = Number(parts[5]) || 0;
+      // 販売無効時は販売価格列を持たない（列構成: 商品名,カテゴリ,日単価,長期単価,在庫数）。
+      const buyPrice = SALES_ENABLED ? (Number(parts[4]) || 0) : 0;
+      const stock = Number(parts[SALES_ENABLED ? 5 : 4]) || 0;
 
       let error = "";
       if (!name) error = "商品名は必須です";
@@ -343,7 +348,7 @@ export default function AdminProductManagement() {
         stock: item.stock,
         rentPrice: item.rentPrice,
         rentPriceLongTerm: item.rentPriceLongTerm,
-        buyPrice: item.buyPrice,
+        buyPrice: SALES_ENABLED ? item.buyPrice : undefined,
         image: PRODUCT_IMAGE_FALLBACK,
         description: "一括登録された保安用品",
         ...makeProductQrFields({ id } as Product),
@@ -430,7 +435,10 @@ export default function AdminProductManagement() {
     const category = formData.get("category") as string || "軽トラック";
     const rentPrice = Number(formData.get("rentPrice")) || 0;
     const rentPriceLongTerm = Number(formData.get("rentPriceLongTerm")) || 0;
-    const buyPrice = Number(formData.get("buyPrice")) || 0;
+    // 販売無効時は入力欄を隠すため、既存の販売価格を保持（再有効化で復活）。
+    const buyPrice = SALES_ENABLED
+      ? (Number(formData.get("buyPrice")) || 0)
+      : (editingVehicle ? (products.find((p) => p && p.id === (editingVehicle.productId || editingVehicle.id))?.buyPrice ?? 0) : 0);
     const stock = Number(formData.get("stock")) || 0;
     const status = (formData.get("status") as VehicleDetail["status"]) || "空車";
     const name = String(formData.get("name") || "");
@@ -658,7 +666,7 @@ export default function AdminProductManagement() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-sm font-black text-slate-900">{product.rentPrice ? `¥${product.rentPrice.toLocaleString()}` : "—"}<span className="ml-0.5 text-[10px] font-bold text-slate-400">/日</span></div>
-                      <div className="mt-0.5 text-xs font-bold text-slate-500">長期 {product.rentPriceLongTerm ? `¥${product.rentPriceLongTerm.toLocaleString()}` : "—"} / 販売 {product.buyPrice ? `¥${product.buyPrice.toLocaleString()}` : "—"}</div>
+                      <div className="mt-0.5 text-xs font-bold text-slate-500">長期 {product.rentPriceLongTerm ? `¥${product.rentPriceLongTerm.toLocaleString()}` : "—"}{SALES_ENABLED && ` / 販売 ${product.buyPrice ? `¥${product.buyPrice.toLocaleString()}` : "—"}`}</div>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex min-w-12 justify-center rounded-lg px-3 py-1 text-sm font-black ${
@@ -737,7 +745,7 @@ export default function AdminProductManagement() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-sm font-black text-slate-900">{linkedProduct?.rentPrice ? `¥${linkedProduct.rentPrice.toLocaleString()}` : "—"}<span className="ml-0.5 text-[10px] font-bold text-slate-400">/日</span></div>
-                        <div className="mt-0.5 text-xs font-bold text-slate-500">長期 {linkedProduct?.rentPriceLongTerm ? `¥${linkedProduct.rentPriceLongTerm.toLocaleString()}` : "—"} / 販売 {linkedProduct?.buyPrice ? `¥${linkedProduct.buyPrice.toLocaleString()}` : "—"}</div>
+                        <div className="mt-0.5 text-xs font-bold text-slate-500">長期 {linkedProduct?.rentPriceLongTerm ? `¥${linkedProduct.rentPriceLongTerm.toLocaleString()}` : "—"}{SALES_ENABLED && ` / 販売 ${linkedProduct?.buyPrice ? `¥${linkedProduct.buyPrice.toLocaleString()}` : "—"}`}</div>
                       </td>
                       <td className="px-4 py-3">
                         <span className="inline-flex min-w-12 justify-center rounded-lg bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">{v.stock || linkedProduct?.stock || 0}</span>
@@ -874,6 +882,14 @@ export default function AdminProductManagement() {
                         </div>
                       </div>
                       <div className="flex-1">
+                        <label className="block text-xs font-bold text-slate-500 mb-2">単位（数え方）</label>
+                        <input defaultValue={editingProduct?.unit || ""} name="unit" list="product-unit-options" className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow" placeholder="例：個・本・台（未設定なら 点）" />
+                        <datalist id="product-unit-options">
+                          {UNIT_OPTIONS.map((u) => <option key={u} value={u} />)}
+                        </datalist>
+                        <p className="text-xs text-slate-400 mt-1">数量の単位。一覧から選ぶか自由入力。</p>
+                      </div>
+                      <div className="flex-1">
                         <label className="block text-xs font-bold text-slate-500 mb-2">管理ID</label>
                         <input defaultValue={editingProduct?.id || ""} name="id" disabled={!!editingProduct} className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow disabled:bg-slate-100 disabled:text-slate-500" placeholder="空欄で自動採番" />
                         <p className="text-xs text-slate-400 mt-1">{editingProduct ? "変更不可" : "空欄で自動採番"}</p>
@@ -940,11 +956,20 @@ export default function AdminProductManagement() {
                         <input type="number" defaultValue={editingProduct?.rentPriceLongTerm || ""} name="rentPriceLongTerm" className="w-full border border-slate-300 bg-white rounded-xl pl-7 pr-3 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow font-bold text-slate-700" placeholder="—" />
                       </div>
                     </div>
+                    {SALES_ENABLED && (
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-2">販売価格（円）</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">¥</span>
                         <input type="number" defaultValue={editingProduct?.buyPrice || ""} name="buyPrice" className="w-full border border-slate-300 bg-white rounded-xl pl-7 pr-3 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow font-bold text-slate-700" placeholder="—" />
+                      </div>
+                    </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-2">弁償価格（円/個）<span className="ml-1 font-medium text-slate-400">破損・紛失時の弁償単価</span></label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">¥</span>
+                        <input type="number" defaultValue={editingProduct?.compensationPrice || ""} name="compensationPrice" className="w-full border border-slate-300 bg-white rounded-xl pl-7 pr-3 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow font-bold text-slate-700" placeholder="販売価格を使用" />
                       </div>
                     </div>
                   </div>
@@ -1181,6 +1206,7 @@ export default function AdminProductManagement() {
                         <input type="number" defaultValue={editingVehicle ? (products.find(p => p && p.id === (editingVehicle.productId || editingVehicle.id))?.rentPriceLongTerm || 2100) : 2100} name="rentPriceLongTerm" className="w-full border border-slate-300 bg-white rounded-xl pl-7 pr-3 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-bold text-slate-700" placeholder="—" />
                       </div>
                     </div>
+                    {SALES_ENABLED && (
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-2">販売価格（円）</label>
                       <div className="relative">
@@ -1188,9 +1214,10 @@ export default function AdminProductManagement() {
                         <input type="number" defaultValue={editingVehicle ? (products.find(p => p && p.id === (editingVehicle.productId || editingVehicle.id))?.buyPrice || "") : ""} name="buyPrice" className="w-full border border-slate-300 bg-white rounded-xl pl-7 pr-3 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-bold text-slate-700" placeholder="—" />
                       </div>
                     </div>
+                    )}
                   </div>
                 </div>
-                 
+
                 {/* メディア設定 */}
                 <div className="bg-white rounded-lg border border-slate-200 p-5 space-y-5 shadow-sm">
                   <div className="flex items-center gap-3 border-b border-slate-200/60 pb-3">
@@ -1350,7 +1377,7 @@ export default function AdminProductManagement() {
                     value={bulkText}
                     onChange={(e) => setBulkText(e.target.value)}
                     className="w-full flex-1 min-h-[350px] font-mono text-xs p-3.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none resize-none bg-white shadow-inner"
-                    placeholder="商品名,カテゴリ,レンタル単価,長期単価,販売価格,在庫数"
+                    placeholder={SALES_ENABLED ? "商品名,カテゴリ,レンタル単価,長期単価,販売価格,在庫数" : "商品名,カテゴリ,レンタル単価,長期単価,在庫数"}
                   />
                 </div>
 
@@ -1372,7 +1399,7 @@ export default function AdminProductManagement() {
                               <th className="p-2.5 font-bold text-slate-600 w-[120px]">カテゴリ *</th>
                               <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">日単価</th>
                               <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">長期</th>
-                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">販売</th>
+                              {SALES_ENABLED && <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">販売</th>}
                               <th className="p-2.5 font-bold text-slate-600 w-[70px] text-right">在庫</th>
                             </tr>
                           </thead>
@@ -1418,18 +1445,20 @@ export default function AdminProductManagement() {
                                     className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
                                   />
                                 </td>
+                                {SALES_ENABLED && (
                                 <td className="p-1">
-                                  <input 
-                                    type="number" 
-                                    value={row.buyPrice || ""} 
+                                  <input
+                                    type="number"
+                                    value={row.buyPrice || ""}
                                     onChange={(e) => updateBulkItemCell(idx, "buyPrice", e.target.value)}
                                     className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
                                   />
                                 </td>
+                                )}
                                 <td className="p-1">
-                                  <input 
-                                    type="number" 
-                                    value={row.stock || 0} 
+                                  <input
+                                    type="number"
+                                    value={row.stock || 0}
                                     onChange={(e) => updateBulkItemCell(idx, "stock", e.target.value)}
                                     className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-800"
                                   />

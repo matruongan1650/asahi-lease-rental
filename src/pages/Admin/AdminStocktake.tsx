@@ -14,6 +14,7 @@ import {
 } from "../../components/AdminUI";
 import { useAdminCollection } from "../../context/AdminDataContext";
 import { useVehicles } from "../../context/VehicleContext";
+import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { getCategoryIcon, isVehicleCategory } from "../../utils/productUtils";
 
@@ -48,7 +49,9 @@ type StocktakeRow = {
 const DEFAULT_COUNTER = "佐藤";
 
 function formatDateTime() {
-  return new Date().toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
+  // JST(UTC+9)で記録する。toISOString() は UTC のため、00:00–09:00 JST の操作が前日付・9時間ずれで
+  // 記録され棚卸履歴/最終棚卸日が誤る。+9h シフトしてから ISO 文字列化することで JST 壁時計を得る。
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
 }
 
 function zoneForCategory(category: string) {
@@ -134,10 +137,13 @@ export default function AdminStocktake() {
   const { rows: products } = useAdminCollection("products");
   const { rows: stocktakeHistory } = useAdminCollection("stocktake");
   const { vehicles, updateVehicle } = useVehicles();
+  const { currentUser } = useUser();
 
   const [tab, setTab] = useState<StocktakeTab>("all");
   const [query, setQuery] = useState("");
-  const [counter, setCounter] = useState(DEFAULT_COUNTER);
+  // 棚卸の担当者は、ログイン中の管理者/スタッフ名を初期値にする（誰が棚卸したか履歴で正しく残す）。
+  const loginName = currentUser ? (`${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email || "") : "";
+  const [counter, setCounter] = useState(loginName || DEFAULT_COUNTER);
   const [note, setNote] = useState("");
   const [countDraft, setCountDraft] = useState<Record<string, number>>({});
   const [photos, setPhotos] = useState<string[]>([]);
@@ -149,6 +155,9 @@ export default function AdminStocktake() {
       .filter((p: any) => p && !isVehicleCategory(p.category))
       .map((p: any): StocktakeRow => {
         const system = Number(p.stock || 0);
+        // 実際にカウント入力された行のみ判定する。未入力は「未確認」とし、
+        // 差異なし(=確認済み一致)と区別する（以前は未入力でも差異なし扱いだった）。
+        const isCounted = Object.prototype.hasOwnProperty.call(countDraft, p.id);
         const counted = countDraft[p.id] ?? system;
         const diff = counted - system;
         return {
@@ -162,7 +171,7 @@ export default function AdminStocktake() {
           system,
           counted,
           diff,
-          state: diff === 0 ? "差異なし" : "差異あり"
+          state: !isCounted ? "未確認" : diff === 0 ? "差異なし" : "差異あり"
         };
       });
 
@@ -170,7 +179,9 @@ export default function AdminStocktake() {
       const productId = v.productId || v.id;
       const linkedProduct = (products || []).find((p: any) => p?.id === productId);
       const system = Number(v.stock ?? linkedProduct?.stock ?? 1);
-      const counted = countDraft[`vehicle:${v.id}`] ?? system;
+      const vkey = `vehicle:${v.id}`;
+      const isCounted = Object.prototype.hasOwnProperty.call(countDraft, vkey);
+      const counted = countDraft[vkey] ?? system;
       const diff = counted - system;
       return {
         id: `vehicle:${v.id}`,
@@ -186,7 +197,7 @@ export default function AdminStocktake() {
         system,
         counted,
         diff,
-        state: diff === 0 ? "差異なし" : "差異あり"
+        state: !isCounted ? "未確認" : diff === 0 ? "差異なし" : "差異あり"
       };
     });
 
@@ -298,9 +309,14 @@ export default function AdminStocktake() {
     });
 
     diffRows.forEach((row) => {
-      OrderBus.patch("products", row.productId, { stock: row.counted });
       if (row.vehicleId) {
+        // 車両行は車両自身の在庫だけを調整する。共有商品マスタ(products.stock)は上書きしない。
+        // （1台の点検カウントで商品全体の在庫が 1 等に潰れる／同一商品を指す複数車両行が
+        //   互いの結果を上書きする＝在庫破壊、を防ぐ。）
         updateVehicle(row.vehicleId, { stock: row.counted });
+      } else {
+        // 消耗品/商品行のみ商品マスタの在庫を確定値に更新する。
+        OrderBus.patch("products", row.productId, { stock: row.counted });
       }
       OrderBus.push("stockMoves", {
         id: "ADJ-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
@@ -404,7 +420,7 @@ export default function AdminStocktake() {
         </span>
       )
     },
-    { h: "状態", align: "center" as const, cell: (row: StocktakeRow) => <Badge tone={row.diff === 0 ? "ok" : "warning"}>{row.state}</Badge> }
+    { h: "状態", align: "center" as const, cell: (row: StocktakeRow) => <Badge tone={row.state === "差異あり" ? "warning" : row.state === "未確認" ? "default" : "ok"}>{row.state}</Badge> }
   ];
 
   const historyCols = [

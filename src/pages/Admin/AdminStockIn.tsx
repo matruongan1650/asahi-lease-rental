@@ -3,6 +3,7 @@ import { Btn, Field, Modal, Row, SelectInput, TextInput, triggerToast } from "..
 import { useAdminCollection } from "../../context/AdminDataContext";
 import OrderBus from "../../lib/orderBus";
 import { usePagedList } from "../../hooks/usePagedList";
+import { isVehicleCategory } from "../../utils/productUtils";
 
 function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: string; value: string | number; tone?: "blue" | "emerald" | "amber" }) {
   const toneClass = {
@@ -25,7 +26,13 @@ function StatCard({ icon, label, value, tone = "blue" }: { icon: string; label: 
 
 export default function AdminStockIn() {
   const { rows } = useAdminCollection("stockIn");
-  const { rows: warehouseRows } = useAdminCollection("warehouse");
+  // 在庫は products.stock（現物在庫）が唯一の正。以前は未シードの "warehouse" コレクションを
+  // 参照していたため入庫が実在庫に反映されなかった。products へ統一する。
+  const { rows: products } = useAdminCollection("products");
+  const supplyProducts = useMemo(
+    () => (products || []).filter((p: any) => p && !isVehicleCategory(p.category)),
+    [products],
+  );
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("すべて");
@@ -43,7 +50,7 @@ export default function AdminStockIn() {
   const [type, setType] = useState("新規購入");
   const [staff, setStaff] = useState("佐藤");
 
-  const itemOptions = ["", ...warehouseRows.map((w: any) => w.name).filter(Boolean), "その他 (直接入力)"];
+  const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean), "その他 (直接入力)"];
   const totalInQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
   const todayCount = rows.filter((row: any) => String(row.date || "").slice(0, 10) === new Date().toISOString().slice(0, 10).replace(/-/g, "/")).length;
   const purchaseCount = rows.filter((row: any) => row.type === "新規購入").length;
@@ -71,7 +78,8 @@ export default function AdminStockIn() {
       return;
     }
 
-    const newId = "IN-" + Math.floor(7700 + Math.random() * 200);
+    const now = Date.now();
+    const newId = "IN-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);
     const dateStr = new Date().toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
     const stockInItem = {
       id: newId,
@@ -80,28 +88,23 @@ export default function AdminStockIn() {
       date: dateStr,
       src: src || (type === "新規購入" ? "新規購入" : "回収戻し"),
       type,
-      staff
+      staff,
+      seq: now,
+      icon: "boxIn",
     };
 
     OrderBus.push("stockIn", stockInItem);
-    const match = warehouseRows.find((w: any) => w.name === itemName);
+    const match = supplyProducts.find((p: any) => p.name === itemName);
     if (match) {
-      OrderBus.patch("warehouse", match.id, {
-        total: (match.total || 0) + Number(qty),
-        available: (match.available || 0) + Number(qty)
-      });
+      // 書き込み直前に最新在庫を再読込（レンダー時のスナップショットは古く、別端末/受注確定の
+      // 在庫変動を絶対値で上書きしてしまうため）。
+      const fresh = OrderBus.getAll<any>("products").find((p: any) => String(p?.id || "") === String(match.id));
+      const base = Number((fresh?.stock ?? match.stock) || 0);
+      OrderBus.patch("products", match.id, { stock: base + Number(qty) });
       triggerToast(`${itemName} を +${qty} 入庫しました`, "ok");
     } else {
-      OrderBus.push("warehouse", {
-        id: "W-" + Math.floor(10 + Math.random() * 80),
-        name: itemName,
-        loc: "A-01 (自動割当)",
-        total: Number(qty),
-        rented: 0,
-        available: Number(qty),
-        cat: "その他"
-      });
-      triggerToast(`${itemName} を倉庫に新規登録しました`, "ok");
+      // 商品マスタに該当なし（その他/直接入力）。履歴は残すが実在庫は調整しない。
+      triggerToast(`${itemName} の入庫を記録しました（商品マスタ未登録のため在庫は未調整。先に商品登録してください）`, "warn");
     }
 
     setIsAddModalOpen(false);

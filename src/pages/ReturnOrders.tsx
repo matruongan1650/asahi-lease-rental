@@ -1,8 +1,14 @@
 import { useNavigate } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ReturnOrdersDesktop from "./desktop/ReturnOrdersDesktop";
 
 export default function ReturnOrders() {
+  return useIsDesktop() ? <ReturnOrdersDesktop /> : <ReturnOrdersMobile />;
+}
+
+function ReturnOrdersMobile() {
   const navigate = useNavigate();
   const { orders } = useOrders();
   const { currentUser } = useUser();

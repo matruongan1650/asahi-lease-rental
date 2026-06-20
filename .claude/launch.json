@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "4123", "--strictPort", "--host", "127.0.0.1"],
       "port": 4123
+    },
+    {
+      "name": "asahi-staff",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "vite.staff.config.ts", "--port", "4124", "--strictPort", "--host", "127.0.0.1"],
+      "port": 4124
     }
   ]
 }

@@ -82,7 +82,14 @@ export default function AdminMaintenance() {
     return (maintRows || []).map((r: any) => {
       const next = parseSlashDate(r.next);
       const days = next ? daysBetween(today, next) : (r.days ?? 0);
-      const status = r.status === "正常" ? "正常" : days < 0 ? "超過" : days <= 7 ? "期限間近" : "予定";
+      // 再計算した days を最優先する。保存済み "正常" で短絡すると、次回点検日を過ぎても緑の「正常」のままになり、
+      // かつ「超過」(days<0) と「正常運用」(status==="正常") の両 KPI に同一行が二重計上される。
+      const status =
+        days < 0 ? "超過" :
+        days <= 7 ? "期限間近" :
+        r.status === "正常" ? "正常" :
+        r.status === "要修理" ? "要修理" :
+        "予定";
       return { ...r, days, status };
     });
   }, [maintRows]);

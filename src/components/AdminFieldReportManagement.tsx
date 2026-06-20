@@ -4,6 +4,7 @@ import { useUser } from "../context/UserContext";
 import { CartItem } from "../context/CartContext";
 import { useAdminCollection } from "../context/AdminDataContext";
 import OrderBus from "../lib/orderBus";
+import { computeCompensationCharge } from "../utils/billing";
 import { triggerToast } from "./AdminUI";
 import {
   Search,
@@ -19,7 +20,7 @@ import {
   Truck,
   Store,
 } from "lucide-react";
-import { isFullyReturned } from "../utils/orderStatus";
+import { isClosedOrder } from "../utils/orderStatus";
 
 type WalkinReturnRecord = {
   id?: string;
@@ -231,10 +232,12 @@ export default function AdminFieldReportManagement() {
     o.items?.some((i) => i.type === "rent"),
   );
 
+  // クローズ済み(返却済/完了/キャンセル)は報告済みへ。isFullyReturned は「完了」を含まないため、
+  // 完了で閉じた注文が未報告(pending)に永久に残り、再報告で submitReport が再実行されてしまう不具合を解消。
   const pendingOrders = rentOrders.filter(
-    (o) => !isFullyReturned(o.status) && o.status !== "新規",
+    (o) => !isClosedOrder(o.status) && o.status !== "新規",
   );
-  const completedOrders = rentOrders.filter((o) => isFullyReturned(o.status));
+  const completedOrders = rentOrders.filter((o) => isClosedOrder(o.status));
 
   const filteredOrders = (
     activeTab === "pending" ? pendingOrders : completedOrders
@@ -271,7 +274,8 @@ export default function AdminFieldReportManagement() {
         initialIssues[item.id] = {
           missing: m,
           broken: b,
-          ok: item.quantity - m - b,
+          // 保存済み missing+broken が数量を超える(過去データ等)とき OK が負数表示になるのを防ぐ。
+          ok: Math.max(0, item.quantity - m - b),
           note: savedIssues[0]?.notes || "",
         };
       });
@@ -287,7 +291,8 @@ export default function AdminFieldReportManagement() {
       selectedOrder?.items?.find((i) => i.id === itemId)?.quantity || 0;
 
     setIssueState((prev) => {
-      const current = prev[itemId];
+      // prev[itemId] が未初期化のケース（選択直後の競合など）でクラッシュしないようフォールバック。
+      const current = prev[itemId] || { missing: 0, broken: 0, ok: maxQty, note: "" };
       let { missing, broken, ok } = current;
 
       if (field === "missing") missing = val;
@@ -316,7 +321,13 @@ export default function AdminFieldReportManagement() {
       // Ensure no negative values
       missing = Math.max(0, missing);
       broken = Math.max(0, broken);
-      ok = Math.max(0, maxQty - missing - broken);
+      // OK を直接編集したときはその入力値を尊重する（クランプのみ）。
+      // missing/broken を編集したときだけ OK を残差として再計算する。
+      if (field === "ok") {
+        ok = Math.max(0, Math.min(ok, maxQty));
+      } else {
+        ok = Math.max(0, maxQty - missing - broken);
+      }
 
       return {
         ...prev,
@@ -349,9 +360,20 @@ export default function AdminFieldReportManagement() {
       }
     });
 
+    // 不足・破損が更新されたら弁償費を再計算する。既存の自動計上行（compensation-charge）を
+    // 取り除いておけば、請求書生成時に新しい金額で再注入される。
+    const products = OrderBus.getAll<any>("products");
+    const newComp = computeCompensationCharge({ items: selectedOrder.items, itemIssues: formattedIssues }, products);
+    const strippedBlocks = Array.isArray(selectedOrder.invoiceBlocks)
+      ? selectedOrder.invoiceBlocks.map((b: any) => ({ ...b, extraCosts: (b.extraCosts || []).filter((e: any) => e.id !== "compensation-charge") }))
+      : undefined;
+
     await updateOrder(selectedOrder.id, {
       status: "返却済",
       itemIssues: formattedIssues.length > 0 ? formattedIssues : undefined,
+      compensationCharge: newComp || undefined,
+      compensationDismissed: false,
+      ...(strippedBlocks ? { invoiceBlocks: strippedBlocks } : {}),
     });
 
     setSelectedOrder(null);
@@ -601,13 +623,11 @@ export default function AdminFieldReportManagement() {
                               type="text"
                               value={state.note}
                               onChange={(e) =>
-                                setIssueState((prev) => ({
-                                  ...prev,
-                                  [item.id]: {
-                                    ...prev[item.id],
-                                    note: e.target.value,
-                                  },
-                                }))
+                                setIssueState((prev) => {
+                                  // prev[item.id] が未初期化でも missing/broken/ok を失わないようフォールバック。
+                                  const cur = prev[item.id] || { missing: 0, broken: 0, ok: item.quantity, note: "" };
+                                  return { ...prev, [item.id]: { ...cur, note: e.target.value } };
+                                })
                               }
                               placeholder="例：右側の持ち手が欠損..."
                               className="w-full bg-white border border-slate-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none"
@@ -912,7 +932,7 @@ export default function AdminFieldReportManagement() {
       {/* selectedReport Drawer/Modal Overlay */}
       {selectedReport && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-end">
-          <div className="w-[500px] bg-white h-full shadow-2xl flex flex-col animate-[drawerIn_0.3s_ease-out]">
+          <div className="w-[500px] max-w-[94vw] bg-white h-full shadow-2xl flex flex-col animate-[drawerIn_0.3s_ease-out]">
             <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
               <div>
                 <span className="bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px] uppercase tracking-wide">

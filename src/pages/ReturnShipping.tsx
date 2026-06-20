@@ -2,6 +2,8 @@ import React, { useState, useRef } from "react";
 import { alertDialog } from "../components/AppDialog";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUser } from "../context/UserContext";
+import { useIsDesktop } from "../hooks/useIsDesktop";
+import ReturnShippingDesktop from "./desktop/ReturnShippingDesktop";
 
 function normalizeDateInput(value: any): string {
   const match = String(value || "").match(/(\d{4})[^\d](\d{1,2})[^\d](\d{1,2})/);
@@ -19,6 +21,10 @@ function readImageAsDataUrl(file: File): Promise<string> {
 }
 
 export default function ReturnShipping() {
+  return useIsDesktop() ? <ReturnShippingDesktop /> : <ReturnShippingMobile />;
+}
+
+function ReturnShippingMobile() {
   const navigate = useNavigate();
   const { orderId } = useParams();
   const location = useLocation();
@@ -34,23 +40,36 @@ export default function ReturnShipping() {
   const [photos, setPhotos] = useState<string[]>([]);
   const returnMinDate = normalizeDateInput(order?.rentalStartDate);
   const returnMaxDate = normalizeDateInput(order?.rentalEndDate);
-  
+  // 延滞（終了予定日 < 今日）でも返却/回収日を選べるよう、上限は「終了予定日」と「今日」の遅い方。
+  const todayStr = normalizeDateInput(new Date().toISOString().slice(0, 10));
+  const returnMaxEffective = [returnMaxDate, todayStr].filter(Boolean).sort().pop() || "";
+
   const [address, setAddress] = useState(profile.address);
-  const [pickupDate, setPickupDate] = useState(returnMaxDate || returnMinDate || "");
+  const [pickupDate, setPickupDate] = useState(returnMaxEffective || returnMinDate || "");
   const [pickupTime, setPickupTime] = useState("午前中");
   const isDateOutOfRange = Boolean(
     pickupDate &&
-    ((returnMinDate && pickupDate < returnMinDate) || (returnMaxDate && pickupDate > returnMaxDate))
+    ((returnMinDate && pickupDate < returnMinDate) || (returnMaxEffective && pickupDate > returnMaxEffective))
   );
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
+    const input = e.target;
+    const files = input.files;
+    if (!files || files.length === 0) return;
+    try {
       const remainingSlots = Math.max(0, 5 - photos.length);
       const selected = Array.from(files).slice(0, remainingSlots).filter((file) => file.type.startsWith("image/"));
-      const dataUrls = await Promise.all(selected.map(readImageAsDataUrl));
-      setPhotos(prev => [...prev, ...dataUrls.filter(Boolean)].slice(0, 5));
-      e.target.value = "";
+      // allSettled: 1枚の読み込み失敗で選択全部が消える（未処理 rejection）のを防ぐ。
+      const results = await Promise.allSettled(selected.map(readImageAsDataUrl));
+      const dataUrls = results
+        .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter(Boolean);
+      setPhotos(prev => [...prev, ...dataUrls].slice(0, 5));
+      const failed = selected.length - dataUrls.length;
+      if (failed > 0) void alertDialog(`${failed}枚の画像を読み込めませんでした。別の画像でお試しください。`);
+    } finally {
+      input.value = "";
     }
   };
 
@@ -70,9 +89,9 @@ export default function ReturnShipping() {
           <h3 className="text-sm font-bold mb-3 px-1">返却方法の選択</h3>
           <div className="grid grid-cols-1 gap-3">
             <label className={`flex items-start p-4 rounded-xl border-2 transition-all cursor-pointer ${method === "direct" ? "border-primary bg-primary/5" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"}`}>
-              <input 
-                type="radio" 
-                name="returnMethod" 
+              <input
+                type="radio"
+                name="returnMethod"
                 value="direct"
                 checked={method === "direct"}
                 onChange={() => setMethod("direct")}
@@ -86,27 +105,34 @@ export default function ReturnShipping() {
                 <p className="text-xs text-slate-500">アサヒリース株式会社に直接お持ち込みいただきます。</p>
               </div>
             </label>
-            
-            <label className={`flex items-start p-4 rounded-xl border-2 transition-all cursor-pointer ${method === "pickup" ? "border-primary bg-primary/5" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"}`}>
-              <input
-                type="radio"
-                name="returnMethod"
-                value="pickup"
-                checked={method === "pickup"}
-                onChange={() => setMethod("pickup")}
-                className="mt-1 w-5 h-5 text-primary border-slate-300 focus:ring-primary"
-              />
-              <div className="ml-3 flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="material-symbols-outlined text-[20px] text-slate-600 dark:text-slate-300">local_shipping</span>
-                  <span className="font-bold text-sm">回収を依頼</span>
+
+            {/* 一部返却は直接持ち込みのみ（業者集荷は不可） */}
+            {returnType !== "partial" && (
+              <label className={`flex items-start p-4 rounded-xl border-2 transition-all cursor-pointer ${method === "pickup" ? "border-primary bg-primary/5" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"}`}>
+                <input
+                  type="radio"
+                  name="returnMethod"
+                  value="pickup"
+                  checked={method === "pickup"}
+                  onChange={() => setMethod("pickup")}
+                  className="mt-1 w-5 h-5 text-primary border-slate-300 focus:ring-primary"
+                />
+                <div className="ml-3 flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="material-symbols-outlined text-[20px] text-slate-600 dark:text-slate-300">local_shipping</span>
+                    <span className="font-bold text-sm">回収を依頼</span>
+                  </div>
+                  <p className="text-xs text-slate-500">回収者が指定の場所まで引取に伺います。</p>
                 </div>
-                <p className="text-xs text-slate-500">
-                  {returnType === "partial" ? "一部返却の対象品だけを指定場所まで引取に伺います。" : "回収者が指定の場所まで引取に伺います。"}
-                </p>
-              </div>
-            </label>
+              </label>
+            )}
           </div>
+          {returnType === "partial" && (
+            <p className="mt-3 flex items-start gap-1.5 text-[11px] text-slate-500 leading-relaxed px-1">
+              <span className="material-symbols-outlined text-[14px] text-primary mt-px">info</span>
+              一部返却は「直接持ち込み」のみご利用いただけます。業者集荷をご希望の場合は、全量返却をご選択ください。
+            </p>
+          )}
         </section>
 
         {method === "pickup" && (
@@ -131,12 +157,12 @@ export default function ReturnShipping() {
                   type="date" 
                   value={pickupDate}
                   min={returnMinDate || undefined}
-                  max={returnMaxDate || undefined}
+                  max={returnMaxEffective || undefined}
                   onChange={(e) => setPickupDate(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
                 />
                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                  {returnMinDate || "開始日未設定"} 〜 {returnMaxDate || "終了日未設定"} の範囲で選択してください。
+                  {returnMinDate || "開始日未設定"} 〜 {returnMaxEffective || "終了日未設定"} の範囲で選択できます（延滞時は本日まで）。
                 </p>
               </div>
               <div className="flex flex-col gap-1.5">
@@ -165,12 +191,12 @@ export default function ReturnShipping() {
                 type="date"
                 value={pickupDate}
                 min={returnMinDate || undefined}
-                max={returnMaxDate || undefined}
+                max={returnMaxEffective || undefined}
                 onChange={(e) => setPickupDate(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
               />
               <p className="text-[10px] text-slate-500 leading-relaxed">
-                {returnMinDate || "開始日未設定"} 〜 {returnMaxDate || "終了日未設定"} の範囲で選択してください。
+                {returnMinDate || "開始日未設定"} 〜 {returnMaxEffective || "終了日未設定"} の範囲で選択できます（延滞時は本日まで）。
               </p>
             </div>
           </section>
@@ -226,7 +252,7 @@ export default function ReturnShipping() {
           <button 
             onClick={() => {
               if (!pickupDate || isDateOutOfRange) {
-                void alertDialog("返却予定日はレンタル開始日からレンタル終了予定日の範囲で選択してください。");
+                void alertDialog("返却予定日はレンタル開始日以降の日付で選択してください（延滞中は本日まで指定できます）。");
                 return;
               }
               setProfile({ ...profile, address });

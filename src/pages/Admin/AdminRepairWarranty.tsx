@@ -209,7 +209,7 @@ export default function AdminRepairWarranty() {
       h: "費用",
       align: "right" as const,
       cell: (r: any) => (
-        <span className="font-mono font-bold">{r.cost ? FMT(r.cost) : "見積中"}</span>
+        <span className="font-mono font-bold">{r.cost != null ? FMT(r.cost) : "見積中"}</span>
       ),
     },
     {
@@ -245,7 +245,10 @@ export default function AdminRepairWarranty() {
   ];
 
   const totalCostThisMonth = useMemo(() => {
-    const ym = new Date().toISOString().slice(0, 7).replace("-", "/");
+    // 当月キーは JST(ローカル)で生成する。toISOString() の UTC だと月初9時間は前月扱いになり、
+    // JST 日付で記録された completedAt（"YYYY/MM/DD"）と当月集計がずれる。
+    const _d = new Date();
+    const ym = `${_d.getFullYear()}/${String(_d.getMonth() + 1).padStart(2, "0")}`;
     return repairs
       .filter((r: any) => r.status === "完了" && r.cost && String(r.completedAt || "").startsWith(ym))
       .reduce((s: number, r: any) => s + (r.cost || 0), 0);

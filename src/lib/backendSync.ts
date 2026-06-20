@@ -2,7 +2,7 @@
  * backendSync.ts — 自前バックエンド (/api) との通信ラッパー（クライアント側）。
  * すべて同一オリジンの fetch。失敗時は呼び出し側（OrderBus）でローカルフォールバックする。
  */
-import { API_BASE } from "./dataBackend";
+import { API_BASE, apiHeaders } from "./dataBackend";
 
 export interface SyncChange {
   store: string;
@@ -17,8 +17,8 @@ export interface SyncResponse {
 
 async function jfetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API_BASE + path, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: apiHeaders({ "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
