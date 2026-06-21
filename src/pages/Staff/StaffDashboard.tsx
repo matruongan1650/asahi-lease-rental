@@ -529,7 +529,7 @@ function HistoryCard({ order, kind, date, onViewDoc }: any) {
   );
 }
 
-function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, deliveries, recoveries, outdoorMode }: any) {
+function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, deliveries, recoveries, outdoorMode, onToggleOutdoor }: any) {
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>(user || {});
@@ -682,6 +682,21 @@ function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, 
       <Btn full variant="secondary" icon="fileCheck" onClick={() => setShowHistory(true)}>
         完了履歴を見る
       </Btn>
+
+      {/* 屋外モード: 直射日光でも読める高コントラスト表示の切替（現場ドライバー向け） */}
+      <Card pad={14} style={{ marginTop: 10 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+          <div style={{ width: 40, height: 40, borderRadius: 11, background: outdoorMode ? "#00331a" : "var(--surface-3)", color: outdoorMode ? "#00FF66" : "var(--fg-muted)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <Icon name="sun" size={20} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)" }}>屋外モード</div>
+            <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2, fontWeight: 600 }}>直射日光でも見やすい高コントラスト表示</div>
+          </div>
+          <input type="checkbox" checked={!!outdoorMode} onChange={(e) => onToggleOutdoor && onToggleOutdoor(e.target.checked)} style={{ width: 22, height: 22, flexShrink: 0 }} />
+        </label>
+      </Card>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <Btn full variant="secondary" icon="user" onClick={() => { setDraft(user || {}); setEditing(true); }}>
           編集
@@ -707,10 +722,88 @@ function staffInfoFromUser(user: UserProfile | null) {
 // ---------------------------------------------------------------------------
 // Central Dashboard Core View Setup
 // ---------------------------------------------------------------------------
-function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
+// 本日のルート: 配送・回収の全停車地を順に一覧し、Google マップで全ルートを一括ナビ。
+// オフライン準備（写真の事前取得）も提供する（電波のある倉庫で取得 → 現場で参照）。
+const ROUTE_CLAMP2: React.CSSProperties = { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" };
+function RouteOverview({ deliveries, recoveries, doneDlv, doneRtn, outdoorMode, onBack, onOpenDlv, onOpenRcv }: any) {
+  const stops = [
+    ...(deliveries || []).filter((o: any) => !doneDlv.includes(o.id)).map((o: any) => ({ kind: "配送", color: "var(--brand-accent)", o })),
+    ...(recoveries || []).filter((o: any) => !doneRtn.includes(o.id)).map((o: any) => ({ kind: "回収", color: "var(--success-bright)", o })),
+  ];
+  const addrs = stops.map((s) => s.o.addr).filter(Boolean);
+  const openRoute = () => {
+    if (!addrs.length) return;
+    const enc = (a: string) => encodeURIComponent(a);
+    let url: string;
+    if (addrs.length === 1) url = `https://www.google.com/maps/dir/?api=1&destination=${enc(addrs[0])}&travelmode=driving`;
+    else {
+      const dest = enc(addrs[addrs.length - 1]);
+      const wps = addrs.slice(0, -1).slice(0, 9).map(enc).join("|"); // Google の waypoints 上限に配慮(最大9)
+      url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&waypoints=${wps}&travelmode=driving`;
+    }
+    window.open(url, "_blank");
+  };
+  const [prefetch, setPrefetch] = useState<"idle" | "loading" | "done">("idle");
+  const doPrefetch = async () => {
+    setPrefetch("loading");
+    const urls = Array.from(new Set(stops.flatMap((s) => (s.o.items || []).map((i: any) => i.image).filter((u: any) => typeof u === "string" && u))));
+    await Promise.all(urls.map((u: any) => new Promise<void>((res) => { const img = new Image(); img.onload = () => res(); img.onerror = () => res(); img.src = u; })));
+    setPrefetch("done");
+  };
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: outdoorMode ? "#000" : "var(--bg)", minHeight: 0 }}>
+      <TopBar title="本日のルート" sub={`${stops.length}件`} onBack={onBack} />
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>
+        {stops.length === 0 ? (
+          <Empty icon="navigation" title="本日のルートはありません" sub="配送・回収の予定が入るとここに表示されます" />
+        ) : (
+          <>
+            <Btn full size="lg" icon="navigation" style={{ marginBottom: 10 }} onClick={openRoute}>全ルートをマップで開く（{Math.min(addrs.length, 10)}地点{addrs.length > 10 ? "・先頭10件" : ""}）</Btn>
+            <Btn full variant="secondary" icon={prefetch === "done" ? "checkCircle" : "download"} disabled={prefetch === "loading"} style={{ marginBottom: 14 }} onClick={doPrefetch}>
+              {prefetch === "loading" ? "準備中…" : prefetch === "done" ? "オフライン準備完了" : "オフライン準備（写真を事前取得）"}
+            </Btn>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {stops.map((s, i) => (
+                <Card key={s.kind + s.o.id} pad={13} onClick={() => (s.kind === "配送" ? onOpenDlv(s.o) : onOpenRcv(s.o))}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 99, background: s.color, color: "#fff", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 900, flexShrink: 0 }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Badge variant={s.kind === "配送" ? "brand" : "success"}>{s.kind}</Badge>
+                        {s.o.eta && <span style={{ fontSize: 12, color: "var(--fg-muted)", fontWeight: 700 }}>{s.o.eta}</span>}
+                      </div>
+                      <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--fg)", marginTop: 4, ...ROUTE_CLAMP2 }}>{s.o.site}</div>
+                      <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 2, ...ROUTE_CLAMP2 }}>{s.o.addr}</div>
+                    </div>
+                    <Icon name="chevronRight" size={18} color="var(--fg-subtle)" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolean }) {
   const ml = useMobileLive();
   const { orders, updateOrder, addCustomOrder } = useOrders();
   const { currentUser, updateUser, logout } = useUser();
+  // 屋外モード（直射日光でも読める高コントラスト表示）。端末ごとに記憶する。
+  const [outdoorMode, setOutdoorMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("asahi.staff.outdoor") === "1"; } catch { return !!outdoorModeProp; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("asahi.staff.outdoor", outdoorMode ? "1" : "0"); } catch { /* ignore */ }
+  }, [outdoorMode]);
+  // 未送信(サーバ未確定)件数を定期取得して TopBar に表示する。
+  const [pendingSync, setPendingSync] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setPendingSync(OrderBus.pendingCount()), 2000);
+    return () => window.clearInterval(t);
+  }, []);
   const [tab, setTab] = useState("home");
   const [subView, setSubView] = useState<string | null>(null);
   const [flow, setFlow] = useState<any>(null);
@@ -982,7 +1075,20 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   // 完了済みはライブリストから外れるため、分母に完了分を足して
   // 「完了 / 総数」が 100% を超えない・分子が分母を超えないようにする。
   const totalTasks = deliveries.length + recoveries.length + completedTasks;
-  const staffNotifications = buildStaffNotifications({ deliveries, recoveries, walkin: ml.walkin || [], vehicles: VL, maintenance: ML });
+  // admin からの連絡（staffMessages）: 全員宛 or 自分宛、かつ直近7日分のみを新しい順に最大10件。
+  // （無期限に溜めると通知一覧が際限なく膨らむため上限を設ける）。
+  const MSG_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const myMessages = (ml.staffMessages || [])
+    .filter((m: any) => {
+      const t = String(m?.target ?? "all");
+      if (!(t === "all" || t === "staff" || t === (currentUser?.id || ""))) return false;
+      const ts = m?.createdAt ? new Date(m.createdAt).getTime() : nowMs;
+      return !isNaN(ts) && nowMs - ts <= MSG_MAX_AGE_MS;
+    })
+    .sort((a: any, b: any) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+    .slice(0, 10);
+  const staffNotifications = buildStaffNotifications({ deliveries, recoveries, walkin: ml.walkin || [], vehicles: VL, maintenance: ML, messages: myMessages });
   const notifReads = useNotificationReads("staff:" + (currentUser?.id || ""));
   const staffUnread = notifReads.unreadCount(staffNotifications);
   // 新しい業務通知を検知したら端末通知（音付き）を鳴らす（APK のみ。Web は no-op）。
@@ -1037,6 +1143,7 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   }
 
   if (subView === "stocktake") return <WhStocktake onBack={() => setSubView(null)} staffName={staff.name} />;
+  if (subView === "route") return <RouteOverview deliveries={deliveries} recoveries={recoveries} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} onBack={() => setSubView(null)} onOpenDlv={(o: any) => { setSubView(null); setFlow({ type: "dlv", order: o }); }} onOpenRcv={(o: any) => { setSubView(null); setFlow({ type: "rtn", order: o }); }} />;
 
   // 通知ベルはホームにしか無いため、他タブ作業中でも未読が分かるよう
   // ボトムナビの「ホーム」に未読件数バッジを出す（タップでホーム→ベル）。
@@ -1066,6 +1173,10 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
                 {/* 同期状態（オフライン/送信待ちを現場で気づけるように） */}
                 {!ml.connected ? (
                   <span title="オフライン" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 900, color: "var(--danger-bright)", background: "var(--danger-tint)", border: "1px solid var(--danger-bright)", borderRadius: 99, padding: "3px 8px" }}><Icon name="alert" size={12} />オフライン</span>
+                ) : null}
+                {/* 送信待ち件数 + 今すぐ再送（電波の悪い現場でデータがサーバへ届いたか分かるように） */}
+                {pendingSync > 0 ? (
+                  <button onClick={() => OrderBus.retryPending()} title="今すぐ再送" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 900, color: "var(--warning-bright)", background: "var(--warning-tint)", border: "1px solid var(--warning-bright)", borderRadius: 99, padding: "3px 8px", cursor: "pointer" }}><Icon name="refresh" size={12} />送信待ち{pendingSync}</button>
                 ) : null}
                 <div style={{ position: "relative" }}>
                   <IconBtn name="bell" badge={staffUnread > 0} onClick={() => setShowNotifications(!showNotifications)} />
@@ -1104,6 +1215,39 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
             <ProgressBar value={completedTasks} max={totalTasks} color="#10B981" />
           </Card>
         </div>
+
+        {/* 次の業務（最優先タスクを1つだけ大きく提示）+ 本日のルート */}
+        {(() => {
+          const nextDlv = nextDeliveries[0];
+          const nextRcv = nextRecoveries[0];
+          const routeCount = deliveries.filter((o: any) => !doneDlv.includes(o.id)).length + recoveries.filter((o: any) => !doneRtn.includes(o.id)).length;
+          const hero = nextDlv
+            ? { label: "次の配送", color: "var(--brand-accent)", site: nextDlv.site, addr: nextDlv.addr, eta: nextDlv.eta, icon: "truck", action: () => setFlow({ type: "dlv", order: nextDlv }) }
+            : nextRcv
+              ? { label: "次の回収", color: "var(--success-bright)", site: nextRcv.site, addr: nextRcv.addr, eta: nextRcv.eta, icon: "package", action: () => setFlow({ type: "rtn", order: nextRcv }) }
+              : walkinCount > 0
+                ? { label: "対応待ち", color: "var(--warning-bright)", site: `持込返却 ${walkinCount}件の検品待ち`, addr: "", eta: "", icon: "clipboardCheck", action: () => setFlow({ type: "walkin" }) }
+                : null;
+          return (
+            <>
+              {hero && (
+                <Card pad={0} style={{ marginBottom: 12, overflow: "hidden", border: `1.5px solid ${hero.color}` }}>
+                  <div style={{ padding: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: hero.color, letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 5 }}>
+                      <Icon name={hero.icon} size={14} />{hero.label}{hero.eta ? ` ・ ${hero.eta}` : ""}
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: "var(--fg)", marginTop: 5, lineHeight: 1.3, ...ROUTE_CLAMP2 }}>{hero.site}</div>
+                    {hero.addr ? <div style={{ fontSize: 13, color: "var(--fg-muted)", marginTop: 3, ...ROUTE_CLAMP2 }}>{hero.addr}</div> : null}
+                    <Btn full size="lg" icon={hero.icon} style={{ marginTop: 12 }} onClick={hero.action}>開始する</Btn>
+                  </div>
+                </Card>
+              )}
+              {routeCount > 0 && (
+                <Btn full variant="secondary" icon="navigation" style={{ marginBottom: 18 }} onClick={() => setSubView("route")}>本日のルートを見る（{routeCount}件）</Btn>
+              )}
+            </>
+          );
+        })()}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
           <MetricCard label="配送予定" value={pendingDlvCount} unit="件" icon="truck" tone="brand" onClick={() => setTab("delivery_recovery")} />
@@ -1156,6 +1300,7 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
         deliveries={deliveries}
         recoveries={recoveries}
         outdoorMode={outdoorMode}
+        onToggleOutdoor={setOutdoorMode}
       />
     );
   }
@@ -1168,8 +1313,13 @@ function UnifiedStaffApp({ outdoorMode }: { outdoorMode: boolean }) {
   );
 }
 
+// 端末に記憶した屋外モードの初期値を読む（フレーム/ステータスバーの背景を内側と一致させる）。
+function readOutdoorPref(): boolean {
+  try { return localStorage.getItem("asahi.staff.outdoor") === "1"; } catch { return false; }
+}
+
 export default function StaffDashboard() {
-  const outdoorMode = false;
+  const outdoorMode = readOutdoorPref();
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }));
 
   useEffect(() => {
@@ -1233,6 +1383,7 @@ export default function StaffDashboard() {
 }
 
 export function StaffStandaloneApp() {
+  const outdoorMode = readOutdoorPref();
   return (
     <MobileLiveProvider>
       <div
@@ -1242,13 +1393,13 @@ export function StaffStandaloneApp() {
           minHeight: "100dvh",
           height: "100dvh",
           overflow: "hidden",
-          background: "var(--bg)",
+          background: outdoorMode ? "#000000" : "var(--bg)",
           color: "var(--fg)",
           fontFamily: "\"Noto Sans JP\", sans-serif",
           paddingTop: "env(safe-area-inset-top)",
         }}
       >
-        <UnifiedStaffApp outdoorMode={false} />
+        <UnifiedStaffApp outdoorMode={outdoorMode} />
       </div>
     </MobileLiveProvider>
   );

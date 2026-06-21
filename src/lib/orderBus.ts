@@ -56,7 +56,8 @@ export type BusStore =
   | "calendarEvents"
   | "contracts"
   | "issuedInvoices"
-  | "systemSettings";
+  | "systemSettings"
+  | "staffMessages";
 
 /** Every record stored in the bus must at least have an `id` */
 export interface BusRecord {
@@ -147,6 +148,9 @@ export interface IOrderBus {
   /** Number of local writes not yet confirmed by the server (offline/in-flight). */
   pendingCount(): number;
 
+  /** Manually retry all pending (unsynced) writes now — e.g. a "今すぐ再送" button. */
+  retryPending(): void;
+
   /**
    * Resolve when all pending writes have been confirmed by the server (`true`),
    * or `false` on the first sync error / after `timeoutMs`. Lets field flows
@@ -189,6 +193,7 @@ const BUS_STORES: readonly BusStore[] = [
   "contracts",
   "issuedInvoices",
   "systemSettings",
+  "staffMessages",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -773,6 +778,10 @@ export const OrderBus: IOrderBus = {
 
   pendingCount(): number {
     return _pendingUpserts.size;
+  },
+
+  retryPending(): void {
+    _retryPendingUpserts();
   },
 
   onSyncError(cb: (info: { store: BusStore; id: string; error: unknown }) => void): () => void {

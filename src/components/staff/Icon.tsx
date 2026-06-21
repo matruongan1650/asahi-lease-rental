@@ -7,6 +7,14 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
       <path d="M5 9.5V21h14V9.5" />
     </>
   ),
+  mic: (
+    <>
+      <rect x="9" y="2" width="6" height="11" rx="3" />
+      <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
+      <path d="M12 18v3" />
+      <path d="M8 21h8" />
+    </>
+  ),
   clipboard: (
     <>
       <rect x="6" y="4" width="12" height="17" rx="2" />

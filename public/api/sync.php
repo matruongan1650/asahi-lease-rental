@@ -32,6 +32,11 @@ try {
         $deleted = ((int) $row['deleted']) === 1;
         $store = $row['store'];
         $data = $deleted ? null : json_decode($row['data'], true);
+        // 社内連絡(staffMessages)は顧客端末へ配信しない（管理者→スタッフの内部メッセージ。情報漏洩防止）。
+        // カーソルは上で前進済みなので skip しても取りこぼしは起きない。
+        if ($scopeCustomer && $store === 'staffMessages') {
+            continue;
+        }
         if ($scopeCustomer && !$deleted && ($store === 'orders' || $store === 'users')) {
             $ownerOk = false;
             if (is_array($data)) {

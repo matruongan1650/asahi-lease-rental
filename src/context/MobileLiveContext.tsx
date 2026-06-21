@@ -138,6 +138,8 @@ interface MobileLiveContextProps {
   setVehicleStatus: (plate: string, status: string) => void;
   /** 現場棚卸セッションを admin の棚卸履歴へ記録する。 */
   recordStocktakeSession: (session: Record<string, any>) => void;
+  /** admin からスタッフへの連絡（staffMessages）。通知に表示する。 */
+  staffMessages: any[];
 }
 
 const MobileLiveContext = createContext<MobileLiveContextProps | null>(null);
@@ -152,6 +154,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const [returnInspections, setReturnInspections] = useState<any[]>([]);
   const [stockInRows, setStockIn] = useState<any[]>([]);
   const [stockOutRows, setStockOut] = useState<any[]>([]);
+  const [staffMessages, setStaffMessages] = useState<any[]>([]);
   const completedDeliveryIdsRef = useRef<Set<string>>(new Set());
 
   // Subscriptions & Seeding
@@ -192,6 +195,9 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const unsubStockIn = OrderBus.subscribe("stockIn", setStockIn);
     const unsubStockOut = OrderBus.subscribe("stockOut", setStockOut);
 
+    // admin → スタッフ への連絡（個別指示・差し戻し等）。通知に表示する。
+    const unsubMessages = OrderBus.subscribe("staffMessages", setStaffMessages);
+
     return () => {
       unsubOrders();
       unsubProducts();
@@ -201,6 +207,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       unsubReturnInsp();
       unsubStockIn();
       unsubStockOut();
+      unsubMessages();
     };
   }, []);
 
@@ -610,7 +617,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       connected, liveDeliveries, liveRecoveries, completeDelivery, completeRecovery,
       vehicles, recordVehicleShaken, products, findProductByName, adjustStock, setStock,
       maint, walkin, returnInspections, stockMoves, recordMaintenance, addStockMove, pushFieldReports,
-      undoRecovery, setVehicleStatus, recordStocktakeSession
+      undoRecovery, setVehicleStatus, recordStocktakeSession, staffMessages
     }}>
       {children}
     </MobileLiveContext.Provider>

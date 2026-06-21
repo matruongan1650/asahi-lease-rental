@@ -56,6 +56,25 @@ export default function ProductQrScanner({ open, title, products, onClose, onMat
     } catch { /* 端末がライト制御に未対応 */ }
   };
 
+  // QR一致時の手応え: 振動 + 短いビープ（手袋・屋外騒音でも確実に分かるように。Web API のみ・追加プラグイン不要）。
+  const feedbackMatch = () => {
+    try { if (navigator.vibrate) navigator.vibrate([55, 35, 55]); } catch { /* 非対応端末は無視 */ }
+    try {
+      const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
+      if (Ctx) {
+        const ac = new Ctx();
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        osc.frequency.value = 880;
+        osc.connect(g); g.connect(ac.destination);
+        g.gain.setValueAtTime(0.12, ac.currentTime);
+        osc.start();
+        osc.stop(ac.currentTime + 0.12);
+        setTimeout(() => { try { ac.close(); } catch { /* ignore */ } }, 250);
+      }
+    } catch { /* ignore */ }
+  };
+
   const matchValue = (rawValue: string) => {
     const product = findProductByQr(productsRef.current, rawValue);
     if (!product) {
@@ -68,6 +87,7 @@ export default function ProductQrScanner({ open, title, products, onClose, onMat
     }
     setState("matched");
     setMessage("");
+    feedbackMatch();
     stopCamera();
     onMatch(product, rawValue);
     return true;

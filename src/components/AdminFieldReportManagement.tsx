@@ -161,6 +161,26 @@ export default function AdminFieldReportManagement() {
   const [repairNotes, setRepairNotes] = useState("");
   const [isWarranty, setIsWarranty] = useState(true);
 
+  // スタッフ(APK)への連絡 compose
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [cmTitle, setCmTitle] = useState("");
+  const [cmBody, setCmBody] = useState("");
+  const [cmTone, setCmTone] = useState<"info" | "warning" | "danger">("info");
+  const sendStaffMessage = () => {
+    if (!cmBody.trim()) { triggerToast("連絡内容を入力してください", "err"); return; }
+    OrderBus.push("staffMessages", {
+      id: "MSG-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 5),
+      title: cmTitle.trim() || "管理者からの連絡",
+      body: cmBody.trim(),
+      tone: cmTone,
+      target: "all",
+      sender: [profile?.lastName, profile?.firstName].filter(Boolean).join(" ") || "管理者",
+      createdAt: new Date().toISOString(), // 真の UTC。+9h を足すと未来時刻になり並び順が壊れる。
+    });
+    triggerToast("スタッフへ連絡を送信しました", "ok");
+    setCmTitle(""); setCmBody(""); setCmTone("info"); setComposeOpen(false);
+  };
+
   const filteredReports = (fieldReports || []).filter((fr: any) => {
     if (incidentTab === "pending" && fr.status !== "未対応") return false;
     if (incidentTab === "processing" && fr.status !== "対応中") return false;
@@ -680,6 +700,55 @@ export default function AdminFieldReportManagement() {
           現場トラブル報告 (ドライバー・棚卸報告)
         </button>
       </div>
+
+      {/* スタッフ(APK)へ連絡を送信 */}
+      <div className="flex justify-end mb-4">
+        <button
+          onClick={() => setComposeOpen(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-sm hover:bg-blue-700 transition-colors"
+        >
+          <FileText size={16} /> スタッフへ連絡
+        </button>
+      </div>
+      {composeOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4" onClick={() => setComposeOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-extrabold text-slate-800 mb-1">スタッフへ連絡</h3>
+            <p className="text-xs text-slate-500 mb-4">全スタッフ(APK)の通知に表示されます。</p>
+            <input
+              value={cmTitle}
+              onChange={(e) => setCmTitle(e.target.value)}
+              placeholder="件名（任意・例: 本日の配送順変更）"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-blue-500"
+            />
+            <textarea
+              value={cmBody}
+              onChange={(e) => setCmBody(e.target.value)}
+              placeholder="連絡内容を入力（必須）"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-blue-500 min-h-[96px] resize-y"
+            />
+            <div className="flex gap-2 mb-4">
+              {([["info", "通常", "bg-blue-50 text-blue-700 border-blue-300"], ["warning", "注意", "bg-amber-50 text-amber-700 border-amber-300"], ["danger", "緊急", "bg-red-50 text-red-700 border-red-300"]] as const).map(([k, label, cls]) => (
+                <button
+                  key={k}
+                  onClick={() => setCmTone(k)}
+                  className={`flex-1 py-2 rounded-lg border font-bold text-sm transition-all ${cmTone === k ? cls : "bg-white text-slate-400 border-slate-200"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setComposeOpen(false)} className="flex-1 py-2.5 rounded-lg bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200">
+                キャンセル
+              </button>
+              <button onClick={sendStaffMessage} className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700">
+                送信する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mainTab === "verification" ? (
         <div className="space-y-6">

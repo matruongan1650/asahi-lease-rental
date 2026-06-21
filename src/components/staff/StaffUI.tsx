@@ -569,11 +569,54 @@ export interface SignaturePadProps {
   onClear?: () => void;
 }
 
+// 全画面の署名オーバーレイ。狭いインライン枠より遥かに広く署名でき、指でも書きやすい。
+// （アプリは portrait 固定のため真の横向きにはしないが、全画面で十分な記入領域を確保する）。
+function FullscreenSignature({ onDone, onClose }: { onDone: (url: string) => void; onClose: () => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+  const [has, setHas] = useState(false);
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const r = c.getBoundingClientRect();
+    c.width = r.width * 2; c.height = r.height * 2;
+    const ctx = c.getContext("2d");
+    if (ctx) { ctx.scale(2, 2); ctx.lineWidth = 4; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#000000"; }
+  }, []);
+  const pos = (e: any) => { const c = ref.current; if (!c) return { x: 0, y: 0 }; const r = c.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: t.clientX - r.left, y: t.clientY - r.top }; };
+  const start = (e: any) => { e.preventDefault(); drawing.current = true; const ctx = ref.current?.getContext("2d"); if (ctx) { const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); } };
+  const move = (e: any) => { if (!drawing.current) return; e.preventDefault(); const ctx = ref.current?.getContext("2d"); if (ctx) { const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); if (!has) setHas(true); } };
+  const end = () => { drawing.current = false; };
+  const clear = () => { const c = ref.current; const ctx = c?.getContext("2d"); if (c && ctx) { ctx.clearRect(0, 0, c.width, c.height); setHas(false); } };
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 15, fontWeight: 900, color: "var(--fg)" }}>署名（全画面）</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--fg-muted)", cursor: "pointer", display: "grid", placeItems: "center" }}><Icon name="x" size={22} /></button>
+      </div>
+      <div style={{ flex: 1, padding: 16, minHeight: 0 }}>
+        <div style={{ position: "relative", height: "100%", borderRadius: 16, border: "2px solid var(--border-strong)", background: "#ffffff", overflow: "hidden" }}>
+          <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block", touchAction: "none", cursor: "crosshair" }} onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end} onTouchStart={start} onTouchMove={move} onTouchEnd={end} />
+          {!has && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none", color: "#94a3b8", fontSize: 18, fontWeight: 700 }}>こちらに大きくご署名ください</div>}
+        </div>
+      </div>
+      <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", display: "flex", gap: 10, borderTop: "1px solid var(--border)" }}>
+        <Btn variant="secondary" icon="refresh" onClick={clear} style={{ flex: "0 0 auto", minWidth: 116 }}>書き直す</Btn>
+        <Btn full size="lg" variant="success" icon="check" disabled={!has} onClick={() => { const c = ref.current; if (c) onDone(c.toDataURL("image/png")); }}>署名を確定</Btn>
+      </div>
+    </div>
+  );
+}
+
 export function SignaturePad({ onChange }: SignaturePadProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const [has, setHas] = useState(false);
+  const [big, setBig] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
 
+  // preview を依存に含める。全画面署名 → 書き直す でインライン canvas が再マウントされた際に
+  // 再度サイズ設定/スケールしないと、新しい canvas が既定の 300x150・scale 無しになり
+  // 線が極細・指の位置とズレる（再マウント時に必ず初期化し直す）。
   useEffect(() => {
     const c = ref.current; if (!c) return;
     const r = c.getBoundingClientRect();
@@ -586,7 +629,7 @@ export function SignaturePad({ onChange }: SignaturePadProps) {
       ctx.lineJoin = "round";
       ctx.strokeStyle = "#000000"; // Always black for signature
     }
-  }, []);
+  }, [preview]);
 
   const pos = (e: any) => {
     const c = ref.current;
@@ -645,23 +688,36 @@ export function SignaturePad({ onChange }: SignaturePadProps) {
 
   return (
     <div>
-      <div style={{ position: "relative", borderRadius: 16, border: "2px solid var(--border-strong)", background: "#ffffff", overflow: "hidden", boxShadow: "inset 0 2px 10px rgba(0,0,0,0.05)" }}>
-        <canvas
-          ref={ref}
-          style={{ width: "100%", height: 200, display: "block", touchAction: "none", cursor: "crosshair" }}
-          onMouseDown={start}
-          onMouseMove={move}
-          onMouseUp={end}
-          onMouseLeave={end}
-          onTouchStart={start}
-          onTouchMove={move}
-          onTouchEnd={end}
-        />
-        {!has && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none", color: "#94a3b8", fontSize: 16, fontWeight: 700 }}>こちらにご署名ください</div>}
-        <button onClick={clear} style={{ position: "absolute", bottom: 12, right: 12, padding: "8px 14px", borderRadius: 10, background: "#f1f5f9", border: "1px solid #cbd5e1", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, zIndex: 10 }}>
-          <Icon name="refresh" size={16} />書き直す
-        </button>
-      </div>
+      {preview ? (
+        <div style={{ position: "relative", borderRadius: 16, border: "2px solid var(--border-strong)", background: "#ffffff", overflow: "hidden" }}>
+          <img src={preview} alt="署名" style={{ width: "100%", height: 200, objectFit: "contain", display: "block" }} />
+          <button onClick={() => { setPreview(null); onChange(null); clear(); }} style={{ position: "absolute", bottom: 12, right: 12, padding: "8px 14px", borderRadius: 10, background: "#f1f5f9", border: "1px solid #cbd5e1", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, zIndex: 10 }}>
+            <Icon name="refresh" size={16} />書き直す
+          </button>
+        </div>
+      ) : (
+        <div style={{ position: "relative", borderRadius: 16, border: "2px solid var(--border-strong)", background: "#ffffff", overflow: "hidden", boxShadow: "inset 0 2px 10px rgba(0,0,0,0.05)" }}>
+          <canvas
+            ref={ref}
+            style={{ width: "100%", height: 200, display: "block", touchAction: "none", cursor: "crosshair" }}
+            onMouseDown={start}
+            onMouseMove={move}
+            onMouseUp={end}
+            onMouseLeave={end}
+            onTouchStart={start}
+            onTouchMove={move}
+            onTouchEnd={end}
+          />
+          {!has && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none", color: "#94a3b8", fontSize: 16, fontWeight: 700 }}>こちらにご署名ください</div>}
+          <button onClick={clear} style={{ position: "absolute", bottom: 12, right: 12, padding: "8px 14px", borderRadius: 10, background: "#f1f5f9", border: "1px solid #cbd5e1", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, zIndex: 10 }}>
+            <Icon name="refresh" size={16} />書き直す
+          </button>
+        </div>
+      )}
+      <button onClick={() => setBig(true)} style={{ marginTop: 8, width: "100%", padding: "10px", borderRadius: 12, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--brand-accent)", fontSize: 13.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "var(--font-jp)" }}>
+        <Icon name="signature" size={16} />全画面で大きく署名する
+      </button>
+      {big && <FullscreenSignature onDone={(url) => { setPreview(url); onChange(url); setBig(false); }} onClose={() => setBig(false)} />}
     </div>
   );
 }
@@ -852,6 +908,35 @@ export interface DamageReportSheetProps {
   onSave: (entries: any[]) => void;
 }
 
+// 音声入力ボタン: 手袋・現場でメモを打つのが大変なため、話してメモを入れる。
+// webkitSpeechRecognition 対応端末のみ表示（progressive enhancement・非対応では非表示）。
+function MicButton({ onText }: { onText: (t: string) => void }) {
+  const SR = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+  const [rec, setRec] = useState(false);
+  const recRef = useRef<any>(null);
+  // アンマウント時（シート閉/エントリ削除）に録音を確実に停止する（マイクが点きっぱなしになるのを防ぐ）。
+  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* ignore */ } }, []);
+  if (!SR) return null;
+  const toggle = () => {
+    if (rec) { try { recRef.current?.stop(); } catch { /* ignore */ } return; }
+    try {
+      const r = new SR();
+      r.lang = "ja-JP"; r.interimResults = false; r.maxAlternatives = 1;
+      r.onresult = (ev: any) => { const t = ev.results?.[0]?.[0]?.transcript; if (t) onText(String(t)); };
+      r.onend = () => setRec(false);
+      r.onerror = () => setRec(false);
+      recRef.current = r;
+      r.start();
+      setRec(true);
+    } catch { setRec(false); }
+  };
+  return (
+    <button type="button" onClick={toggle} title="音声でメモ入力" style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 10, border: "1px solid var(--border-strong)", background: rec ? "var(--danger-tint)" : "var(--surface-2)", color: rec ? "var(--danger-bright)" : "var(--brand-accent)", display: "grid", placeItems: "center", cursor: "pointer" }}>
+      <Icon name="mic" size={18} />
+    </button>
+  );
+}
+
 export function DamageReportSheet({ open, product, onClose, onSave }: DamageReportSheetProps) {
   const [entries, setEntries] = useState<any[]>([]);
 
@@ -871,7 +956,9 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
 
   const addEntry = (reason: string) => setEntries(es => [...es, { key: Date.now() + reason, reason, qty: 1, photos: [], note: "" }]);
   const removeEntry = (key: string) => setEntries(es => es.filter(e => e.key !== key));
-  const patchEntry = (key: string, updates: any) => setEntries(es => es.map(e => e.key === key ? { ...e, ...updates } : e));
+  // updates は部分オブジェクト or 現在のエントリを受け取る関数。後者は最新値ベースで更新でき、
+  // 音声入力（非同期で結果が返る）が、その間に手入力された note を古い値で上書きするのを防ぐ。
+  const patchEntry = (key: string, updates: any) => setEntries(es => es.map(e => e.key === key ? { ...e, ...(typeof updates === "function" ? updates(e) : updates) } : e));
   const addPhotoToEntry = (key: string, dataUrl: string) => setEntries(es => es.map(e => e.key === key ? { ...e, photos: [...e.photos, makePhoto(e.photos.length, dataUrl)] } : e));
   const rmPhotoFromEntry = (key: string, pid: number) => setEntries(es => es.map(e => e.key === key ? { ...e, photos: e.photos.filter((p: any) => p.id !== pid) } : e));
 
@@ -906,7 +993,10 @@ export function DamageReportSheet({ open, product, onClose, onSave }: DamageRepo
                   <Icon name="camera" size={20} />
                 </PhotoCaptureButton>
               </div>
-              <input value={e.note} onChange={ev => patchEntry(e.key, { note: ev.target.value })} placeholder="メモ（任意）" style={{ width: "100%", borderRadius: 10, border: "1px solid var(--border-strong)", background: "var(--surface)", color: "var(--fg)", padding: "9px 12px", fontSize: 13.5, fontFamily: "var(--font-jp)", outline: "none" }} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input value={e.note} onChange={ev => patchEntry(e.key, { note: ev.target.value })} placeholder="メモ（任意・音声入力可）" style={{ flex: 1, minWidth: 0, borderRadius: 10, border: "1px solid var(--border-strong)", background: "var(--surface)", color: "var(--fg)", padding: "9px 12px", fontSize: 13.5, fontFamily: "var(--font-jp)", outline: "none" }} />
+                <MicButton onText={t => patchEntry(e.key, (cur: any) => ({ note: (cur.note ? cur.note + " " : "") + t }))} />
+              </div>
             </div>
           ))}
         </div>
