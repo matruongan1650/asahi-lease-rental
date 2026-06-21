@@ -17,6 +17,7 @@ import {
 } from "../../components/AdminUI";
 import { useAdminCollection, useAdminData } from "../../context/AdminDataContext";
 import { useVehicles, type VehicleDetail } from "../../context/VehicleContext";
+import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { getCategoryIcon, getSupplyCategories, isVehicleCategory } from "../../utils/productUtils";
 import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
@@ -118,6 +119,9 @@ export default function AdminWarehouse() {
   const { raw: orders } = useAdminData();
   const { rows: products } = useAdminCollection("products");
   const { vehicles, updateVehicle } = useVehicles();
+  const { currentUser } = useUser();
+  // 担当者の既定値はログイン中の利用者「姓 名」（なければ email）。
+  const loginName = currentUser ? (`${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email || "") : "";
 
   const [tab, setTab] = useState<WarehouseTab>("overview");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -138,7 +142,8 @@ export default function AdminWarehouse() {
   const [actionQty, setActionQty] = useState(1);
   const [actionLocation, setActionLocation] = useState("");
   const [actionReason, setActionReason] = useState("");
-  const [actionStaff, setActionStaff] = useState("佐藤");
+  const [actionStaff, setActionStaff] = useState(loginName || "佐藤");
+  const [savingAction, setSavingAction] = useState(false);
 
   const activeOrdersByProduct = useMemo(() => {
     const map: Record<string, any[]> = {};
@@ -328,6 +333,7 @@ export default function AdminWarehouse() {
 
   const openSupplyAction = (kind: SupplyActionKind, supply: SupplyRow) => {
     setSupplyAction({ kind, supply });
+    setSavingAction(false);
     // 補充の既定値は「目標(10)までの不足分」。元の Math.max(10, …) は減算を常に打ち消し実質定数10だった。
     setActionQty(kind === "reorder" ? Math.max(1, 10 - supply.available) : 1);
     setActionLocation(supply.loc);
@@ -341,6 +347,7 @@ export default function AdminWarehouse() {
   const handleSaveSupplyAction = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!supplyAction) return;
+    if (savingAction) return; // 二重送信ガード
     const { kind, supply } = supplyAction;
     const qty = Number(actionQty || 0);
     const product = productForSupply(supply);
@@ -446,6 +453,7 @@ export default function AdminWarehouse() {
       triggerToast(`${supply.name} の補充を ${qty} 点手配しました`, "ok");
     }
 
+    setSavingAction(true); // 保存完了。モーダルを閉じるまでボタンを無効化し二重送信を防ぐ
     setSupplyAction(null);
   };
 
@@ -910,7 +918,7 @@ export default function AdminWarehouse() {
 
       <Modal
         open={!!supplyAction}
-        onClose={() => setSupplyAction(null)}
+        onClose={() => { setSupplyAction(null); setSavingAction(false); }}
         title={
           supplyAction?.kind === "stockIn"
             ? "入庫を記録"
@@ -923,8 +931,8 @@ export default function AdminWarehouse() {
         width={480}
         footer={
           <>
-            <Btn variant="secondary" onClick={() => setSupplyAction(null)}>キャンセル</Btn>
-            <Btn variant="primary" icon="check" onClick={handleSaveSupplyAction}>保存</Btn>
+            <Btn variant="secondary" onClick={() => { setSupplyAction(null); setSavingAction(false); }}>キャンセル</Btn>
+            <Btn variant="primary" icon="check" onClick={handleSaveSupplyAction} disabled={savingAction}>保存</Btn>
           </>
         }
       >
@@ -940,6 +948,16 @@ export default function AdminWarehouse() {
             {supplyAction.kind !== "move" && (
               <Field label={supplyAction.kind === "reorder" ? "手配数量" : "数量"} required>
                 <TextInput type="number" min="1" value={actionQty} onChange={(e) => setActionQty(Number(e.target.value))} />
+                {/* 在庫ヒント: 選択中品目の現在庫を表示。出庫が在庫超過なら警告色。 */}
+                {(() => {
+                  const onHand = supplyAction.supply.available;
+                  const short = supplyAction.kind === "stockOut" && Number(actionQty) > onHand;
+                  return (
+                    <div className={`mt-1.5 text-xs font-bold rounded-lg px-3 py-2 ${short ? "bg-red-50 text-red-600 border border-red-200" : "bg-slate-50 text-slate-600 border border-slate-200"}`}>
+                      現在庫: {onHand}点{short ? ` ・ 出庫数(${actionQty})が在庫を超えています` : ""}
+                    </div>
+                  );
+                })()}
               </Field>
             )}
             {supplyAction.kind === "move" && (

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useAdminCollection, useAdminData } from "../../context/AdminDataContext";
 import {
   Badge,
@@ -72,10 +72,32 @@ export default function AdminRepairWarranty() {
   const [estVendor, setEstVendor] = useState("");
   const [estCost, setEstCost] = useState("");
 
-  const filteredRepairs = useMemo(
-    () => (tab === "すべて" ? repairs : repairs.filter((r: any) => r.status === tab)),
-    [repairs, tab],
-  );
+  // 検索（入力は即時、クエリはデバウンス後）。製品名/管理番号/取引先/状態/メモ等を横断
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput.trim().toLowerCase()), 280);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const filteredRepairs = useMemo(() => {
+    const byTab = tab === "すべて" ? repairs : repairs.filter((r: any) => r.status === tab);
+    if (!searchQuery) return byTab;
+    return byTab.filter((r: any) =>
+      [
+        r.id,
+        r.asset,
+        r.vendor,
+        r.status,
+        r.issue,
+        r.completionNote,
+        r.sourceReportId,
+        r.sourceInspectionId,
+      ]
+        .map((v) => String(v || "").toLowerCase())
+        .some((s) => s.includes(searchQuery)),
+    );
+  }, [repairs, tab, searchQuery]);
 
   const counts: Record<string, number> = {
     "すべて": repairs.length,
@@ -293,6 +315,18 @@ export default function AdminRepairWarranty() {
           </Btn>
         }
       >
+        {/* 横断検索（依頼番号・対象・業者・状態・内容・メモ等） */}
+        <div className="relative mb-3 max-w-[360px]">
+          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px] pointer-events-none">
+            search
+          </span>
+          <TextInput
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="依頼番号・対象・業者・内容を検索"
+            className="pl-9"
+          />
+        </div>
         <Table cols={cols} rows={filteredRepairs} />
       </Panel>
 

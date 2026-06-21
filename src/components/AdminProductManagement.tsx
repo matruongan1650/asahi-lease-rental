@@ -7,6 +7,7 @@ import { Product } from "../types";
 import { isVehicleCategory, SUPPLY_CATEGORY_ICONS, UNIT_OPTIONS } from "../utils/productUtils";
 import { getProductQrCode, getProductQrPayload, makeProductQrFields } from "../utils/productQr";
 import { SALES_ENABLED } from "../config/features";
+import { usePagedList } from "../hooks/usePagedList";
 
 const PRODUCT_IMAGE_FALLBACK = "https://images.unsplash.com/photo-1544473244-f6895e69da8a?w=500&h=500&fit=crop";
 const VEHICLE_IMAGE_FALLBACK = "https://imagedelivery.net/W-O2N6-kYOfvEexU-w0YSA/6ca65aee-8da0-466f-ff84-9de55ae2ee00/public";
@@ -127,10 +128,16 @@ export default function AdminProductManagement() {
   const activeCategory = activeSubTab === "security" ? selectedSecurityCategory : selectedVehicleCategory;
   const activeStockTotal = activeSubTab === "security" ? securityStock : vehicleStock;
 
+  // ページネーション: 全件描画を避け 24件ずつ段階表示。検索/カテゴリ/タブ切替で先頭に戻す。
+  const pagedProducts = usePagedList(filteredProducts, 24, [searchQuery, selectedSecurityCategory, activeSubTab]);
+  const pagedVehicles = usePagedList(filteredVehicles, 24, [searchQuery, selectedVehicleCategory, activeSubTab]);
+
 
   // Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  // 二重送信ガード: 保存処理中はフラグを立て、送信ボタンを無効化する。
+  const [productSaving, setProductSaving] = useState(false);
   const [qrProduct, setQrProduct] = useState<Product | null>(null);
   const [qrImage, setQrImage] = useState("");
   const [isGuaranteeChecked, setIsGuaranteeChecked] = useState(false);
@@ -181,6 +188,7 @@ export default function AdminProductManagement() {
 
   const handleAddProduct = () => {
     setEditingProduct(null);
+    setProductSaving(false);
     setIsGuaranteeChecked(false);
     setGuaranteeType('tiered');
     setProductImageDraft("");
@@ -189,6 +197,7 @@ export default function AdminProductManagement() {
 
   const handleEditProduct = (p: Product) => {
     setEditingProduct(p);
+    setProductSaving(false);
     setIsGuaranteeChecked(!!p.isGuarantee);
     setGuaranteeType(p.guaranteeType || 'tiered');
     setProductImageDraft(p.image || "");
@@ -203,6 +212,9 @@ export default function AdminProductManagement() {
 
   const saveProduct = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // 二重送信ガード: 保存中の再送信は無視する。
+    if (productSaving) return;
+    setProductSaving(true);
     const formData = new FormData(e.currentTarget);
     const productId = editingProduct?.id || String(formData.get("id") || "") || "p-" + Math.random().toString(36).substring(7);
     const qrFields = makeProductQrFields({ ...(editingProduct || {}), id: productId } as Product);
@@ -241,6 +253,7 @@ export default function AdminProductManagement() {
       } as Product);
     }
     setIsProductModalOpen(false);
+    setProductSaving(false);
   };
 
   const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -644,7 +657,7 @@ export default function AdminProductManagement() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {activeSubTab === "security" ? (
-                filteredProducts.map(product => (
+                pagedProducts.shown.map(product => (
                   <tr key={product.id} className="hover:bg-slate-50/70">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -704,7 +717,7 @@ export default function AdminProductManagement() {
                   </tr>
                 ))
               ) : (
-                filteredVehicles.map(v => {
+                pagedVehicles.shown.map(v => {
                   const linkedProduct = products.find(p => p && p.id === (v.productId || v.id));
                   const vehicleImage = linkedProduct?.image || firstVehicleImage(v) || VEHICLE_IMAGE_FALLBACK;
                   return (
@@ -782,6 +795,18 @@ export default function AdminProductManagement() {
               <span className="material-symbols-outlined text-[42px] text-slate-300">inventory_2</span>
               <div className="mt-2 text-sm font-black text-slate-700">該当する商品がありません</div>
               <div className="mt-1 text-xs font-bold text-slate-400">検索条件またはカテゴリを変更してください。</div>
+            </div>
+          )}
+          {/* もっと見る: 表示件数を24件ずつ増やす */}
+          {(activeSubTab === "security" ? pagedProducts.hasMore : pagedVehicles.hasMore) && (
+            <div className="flex justify-center border-t border-slate-100 px-4 py-4">
+              <button
+                onClick={activeSubTab === "security" ? pagedProducts.showMore : pagedVehicles.showMore}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-5 py-2 text-sm font-black text-blue-700 hover:bg-slate-100"
+              >
+                <span className="material-symbols-outlined text-[17px]">expand_more</span>
+                もっと見る（残り {activeSubTab === "security" ? pagedProducts.remaining : pagedVehicles.remaining} 件）
+              </button>
             </div>
           )}
         </div>
@@ -1113,9 +1138,9 @@ export default function AdminProductManagement() {
             </div>
             <div className="px-6 py-4 border-t bg-white flex justify-end gap-3">
               <button type="button" onClick={() => setIsProductModalOpen(false)} className="px-5 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50 rounded-lg">キャンセル</button>
-              <button form="productForm" type="submit" className="inline-flex items-center gap-2 px-6 py-2.5 text-white bg-[#1a1c9a] font-bold rounded-lg">
+              <button form="productForm" type="submit" disabled={productSaving} className="inline-flex items-center gap-2 px-6 py-2.5 text-white bg-[#1a1c9a] font-bold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">
                 <span className="material-symbols-outlined text-[17px]">save</span>
-                保存
+                {productSaving ? "保存中…" : "保存"}
               </button>
             </div>
           </div>

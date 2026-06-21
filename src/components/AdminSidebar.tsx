@@ -33,12 +33,67 @@ interface AdminSidebarProps {
   badgeCounts?: Partial<Record<AdminTab, number>>;
 }
 
-type SidebarItem = {
+export type SidebarItem = {
   id: AdminTab;
   label: string;
   icon: string;
   badge?: number;
 };
+
+// サイドバーのメニュー定義は単一情報源。サイドバー本体とコマンドパレット(#13)が共有し、
+// ラベル・アイコン・並び順を一箇所で管理する。
+export const menuGroups: { title: string; items: SidebarItem[] }[] = [
+  {
+    title: "業務",
+    items: [
+      { id: "dashboard", label: "概要", icon: "dashboard" },
+      { id: "calendar", label: "カレンダー", icon: "calendar_today" },
+    ],
+  },
+  {
+    title: "資産・在庫",
+    items: [
+      { id: "products", label: "商品管理", icon: "inventory_2" },
+      { id: "warehouse", label: "倉庫管理", icon: "warehouse" },
+      { id: "vehicles", label: "車庫管理", icon: "directions_car" },
+      { id: "inventory", label: "棚卸", icon: "checklist" },
+    ],
+  },
+  {
+    title: "受注・入出庫",
+    items: [
+      { id: "incoming", label: "入庫管理", icon: "input" },
+      { id: "outgoing", label: "出庫管理", icon: "output" },
+      { id: "orders", label: "受注・レンタル", icon: "sync" },
+      { id: "sales", label: "販売受注", icon: "payments" },
+      { id: "invoices", label: "請求", icon: "receipt_long" },
+      { id: "collection", label: "回収・返却", icon: "inventory_2" },
+    ],
+  },
+  {
+    title: "保全",
+    // 業務フローの順序で配置:
+    //   現場報告（事故・トラブルの入口）→ 修理依頼（外注処理）→ 定期点検（予防保全）
+    items: [
+      { id: "field_report", label: "現場報告", icon: "assignment" },
+      { id: "repair", label: "修理依頼", icon: "build" },
+      { id: "maintenance", label: "定期点検", icon: "engineering" },
+    ],
+  },
+  {
+    title: "マスタ",
+    items: [
+      { id: "users", label: "ユーザー・パートナー", icon: "manage_accounts" },
+      { id: "customers", label: "顧客", icon: "group" },
+      { id: "suppliers", label: "仕入先", icon: "storefront" },
+      { id: "repairers", label: "修理業者", icon: "handyman" },
+    ],
+  },
+  {
+    title: "システム",
+    items: [{ id: "settings", label: "設定・権限", icon: "settings" }],
+  },
+];
 
 export default function AdminSidebar({
   activeTab,
@@ -50,58 +105,6 @@ export default function AdminSidebar({
   const handleLogout = async () => {
     if (await confirmDialog("ログアウトしますか？", { okText: "ログアウト", danger: true })) logout();
   };
-  const menuGroups: { title: string; items: SidebarItem[] }[] = [
-    {
-      title: "業務",
-      items: [
-        { id: "dashboard", label: "概要", icon: "dashboard" },
-        { id: "calendar", label: "カレンダー", icon: "calendar_today" },
-      ],
-    },
-    {
-      title: "資産・在庫",
-      items: [
-        { id: "products", label: "商品管理", icon: "inventory_2" },
-        { id: "warehouse", label: "倉庫管理", icon: "warehouse" },
-        { id: "vehicles", label: "車庫管理", icon: "directions_car" },
-        { id: "inventory", label: "棚卸", icon: "checklist" },
-      ],
-    },
-    {
-      title: "受注・入出庫",
-      items: [
-        { id: "incoming", label: "入庫管理", icon: "input" },
-        { id: "outgoing", label: "出庫管理", icon: "output" },
-        { id: "orders", label: "受注・レンタル", icon: "sync" },
-        { id: "sales", label: "販売受注", icon: "payments" },
-        { id: "invoices", label: "請求", icon: "receipt_long" },
-        { id: "collection", label: "回収・返却", icon: "inventory_2" },
-      ],
-    },
-    {
-      title: "保全",
-      // 業務フローの順序で配置:
-      //   現場報告（事故・トラブルの入口）→ 修理依頼（外注処理）→ 定期点検（予防保全）
-      items: [
-        { id: "field_report", label: "現場報告", icon: "assignment" },
-        { id: "repair", label: "修理依頼", icon: "build" },
-        { id: "maintenance", label: "定期点検", icon: "engineering" },
-      ],
-    },
-    {
-      title: "マスタ",
-      items: [
-        { id: "users", label: "ユーザー・パートナー", icon: "manage_accounts" },
-        { id: "customers", label: "顧客", icon: "group" },
-        { id: "suppliers", label: "仕入先", icon: "storefront" },
-        { id: "repairers", label: "修理業者", icon: "handyman" },
-      ],
-    },
-    {
-      title: "システム",
-      items: [{ id: "settings", label: "設定・権限", icon: "settings" }],
-    },
-  ];
 
   return (
     <aside className="w-[236px] bg-[#f7fbfa] border-r border-[#cfe6e3] flex flex-col h-screen fixed left-0 top-0 overflow-y-auto admin-scrollbar">

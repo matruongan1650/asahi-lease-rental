@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdminSidebar, { AdminTab } from "../../components/AdminSidebar";
+import AdminCommandPalette from "../../components/AdminCommandPalette";
 import AdminDashboardHome from "../../components/AdminDashboardHome";
 import AdminProductManagement from "../../components/AdminProductManagement";
 import AdminUserManagement from "../../components/AdminUserManagement";
@@ -47,6 +48,8 @@ export default function AdminDashboard() {
     [setSearchParams],
   );
   const [showNotifications, setShowNotifications] = useState(false);
+  // コマンドパレット(#13): ⌘K / Ctrl+K で開く画面ジャンプ。
+  const [showPalette, setShowPalette] = useState(false);
   const { currentUser } = useUser();
   const liveOrders = useAdminOrders();
   const { rows: fieldReports } = useAdminCollection("fieldReports");
@@ -88,6 +91,18 @@ export default function AdminDashboard() {
       setSearchParams(first === "dashboard" ? {} : { tab: first }, { replace: true });
     }
   }, [requestedTab, allowedTabs, setSearchParams]);
+
+  // ⌘K / Ctrl+K でコマンドパレットをトグル。入力欄にフォーカスがあっても有効化する（既定動作は抑止）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const systemSettings = useMemo(
     () => ({ notifyVehicle: true, notifyOverdue: true, notifyFieldReport: true, ...(systemSettingsRows.find((r: any) => r.id === "global") || {}) }),
@@ -259,6 +274,14 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* コマンドパレット(#13): ⌘K で開く画面ジャンプ。許可タブのみ表示し setActiveTab で遷移。 */}
+      <AdminCommandPalette
+        open={showPalette}
+        onClose={() => setShowPalette(false)}
+        allowedTabs={allowedTabs}
+        onNavigate={setActiveTab}
+      />
 
       {/* Global Toast notifications handler */}
       <ToastHost />

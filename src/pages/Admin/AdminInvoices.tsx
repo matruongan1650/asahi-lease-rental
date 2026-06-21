@@ -2,15 +2,23 @@ import React, { useMemo, useState } from "react";
 import { Badge, Btn, Panel, triggerToast } from "../../components/AdminUI";
 import { confirmDialog } from "../../components/AppDialog";
 import AdminRentalInvoiceSection from "../../components/AdminRentalInvoiceSection";
+import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import B2BInvoiceViewer from "../../components/B2BInvoiceViewer";
 import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
+import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
+import OrderBus from "../../lib/orderBus";
 import type { InvoiceBlock } from "../../types";
 
 type B2BType = "summary" | "detailed";
 type StatusFilter = "all" | "accumulating" | "pending" | "paid";
+// 一覧ソート対象列。null は未ソート（既定の元順）。
+type SortColumn = "monthPeriod" | "company" | "total" | "status";
+type SortDir = "asc" | "desc";
+// 状態列のソート順位（集計中→未入金→入金済 の業務フローに沿う）。
+const STATUS_ORDER: Record<StatusFilter, number> = { all: 0, accumulating: 1, pending: 2, paid: 3 };
 
 interface InvoiceRow {
   order: any;
@@ -147,6 +155,10 @@ export default function AdminInvoices() {
   const [b2bOpen, setB2bOpen] = useState(false);
   const [b2bType, setB2bType] = useState<B2BType>("summary");
   const [viewing, setViewing] = useState<InvoiceRow | null>(null);
+  const [openOrder, setOpenOrder] = useState<any | null>(null); // 行クリックで開く注文詳細ドロワー
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null); // 一覧ソート列（null=元順）
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set()); // 一括消込の選択（block.id）
 
   const invoiceOrders = useMemo(
     () => (liveOrders.orders || []).filter((order: any) => Array.isArray(order.items) && order.items.length > 0),
@@ -184,7 +196,98 @@ export default function AdminInvoices() {
     });
   }, [query, rows, selectedCompany, selectedMonth, statusFilter]);
 
-  const paged = usePagedList(filteredRows, 50, [query, selectedCompany, selectedMonth, statusFilter]);
+  // 一覧ソート。sortColumn が null のときは元順（filteredRows）をそのまま使う。
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return filteredRows;
+    const dir = sortDir === "asc" ? 1 : -1;
+    const valueOf = (row: InvoiceRow): string | number => {
+      switch (sortColumn) {
+        case "monthPeriod": return row.block.monthPeriod || "";
+        case "company": return row.company;
+        case "total": return Number(row.block.total || 0);
+        case "status": return STATUS_ORDER[statusKey(String(row.block.status || ""))];
+      }
+    };
+    // 元配列を壊さないよう複製してから安定比較（数値は数値、文字は ja ロケール）。
+    return [...filteredRows].sort((a, b) => {
+      const va = valueOf(a);
+      const vb = valueOf(b);
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), "ja") * dir;
+    });
+  }, [filteredRows, sortColumn, sortDir]);
+
+  // ソート状態を resetKey に含め、ソート切替時もページを先頭へ戻す。
+  const paged = usePagedList(sortedRows, 50, [query, selectedCompany, selectedMonth, statusFilter, sortColumn, sortDir]);
+
+  // フィルタ・ページ条件が変わったら一括消込の選択をクリアする（表示外の行を選んだままにしない）。
+  React.useEffect(() => {
+    setSelectedBlockIds(new Set());
+  }, [query, selectedCompany, selectedMonth, statusFilter]);
+
+  // ヘッダクリックで 昇順→降順→解除 をトグル。
+  const toggleSort = (column: SortColumn) => {
+    if (sortColumn !== column) { setSortColumn(column); setSortDir("asc"); return; }
+    if (sortDir === "asc") { setSortDir("desc"); return; }
+    setSortColumn(null); // 降順の次は解除（元順に戻す）
+  };
+  // ヘッダの矢印アイコン（AdminUI.Table に倣う material-symbols）。
+  const sortIcon = (column: SortColumn) =>
+    sortColumn !== column ? "unfold_more" : sortDir === "asc" ? "arrow_upward" : "arrow_downward";
+
+  // 現在表示中（paged.shown）で入金可能（未入金/集計中）なブロックのみ一括対象とする。
+  const selectableShownIds = useMemo(
+    () => paged.shown.filter((row) => statusKey(String(row.block.status || "")) !== "paid").map((row) => row.block.id),
+    [paged.shown],
+  );
+  const allShownSelected = selectableShownIds.length > 0 && selectableShownIds.every((id) => selectedBlockIds.has(id));
+
+  const toggleSelectAll = () => {
+    setSelectedBlockIds((prev) => {
+      const next = new Set(prev);
+      if (allShownSelected) selectableShownIds.forEach((id) => next.delete(id));
+      else selectableShownIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+  const toggleSelectOne = (blockId: string) => {
+    setSelectedBlockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(blockId)) next.delete(blockId);
+      else next.add(blockId);
+      return next;
+    });
+  };
+
+  // 一括入金消込。選択ブロックを order ごとにまとめ、order 単位で 1 回 patchOrder する。
+  const bulkMarkPaid = async () => {
+    if (payingId || selectedBlockIds.size === 0) return; // 進行中・未選択はガード
+    const ok = await confirmDialog(`選択した ${selectedBlockIds.size}件 を入金済にしますか？`, { okText: "入金済にする", cancelText: "やめる" });
+    if (!ok) return;
+    setPayingId("__bulk__"); // 一括処理中マーカー（個別ボタンも無効化される）
+    const stamp = new Date().toISOString();
+    // 選択 block.id を order ごとにグルーピング。
+    const byOrder = new Map<any, Set<string>>();
+    sortedRows.forEach((row) => {
+      if (!selectedBlockIds.has(row.block.id)) return;
+      const set = byOrder.get(row.order) || new Set<string>();
+      set.add(row.block.id);
+      byOrder.set(row.order, set);
+    });
+    let updated = 0;
+    byOrder.forEach((blockIds, order) => {
+      const id = order.firestoreId || order.id;
+      if (!id) return;
+      const next = getOrGenerateInvoiceBlocks(order).map((block) =>
+        blockIds.has(block.id) ? ({ ...block, status: "paid", paidAt: stamp } as any) : block,
+      );
+      liveOrders.patchOrder(id, { invoiceBlocks: next });
+      updated += blockIds.size;
+    });
+    setSelectedBlockIds(new Set());
+    triggerToast(`${updated}件 を入金済に更新しました`, "ok");
+    setTimeout(() => setPayingId(null), 400); // 反映までガード解除を遅延
+  };
 
   const totals = useMemo(() => {
     return filteredRows.reduce(
@@ -333,31 +436,85 @@ export default function AdminInvoices() {
         sub={`${filteredRows.length}件 / ${yen(totals.total)}`}
         bodyPad={0}
       >
+        {/* 一括入金消込バー：未入金を 1 件以上選択したときだけ表示 */}
+        {selectedBlockIds.size > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e0f0ee] bg-[#e8f6f5] px-4 py-3">
+            <span className="text-sm font-black text-[#1e8c86]">{selectedBlockIds.size}件を選択中</span>
+            <div className="flex items-center gap-2">
+              <Btn size="sm" variant="ghost" icon="close" onClick={() => setSelectedBlockIds(new Set())}>
+                選択解除
+              </Btn>
+              <Btn size="sm" variant="primary" icon="check_circle" disabled={!!payingId} onClick={bulkMarkPaid}>
+                選択 {selectedBlockIds.size}件を入金済にする
+              </Btn>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-sm">
             <thead>
               <tr className="bg-[#fff8e7]/70 text-left text-[11px] font-black text-[#46706c]">
-                <th className="px-4 py-3">対象月</th>
+                <th className="px-4 py-3 text-center">
+                  {/* 全選択＝現在表示中の未入金ブロックを全選択/解除 */}
+                  <input
+                    type="checkbox"
+                    aria-label="表示中の未入金を全選択"
+                    className="h-4 w-4 cursor-pointer accent-[#2ba8a2] disabled:cursor-not-allowed disabled:opacity-40"
+                    checked={allShownSelected}
+                    disabled={selectableShownIds.length === 0}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
+                <th className="cursor-pointer select-none px-4 py-3" onClick={() => toggleSort("monthPeriod")}>
+                  <span className="inline-flex items-center gap-1">対象月<span className="material-symbols-outlined text-[14px]">{sortIcon("monthPeriod")}</span></span>
+                </th>
                 <th className="px-4 py-3">伝票</th>
-                <th className="px-4 py-3">取引先</th>
+                <th className="cursor-pointer select-none px-4 py-3" onClick={() => toggleSort("company")}>
+                  <span className="inline-flex items-center gap-1">取引先<span className="material-symbols-outlined text-[14px]">{sortIcon("company")}</span></span>
+                </th>
                 <th className="px-4 py-3">現場</th>
                 <th className="px-4 py-3 text-right">税抜</th>
                 <th className="px-4 py-3 text-right">消費税</th>
-                <th className="px-4 py-3 text-right">税込</th>
-                <th className="px-4 py-3 text-center">状態</th>
+                <th className="cursor-pointer select-none px-4 py-3 text-right" onClick={() => toggleSort("total")}>
+                  <span className="inline-flex items-center justify-end gap-1">税込<span className="material-symbols-outlined text-[14px]">{sortIcon("total")}</span></span>
+                </th>
+                <th className="cursor-pointer select-none px-4 py-3 text-center" onClick={() => toggleSort("status")}>
+                  <span className="inline-flex items-center justify-center gap-1">状態<span className="material-symbols-outlined text-[14px]">{sortIcon("status")}</span></span>
+                </th>
                 <th className="px-4 py-3 text-right">操作</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-sm font-bold text-slate-400">
+                  <td colSpan={10} className="px-4 py-12 text-center text-sm font-bold text-slate-400">
                     条件に一致する請求データがありません。
                   </td>
                 </tr>
               ) : (
-                paged.shown.map((row) => (
-                  <tr key={`${row.orderNumber}-${row.block.id}`} className="border-t border-[#e0f0ee] hover:bg-[#f8fbfb]">
+                paged.shown.map((row) => {
+                  const paid = statusKey(String(row.block.status || "")) === "paid";
+                  return (
+                  <tr
+                    key={`${row.orderNumber}-${row.block.id}`}
+                    className="cursor-pointer border-t border-[#e0f0ee] hover:bg-[#f8fbfb]"
+                    onClick={(event) => {
+                      // チェックボックス・操作ボタン等のインタラクティブ要素を押した場合は無視。
+                      if ((event.target as HTMLElement).closest("button, input, a")) return;
+                      setOpenOrder(row.order);
+                    }}
+                  >
+                    <td className="border-t border-[#e0f0ee] px-4 py-3 text-center">
+                      {/* 入金済は選択不可（一括消込の対象外） */}
+                      <input
+                        type="checkbox"
+                        aria-label="この請求を選択"
+                        className="h-4 w-4 cursor-pointer accent-[#2ba8a2] disabled:cursor-not-allowed disabled:opacity-40"
+                        checked={selectedBlockIds.has(row.block.id)}
+                        disabled={paid}
+                        onChange={() => toggleSelectOne(row.block.id)}
+                      />
+                    </td>
                     <td className="border-t border-[#e0f0ee] px-4 py-3">
                       <div className="font-black text-[#173b38]">{row.block.monthPeriod}</div>
                       <div className="mt-0.5 text-[11px] font-bold text-slate-400">{row.block.startDate} 〜 {row.block.endDate}</div>
@@ -406,11 +563,12 @@ export default function AdminInvoices() {
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
               {paged.hasMore && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-4 text-center">
+                  <td colSpan={10} className="px-4 py-4 text-center">
                     <button onClick={paged.showMore} className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700">さらに表示（残り {paged.remaining} 件）</button>
                   </td>
                 </tr>
@@ -444,6 +602,24 @@ export default function AdminInvoices() {
           onClose={() => setB2bOpen(false)}
         />
       )}
+
+      {/* 行クリックで注文詳細を開く。ステータス更新は受注タブ（AdminRental）と同じ在庫整合ロジックを踏襲する。 */}
+      <AdminOrderDrawer
+        open={!!openOrder}
+        order={openOrder}
+        onClose={() => setOpenOrder(null)}
+        onUpdateStatus={(id, status, staffStatus) => {
+          // 受注確定（確認済み）は出庫、返却系クローズは settleReturnStock で入庫。
+          const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || openOrder;
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(openOrder, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          triggerToast("ステータスを更新しました", "ok");
+        }}
+        onUpdateOrder={(id, updates) => {
+          liveOrders.patchOrder(id, updates);
+          setOpenOrder((prev: any) => prev && (prev.firestoreId === id || prev.id === id) ? { ...prev, ...updates } : prev);
+        }}
+      />
     </div>
   );
 }
