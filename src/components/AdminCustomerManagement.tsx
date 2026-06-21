@@ -31,6 +31,15 @@ import { isFullyReturned, isClosedOrder } from "../utils/orderStatus";
 import { parseDateLocal } from "../utils/billing";
 import { safeSetJSON } from "../utils/safeStorage";
 
+// 生成したログイン情報を表示する前にクリップボードへコピーする（手選択コピーの手間・控え漏れを防ぐ）。
+function showCredentials(text: string) {
+  try {
+    navigator.clipboard.writeText(text);
+    triggerToast("ログイン情報をクリップボードにコピーしました", "ok");
+  } catch { /* 非対応環境ではコピーのみスキップ */ }
+  void alertDialog(text);
+}
+
 // --- Contract file types & helpers ---
 interface ContractFile {
   id: string;
@@ -234,7 +243,7 @@ export default function AdminCustomerManagement() {
     setNewPhone("");
     setIsAddModalOpen(false);
     triggerToast(`顧客 ${newCompanyName} を追加しました`, "ok");
-    void alertDialog(
+    showCredentials(
       `${newCompanyName} のログイン情報\n\nログインID: ${saved.email}\nパスワード: ${newPassword}\n\n必ず控えて本人に共有してください。`,
     );
   };
@@ -541,7 +550,7 @@ export default function AdminCustomerManagement() {
     setSubPhone("");
     setIsAddSubUserModalOpen(false);
     triggerToast(`担当者 ${subLastName} を追加しました`, "ok");
-    void alertDialog(
+    showCredentials(
       `${subLastName} ${subFirstName} のログイン情報\n\nログインID: ${saved.email}\nパスワード: ${newPassword}\n\n必ず控えてください。`,
     );
   };
@@ -594,7 +603,7 @@ export default function AdminCustomerManagement() {
     triggerToast(`${addedCount} 名の担当者を追加しました`, "ok");
     if (credentials.length) {
       // 一括登録分のログイン情報をまとめて表示（控え用）。
-      void alertDialog(`追加した ${addedCount} 名のログイン情報\n\n${credentials.join("\n\n")}\n\n必ず控えて各本人に共有してください。`);
+      showCredentials(`追加した ${addedCount} 名のログイン情報\n\n${credentials.join("\n\n")}\n\n必ず控えて各本人に共有してください。`);
     }
   };
 
@@ -646,7 +655,7 @@ export default function AdminCustomerManagement() {
       updateUser(userId, { password: newPassword });
       triggerToast(`新しいパスワード: ${newPassword}`, "ok");
       // Displaying it as alert to make sure user sees it and copies it
-      void alertDialog(`${userName} の新しいパスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
+      showCredentials(`${userName} の新しいパスワードは\n\n${newPassword}\n\nです。必ず控えてください。`);
     }
   };
 

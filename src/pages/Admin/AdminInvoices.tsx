@@ -225,13 +225,16 @@ export default function AdminInvoices() {
             <span>小計・消費税・合計を同じ計算ロジックで表示します</span>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Btn variant="secondary" icon="receipt_long" onClick={() => openB2B("summary")}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn variant="secondary" icon="receipt_long" disabled={!selectedCompany || !selectedMonth} onClick={() => openB2B("summary")}>
             総合請求書
           </Btn>
-          <Btn variant="primary" icon="list_alt" onClick={() => openB2B("detailed")}>
+          <Btn variant="primary" icon="list_alt" disabled={!selectedCompany || !selectedMonth} onClick={() => openB2B("detailed")}>
             内訳請求書
           </Btn>
+          {(!selectedCompany || !selectedMonth) && (
+            <span className="text-xs font-semibold text-slate-400">企業と対象月を選択すると発行できます</span>
+          )}
         </div>
       </div>
 

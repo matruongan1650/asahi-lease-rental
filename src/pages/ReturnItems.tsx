@@ -96,8 +96,14 @@ function ReturnItemsMobile() {
            )}
         </div>
 
-        <div className="flex items-center justify-between px-1 mt-2">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">注文: {order.orderNumber}</p>
+        <div className="flex items-center justify-between px-1 mt-2 gap-2">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider truncate">注文: {order.orderNumber}</p>
+          {returnType === "partial" && rentItems.length > 1 && (
+            <div className="flex items-center gap-3 shrink-0">
+              <button onClick={() => { const o: Record<string, number> = {}; rentItems.forEach((it) => { o[it.id] = it.quantity - (it.returnedQuantity || 0); }); setReturnQuantities(o); }} className="text-xs font-bold text-primary">すべて最大</button>
+              <button onClick={() => { const o: Record<string, number> = {}; rentItems.forEach((it) => { o[it.id] = 0; }); setReturnQuantities(o); }} className="text-xs font-bold text-slate-400">すべて0</button>
+            </div>
+          )}
         </div>
 
         {/* Item list */}

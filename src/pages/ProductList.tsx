@@ -1,5 +1,6 @@
 import React, { useState, FC, useEffect, useRef } from "react";
 import { alertDialog } from "../components/AppDialog";
+import { triggerToast } from "../components/AdminUI";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
@@ -141,7 +142,7 @@ function ProductListMobile() {
       }
     }
     setQuantities({});
-    void alertDialog("カートに追加しました");
+    triggerToast("カートに追加しました", "ok"); // ブロッキングなトーストで連続追加を妨げない
   };
 
   return (
@@ -215,9 +216,17 @@ function ProductListMobile() {
         </button>
       </div>
 
+      {filteredProducts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center text-center px-6 py-20 text-slate-400 dark:text-slate-500">
+          <span className="material-symbols-outlined text-5xl mb-3">inventory_2</span>
+          <p className="font-bold text-slate-600 dark:text-slate-300">該当する商品がありません</p>
+          <p className="text-sm mt-1">検索条件を変えるか、カテゴリーからお探しください。</p>
+          <Link to="/categories" className="mt-5 px-5 py-2.5 rounded-xl bg-primary text-white font-bold text-sm">カテゴリーを見る</Link>
+        </div>
+      ) : (
       <div className={`grid grid-cols-2 gap-3 p-4 ${totalItems > 0 ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : ''}`}>
         {filteredProducts.map(product => (
-          <ProductListItem 
+          <ProductListItem
             key={product.id}
             id={product.id}
             name={product.name}
@@ -236,6 +245,7 @@ function ProductListMobile() {
           />
         ))}
       </div>
+      )}
 
       {totalItems > 0 && (
         <div className="fixed bottom-[72px] left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white dark:bg-background-dark border-t border-slate-100 dark:border-slate-800 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-[60] pb-safe">
@@ -254,7 +264,7 @@ const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?:
   return (
     <div className="group flex flex-col bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-700/50">
       <div className="relative w-full aspect-square bg-slate-50 dark:bg-slate-900 overflow-hidden">
-        <div className="absolute inset-0 bg-contain bg-center bg-no-repeat group-hover:scale-105 transition-transform duration-300" style={{ backgroundImage: `url("${image}")`}}></div>
+        <img src={image} alt={name} loading="lazy" decoding="async" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" />
         {badge && (
           <div className="absolute top-2 left-2 flex flex-col gap-1">
             <span className={`px-2 py-0.5 rounded-md ${badgeColor} text-[10px] font-bold border uppercase tracking-wide`}>{badge}</span>

@@ -983,7 +983,7 @@ export default function AdminWarehouse() {
       >
         <form onSubmit={handleSaveItem} className="space-y-3">
           <Field label="品名" required>
-            <TextInput value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="例：カラーコーン 赤" />
+            <TextInput autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="例：カラーコーン 赤" />
           </Field>
           <Row>
             <Field label="カテゴリ" required>

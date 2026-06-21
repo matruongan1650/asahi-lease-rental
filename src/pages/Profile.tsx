@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
 import { confirmDialog, alertDialog } from "../components/AppDialog";
@@ -11,6 +11,7 @@ export default function Profile() {
 
 function ProfileMobile() {
   const { profile, logout } = useUser();
+  const navigate = useNavigate();
 
   const handleLogout = async () => {
     if (await confirmDialog("ログアウトしますか？", { okText: "ログアウト", danger: true })) {
@@ -33,7 +34,7 @@ function ProfileMobile() {
           <div className="relative mb-3 group cursor-pointer">
             <div className="bg-center bg-no-repeat bg-cover rounded-full h-24 w-24 border-4 border-white dark:border-slate-800 shadow-lg transition-transform group-hover:scale-105 duration-300" style={{ backgroundImage: `url("${profile.avatarUrl}")`}}></div>
             <div className="absolute bottom-1 right-1 h-5 w-5 bg-green-500 border-2 border-background-light dark:border-background-dark rounded-full"></div>
-            <button className="absolute bottom-0 right-0 p-1.5 bg-primary rounded-full text-white border-2 border-background-light dark:border-background-dark shadow-md hover:bg-primary/90 transition-colors">
+            <button onClick={() => navigate("/personal-info")} aria-label="プロフィール写真を変更" className="absolute bottom-0 right-0 p-1.5 bg-primary rounded-full text-white border-2 border-background-light dark:border-background-dark shadow-md hover:bg-primary/90 transition-colors">
               <span className="material-symbols-outlined text-[14px] block">edit</span>
             </button>
           </div>

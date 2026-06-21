@@ -125,7 +125,7 @@ function CartMobile() {
             <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-800 dark:border dark:border-slate-700">
               <div className="flex flex-col gap-3">
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-500 dark:text-slate-400">レンタル料</span>
+                  <span className="text-slate-500 dark:text-slate-400">レンタル料 (最低{hasVehicle ? 3 : 10}日分)</span>
                   <span className="font-medium text-slate-900 dark:text-white">¥{totalRentalPrice.toLocaleString()}</span>
                 </div>
                 {totalGuaranteeFee > 0 && (
@@ -146,9 +146,10 @@ function CartMobile() {
                 </div>
                 <div className="my-1 h-px w-full bg-slate-100 dark:bg-slate-700"></div>
                 <div className="flex items-center justify-between text-base">
-                  <span className="font-bold text-slate-900 dark:text-white">合計</span>
+                  <span className="font-bold text-slate-900 dark:text-white">概算合計</span>
                   <span className="text-xl font-extrabold text-primary dark:text-primary">¥{total.toLocaleString()}</span>
                 </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 text-right -mt-1">※実際の料金はご利用日数（会計時に選択）で確定します</p>
               </div>
             </div>
           </>

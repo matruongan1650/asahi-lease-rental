@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { alertDialog } from "../components/AppDialog";
+import { triggerToast } from "../components/AdminUI";
 import { Link, useNavigate } from "react-router-dom";
 import { useFeatured } from "../context/FeaturedContext";
 import { useCart } from "../context/CartContext";
@@ -113,7 +114,7 @@ function HomeMobile() {
       }
     }
     setQuantities({});
-    void alertDialog("カートに追加しました");
+    triggerToast("カートに追加しました", "ok");
   };
   
   return (

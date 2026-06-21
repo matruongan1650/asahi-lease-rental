@@ -212,7 +212,7 @@ export default function AdminStockIn() {
       >
         <form onSubmit={handleSaveStockIn} className="space-y-3">
           <Field label="対象品名" required>
-            <SelectInput value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
+            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
           </Field>
           {itemSelect === "その他 (直接入力)" && (
             <Field label="直接入力品名" required>

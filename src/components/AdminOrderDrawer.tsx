@@ -276,6 +276,9 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       ...prev,
       items: (prev.items || []).map((item: any, i: number) => i === index ? { ...item, [key]: value } : item),
     }));
+    // 明細(数量・単価・保証料)の変更を小計/消費税/合計に即時反映する（「金額を再計算」押し忘れ防止）。
+    // recalc は functional updater なので、上の setEditDraft 適用後の最新 prev から計算される。
+    recalcEditDraftTotals();
   };
 
   // 商品コンボボックスで商品を選んだとき、その明細に商品マスタの情報を引き込む。
@@ -298,6 +301,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
           : item,
       ),
     }));
+    recalcEditDraftTotals();
   };
 
   const recalcEditDraftTotals = () => {

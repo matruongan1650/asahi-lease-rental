@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import { alertDialog } from "../components/AppDialog";
 import { useNavigate } from "react-router-dom";
+import OrderBus from "../lib/orderBus";
 import { useUser } from "../context/UserContext";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import PersonalInfoDesktop from "./desktop/PersonalInfoDesktop";
@@ -11,8 +12,9 @@ export default function PersonalInfo() {
 
 function PersonalInfoMobile() {
   const navigate = useNavigate();
-  const { profile, setProfile } = useUser();
+  const { profile, setProfile, isEmailTaken } = useUser();
   const [formData, setFormData] = useState(profile);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -35,12 +37,31 @@ function PersonalInfoMobile() {
   // 会社グループが壊れるのを防ぐ）。会社情報の変更は会社代表(customer)または管理者のみ。
   const isSubUser = profile.role === "customer_staff";
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    const email = (formData.email || "").trim();
+    // 必須・形式・重複チェック（重複メールにすると login が fail-closed で自分がログイン不能になるため必須）。
+    if (!(formData.lastName || "").trim() || !(formData.firstName || "").trim()) {
+      void alertDialog("姓・名を入力してください。");
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      void alertDialog("メールアドレスの形式が正しくありません。");
+      return;
+    }
+    if (isEmailTaken(email, profile.id)) {
+      void alertDialog("このメールアドレスは既に使われています。別のアドレスを入力してください。");
+      return;
+    }
+    setIsSaving(true);
     setProfile({
       ...formData,
+      email,
       companyName: isSubUser ? profile.companyName : formData.companyName,
     });
-    void alertDialog("保存しました。");
+    // クラウド同期の確定を待ち、成功/送信待ちを明示する（失敗を成功と誤認させない）。
+    const ok = await OrderBus.flush(8000);
+    setIsSaving(false);
+    void alertDialog(ok ? "保存しました。" : "保存しましたが、通信が不安定なため同期待ちです。電波の良い場所で自動的に再送信されます。");
     navigate(-1);
   };
 
@@ -138,11 +159,12 @@ function PersonalInfoMobile() {
           </div>
         </div>
         
-        <button 
+        <button
           onClick={handleSave}
-          className="mt-4 bg-primary text-white h-12 rounded-xl font-bold hover:bg-primary/90 active:scale-[0.98] transition-transform shadow-md"
+          disabled={isSaving}
+          className="mt-4 bg-primary text-white h-12 rounded-xl font-bold hover:bg-primary/90 active:scale-[0.98] transition-transform shadow-md disabled:opacity-60"
         >
-          保存する
+          {isSaving ? "保存中…" : "保存する"}
         </button>
       </main>
     </div>

@@ -78,7 +78,13 @@ function toRentalRow(o: any) {
 export default function AdminRental() {
   const liveOrders = useAdminOrders(); // KPI(レンタル売上) + patchOrder 用
   const [queue, setQueue] = useState<RentalQueue>("new");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(""); // 入力用（即時）
+  const [searchQuery, setSearchQuery] = useState(""); // クエリ用（デバウンス後。サーバー問い合わせのキー）
+  // 1文字ごとにサーバーへ問い合わせないよう 280ms デバウンスする。
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 280);
+    return () => clearTimeout(t);
+  }, [searchInput]);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [docDrawerOpen, setDocDrawerOpen] = useState(false);
 
@@ -97,9 +103,12 @@ export default function AdminRental() {
     return acc;
   }, [statusCounts]);
 
-  const handleAccept = (row: any) => {
+  const handleAccept = async (row: any) => {
     const id = orderKey(row._raw);
     if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
+    // 在庫減算・配送手配を伴う破壊的操作のため確認する（誤クリック防止。却下と対称に）。
+    const ok = await confirmDialog(`${row.id} を受注確定します。在庫を出庫し配送手配へ送ります。よろしいですか？`, { okText: "受注確定する", cancelText: "キャンセル" });
+    if (!ok) return;
     // 受注確定 = 現物在庫を減算（出庫）。最新の注文を解決してから台帳を更新する。
     const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id || o.orderNumber === id)) || row._raw;
     const flags = deductOrderStock(raw);
@@ -241,8 +250,8 @@ export default function AdminRental() {
             <div className="relative min-w-[280px]">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[19px]">search</span>
               <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="注文番号・顧客・現場を検索"
                 className="h-[38px] w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold outline-none focus:border-[#1a1c9a]/50 focus:ring-2 focus:ring-[#1a1c9a]/10"
               />

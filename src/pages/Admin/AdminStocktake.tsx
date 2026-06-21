@@ -13,6 +13,7 @@ import {
   triggerToast
 } from "../../components/AdminUI";
 import { useAdminCollection } from "../../context/AdminDataContext";
+import { usePagedList } from "../../hooks/usePagedList";
 import { useVehicles } from "../../context/VehicleContext";
 import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
@@ -225,6 +226,10 @@ export default function AdminStocktake() {
     });
   }, [baseRows, tab, query]);
 
+  // 数百件の全件描画（各行に数量入力あり）でカクつくため段階表示する。countDraft は別 state のため
+  // ページングしても入力値は保持される。検索・タブ切替で先頭ページへ戻す。
+  const paged = usePagedList(filteredRows, 50, [tab, query]);
+
   const diffRows = baseRows.filter((row) => row.diff !== 0);
   const supplyDiff = diffRows.filter((row) => row.assetType === "保安用品").length;
   const vehicleDiff = diffRows.filter((row) => row.assetType === "保安車両").length;
@@ -364,6 +369,41 @@ export default function AdminStocktake() {
     triggerToast("棚卸CSVを出力しました", "ok");
   };
 
+  // CSV取込: 出力したCSVに実数を書き込んで戻す運用を可能にする（現場で別紙/別端末で数えた結果を一括反映）。
+  // ID列(2列目)で行を特定し、実数列(7列目)を countDraft へマージする。出力フォーマットと対称。
+  const parseCsvLine = (line: string): string[] => {
+    const out: string[] = []; let cur = ""; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; }
+    }
+    out.push(cur);
+    return out;
+  };
+  const importCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || "").replace(/^﻿/, "");
+        const lines = text.split(/\r?\n/).filter((l) => l.trim());
+        const byProductId = new Map(baseRows.map((r) => [String(r.productId), r]));
+        const draft: Record<string, number> = {};
+        let applied = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const cols = parseCsvLine(lines[i]);
+          const id = String(cols[1] ?? "").trim();
+          const counted = Number(String(cols[6] ?? "").trim());
+          const row = byProductId.get(id);
+          if (row && !isNaN(counted)) { draft[row.id] = counted; applied++; }
+        }
+        if (applied) { setCountDraft((prev) => ({ ...prev, ...draft })); triggerToast(`${applied}件の実数を取込みました`, "ok"); }
+        else triggerToast("取込める行がありませんでした（ID列・実数列を確認してください）", "warn");
+      } catch { triggerToast("CSVの読み込みに失敗しました", "err"); }
+    };
+    reader.readAsText(file);
+  };
+
   const cols = [
     {
       h: "対象",
@@ -456,8 +496,9 @@ export default function AdminStocktake() {
     <div className="space-y-4">
       <Tabs tabs={tabs} active={tab} onChange={(id) => setTab(id as StocktakeTab)} counts={counts} />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
         <KPI label="棚卸対象" value={`${baseRows.length} 件`} icon="list_alt" />
+        <KPI label="未確認" value={`${baseRows.filter((r) => r.state === "未確認").length} 件`} icon="pending" accent="#5DADE2" />
         <KPI label="差異あり" value={`${diffRows.length} 件`} icon="error" accent="#EF6C4A" />
         <KPI label="保安用品差異" value={`${supplyDiff} 件`} icon="inventory_2" accent="#FFD23F" />
         <KPI label="最終棚卸" value={latestSession?.date ? String(latestSession.date).slice(5, 10) : "未実施"} icon="event_note" accent="#5DADE2" />
@@ -470,6 +511,10 @@ export default function AdminStocktake() {
               <div className="flex gap-2 flex-wrap">
                 <Btn icon="refresh" variant="secondary" onClick={resetDraft}>リセット</Btn>
                 <Btn icon="download" variant="secondary" onClick={exportCsv}>CSV出力</Btn>
+                <label className="inline-flex items-center gap-1.5 px-3 h-[36px] rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-600 cursor-pointer hover:bg-slate-50">
+                  <span className="material-symbols-outlined text-[18px]">upload</span>CSV取込
+                  <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) importCsv(f); e.currentTarget.value = ""; }} />
+                </label>
                 <Btn icon="check" variant="primary" onClick={() => setConfirmOpen(true)}>棚卸確定</Btn>
               </div>
             }
@@ -487,8 +532,13 @@ export default function AdminStocktake() {
           </Toolbar>
 
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
-            <Panel title="棚卸入力" icon="checklist" sub={`${filteredRows.length} 件を表示`}>
-              <Table cols={cols} rows={filteredRows} />
+            <Panel title="棚卸入力" icon="checklist" sub={`${paged.shown.length} / ${filteredRows.length} 件`}>
+              <Table cols={cols} rows={paged.shown} />
+              {paged.hasMore && (
+                <div className="flex justify-center mt-3">
+                  <button onClick={paged.showMore} className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700">さらに表示（残り {paged.remaining} 件）</button>
+                </div>
+              )}
             </Panel>
 
             <div className="space-y-4">

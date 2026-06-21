@@ -1065,7 +1065,7 @@ export default function AdminVehicles() {
             </div>
             <Row>
               <Field label={vehicleAction.kind === "inspection" ? "新しい車検満了日" : "記録日"} required>
-                <TextInput type="date" value={actionDate} onChange={(e) => setActionDate(e.target.value)} />
+                <TextInput autoFocus type="date" value={actionDate} onChange={(e) => setActionDate(e.target.value)} />
               </Field>
               <Field label="走行距離">
                 <TextInput value={actionMileage} onChange={(e) => setActionMileage(e.target.value)} placeholder="例：28,500 km" />

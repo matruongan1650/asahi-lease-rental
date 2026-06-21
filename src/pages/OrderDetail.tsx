@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { alertDialog } from "../components/AppDialog";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
@@ -127,6 +127,35 @@ function OrderDetailMobile() {
     found && (isPrivileged || (!!currentUser?.id && !!found.userId && found.userId === currentUser.id))
       ? found
       : undefined;
+
+  // 延長後の合計を即時プレビュー（確定前にいくらになるか分かるように）。handleConfirmExtension と同じ計算。
+  const extensionPreview = useMemo(() => {
+    if (!order || !order.rentalStartDate || !order.rentalEndDate || !newEndDate) return null;
+    const selectedEnd = parseDateLocal(newEndDate);
+    const currentEnd = parseDateLocal(order.rentalEndDate);
+    if (isNaN(selectedEnd.getTime()) || selectedEnd < currentEnd) return null;
+    try {
+      const hasVehicle = (order.items || []).some((i: any) => isVehicleCategory(i.category) && i.type === 'rent');
+      let totalRentalPrice = 0, totalBuyPrice = 0, totalGuaranteeFee = 0;
+      const updatedItems = (order.items || []).map((item: any) => {
+        const copy = { ...item };
+        if (copy.type === 'rent' && copy.rentPrice) {
+          const { totalPrice: itemTotal, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(copy.rentPrice, order.rentalStartDate, newEndDate, hasVehicle, isVehicleCategory(copy.category), copy.rentPriceLongTerm);
+          copy.monthlyBreakdown = breakdown; copy.calculatedPrice = itemTotal; copy.rentalDays = totalActualDays; copy.billedDays = totalBilledDays;
+          totalRentalPrice += itemTotal * copy.quantity;
+          if (copy.guaranteeFeeFlat) totalGuaranteeFee += copy.guaranteeFeeFlat;
+        } else if (copy.type === 'buy' && copy.buyPrice) { totalBuyPrice += copy.buyPrice * copy.quantity; }
+        return copy;
+      });
+      const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
+      const { tax, total } = calculateTotalPayment(subtotal);
+      const tempOrder = { ...order, rentalEndDate: newEndDate, items: updatedItems, subtotal, tax, total, invoiceBlocks: undefined };
+      const blocks = getOrGenerateInvoiceBlocks(tempOrder);
+      const bt = (blocks || []).reduce((a: any, b: any) => ({ total: a.total + (Number(b.total) || 0) }), { total: 0 });
+      const newTotal = (blocks || []).length > 0 ? bt.total : total;
+      return { newTotal, diff: newTotal - (Number(order.total) || 0) };
+    } catch { return null; }
+  }, [newEndDate, order]);
 
   if (!order) {
     return (
@@ -636,6 +665,7 @@ function OrderDetailMobile() {
             帳票・書類
           </h3>
           <div className="flex flex-col gap-3">
+            {activeStep >= 3 ? (
             <button
               onClick={() => setViewingDoc("納品書")}
               className="flex items-center justify-between p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-primary dark:hover:border-primary/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all font-medium text-sm text-slate-700 dark:text-slate-200"
@@ -648,7 +678,15 @@ function OrderDetailMobile() {
               </div>
               <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
             </button>
-            
+            ) : (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 text-sm text-slate-400">
+              <div className="w-8 h-8 rounded bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+              </div>
+              <span>納品書は配送完了後に発行されます</span>
+            </div>
+            )}
+
             {/* 複数月レンタルでは月ごとの請求書（レンタル中でも各月分を表示できる） */}
             {(isFullyReturned(order.status) || order.status === "一部返却" || order.status === "完了" || (blocks && blocks.length > 0)) && (
               <>
@@ -818,12 +856,24 @@ function OrderDetailMobile() {
                   />
                 </div>
 
+                {extensionPreview && (
+                  <div className="rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">延長後の合計</span>
+                      <span className="font-bold text-primary text-base">¥{extensionPreview.newTotal.toLocaleString()}</span>
+                    </div>
+                    {extensionPreview.diff > 0 && (
+                      <p className="text-[11px] text-slate-400 mt-0.5 text-right">現在より +¥{extensionPreview.diff.toLocaleString()}</p>
+                    )}
+                  </div>
+                )}
+
                 {extendingError && (
                   <p className="text-xs text-red-500 font-bold">{extendingError}</p>
                 )}
               </div>
             </div>
-            
+
             <div className="flex border-t border-slate-100 dark:border-slate-750">
               <button
                 onClick={() => setIsExtending(false)}

@@ -295,7 +295,7 @@ function ReturnConfirmationMobile() {
             <span>返却依頼を送信</span>
             <span className="material-symbols-outlined text-xl">send</span>
           </button>
-          <button onClick={() => navigate("/orders")} className="w-full bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 font-bold text-sm py-3 px-6 rounded-xl transition-colors">
+          <button onClick={() => navigate(-1)} className="w-full bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 font-bold text-sm py-3 px-6 rounded-xl transition-colors">
             修正する
           </button>
         </div>

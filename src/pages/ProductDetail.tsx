@@ -1,11 +1,13 @@
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { alertDialog } from "../components/AppDialog";
+import { triggerToast } from "../components/AdminUI";
 import React, { useState, useEffect } from "react";
 import { useCart } from "../context/CartContext";
 import { useFeatured } from "../context/FeaturedContext";
 import { useProducts } from "../context/ProductContext";
 import { SALES_ENABLED } from "../config/features";
-import { LONG_TERM_THRESHOLD_DAYS } from "../utils/billing";
+import { LONG_TERM_THRESHOLD_DAYS, calculateRentalPrice, getMinDays } from "../utils/billing";
+import { isVehicleCategory } from "../utils/productUtils";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import ProductDetailDesktop from "./desktop/ProductDetailDesktop";
 
@@ -21,6 +23,7 @@ function ProductDetailMobile() {
   const { addToCart } = useCart();
   const { isFeatured, toggleFeatured } = useFeatured();
   const [quantity, setQuantity] = useState<number | string>(1);
+  const [periodDays, setPeriodDays] = useState<number | string>("");
   const [actionType, setActionType] = useState<'rent' | 'buy'>('rent');
 
   const product = products.find(p => p && p.id === id) || products.filter(Boolean)[0];
@@ -162,6 +165,33 @@ function ProductDetailMobile() {
               </div>
             )}
           </div>
+
+          {/* 日数を入れて料金の目安を即時表示（レンタル業では期間が主な価格要因。会計まで料金が見えない不安を解消）。 */}
+          {actionType === 'rent' && product.rentPrice !== undefined && (() => {
+            const isVeh = isVehicleCategory(product.category);
+            const minD = getMinDays(isVeh);
+            const days = Math.max(1, Number(periodDays) || minD);
+            const s = new Date(); const e = new Date(); e.setDate(e.getDate() + days);
+            const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            const per = calculateRentalPrice(product.rentPrice as number, fmt(s), fmt(e), isVeh, isVeh, product.rentPriceLongTerm).totalPrice;
+            const qty = Math.max(1, Number(quantity) || 1);
+            return (
+              <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-sm font-bold text-slate-600 dark:text-slate-300">ご利用予定日数</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={1} value={periodDays} onChange={(ev) => setPeriodDays(ev.target.value === "" ? "" : Math.max(1, Number(ev.target.value)))} placeholder={String(minD)} className="w-20 text-right rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-sm font-bold outline-none focus:border-primary" />
+                    <span className="text-sm text-slate-500">日</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
+                  <span className="text-xs text-slate-400">目安（{days}日 × {qty}点）</span>
+                  <span className="text-lg font-extrabold text-primary">¥{(per * qty).toLocaleString()}</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">※最低{minD}日分から。正式な料金は会計時の日付選択で確定します。</p>
+              </div>
+            );
+          })()}
         </div>
 
         <div className="p-4 bg-white dark:bg-slate-800 mb-2">
@@ -250,7 +280,7 @@ function ProductDetailMobile() {
                   category: product.category,
                   unit: product.unit,
                 });
-                void alertDialog("カートに追加しました");
+                triggerToast("カートに追加しました", "ok");
               }}
               className={`flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors ${outOfStockRent ? "opacity-40 cursor-not-allowed" : ""}`}
             >

@@ -253,11 +253,12 @@ function CheckoutMobile() {
           
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-bold leading-normal pb-2">現場名 <span className="text-red-500 text-xs font-normal ml-2">必須</span></p>
-            <input 
+            <input
+              autoFocus
               value={siteName}
               onChange={(e) => setSiteName(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white px-4 py-3.5 text-base placeholder:text-slate-400 outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all" 
-              placeholder="例：〇〇〇市、〇〇〇建設" 
+              className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white px-4 py-3.5 text-base placeholder:text-slate-400 outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all"
+              placeholder="例：〇〇〇市、〇〇〇建設"
               type="text"
             />
           </label>
@@ -338,8 +339,8 @@ function CheckoutMobile() {
             <input 
               value={deliveryLocation}
               onChange={(e) => setDeliveryLocation(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white px-4 py-3.5 text-base placeholder:text-slate-400 outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all" 
-              placeholder="例：KJ-2023-001" 
+              className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white px-4 py-3.5 text-base placeholder:text-slate-400 outline-none focus:border-primary focus:ring-primary focus:ring-1 transition-all"
+              placeholder="例：東京都〇〇市〇〇1-2-3"
               type="text"
             />
           </label>
@@ -627,6 +628,7 @@ function CheckoutMobile() {
               注文を確定する
             </button>
           </div>
+          {!isFormValid && <p className="text-[11px] text-slate-400 text-center mt-2">必須項目（現場名・工事番号・各日付・納品場所）をすべて入力してください。</p>}
         </div>
       </div>
     </>

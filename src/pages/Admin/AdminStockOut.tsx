@@ -222,7 +222,17 @@ export default function AdminStockOut() {
       >
         <form onSubmit={handleSaveStockOut} className="space-y-3">
           <Field label="対象品名" required>
-            <SelectInput value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
+            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
+            {itemSelect && (() => {
+              const sel = supplyProducts.find((p: any) => p.name === itemSelect);
+              const onHand = Number(sel?.stock || 0);
+              const short = Number(qty) > onHand;
+              return (
+                <div className={`mt-1.5 text-xs font-bold rounded-lg px-3 py-2 ${short ? "bg-red-50 text-red-600 border border-red-200" : "bg-slate-50 text-slate-600 border border-slate-200"}`}>
+                  現在庫: {onHand}点{short ? ` ・ 数量(${qty})が在庫を超えています` : ""}
+                </div>
+              );
+            })()}
           </Field>
           <Row>
             <Field label="数量" required>
