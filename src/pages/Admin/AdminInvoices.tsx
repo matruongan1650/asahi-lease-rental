@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Badge, Btn, Panel, triggerToast } from "../../components/AdminUI";
+import { confirmDialog } from "../../components/AppDialog";
 import AdminRentalInvoiceSection from "../../components/AdminRentalInvoiceSection";
 import B2BInvoiceViewer from "../../components/B2BInvoiceViewer";
 import { usePagedList } from "../../hooks/usePagedList";
@@ -57,6 +58,21 @@ function statusKey(status: string): StatusFilter {
   if (statusLabel(status) === "入金済") return "paid";
   if (statusLabel(status) === "集計中") return "accumulating";
   return "pending";
+}
+
+// 支払期日 = 対象月(monthPeriod)の翌月末（請求書テンプレの「月末締め翌月末払い」に準拠）。
+function blockDueDate(block: any): Date | null {
+  const m = String(block?.monthPeriod || "").match(/^(\d{4})-(\d{1,2})/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) + 1, 0); // 翌月末日（オーバーフローは Date が補正）
+}
+// 延滞 = 未入金(確定済)かつ支払期日が過ぎている。集計中・入金済は対象外。
+function blockOverdue(block: any): boolean {
+  if (statusKey(String(block?.status || "")) !== "pending") return false;
+  const due = blockDueDate(block);
+  if (!due) return false;
+  const now = new Date();
+  return due < new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 function orderType(order: any) {
@@ -126,6 +142,7 @@ export default function AdminInvoices() {
   const [selectedCompany, setSelectedCompany] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [payingId, setPayingId] = useState<string | null>(null); // 入金更新中のブロック（二重送信ガード）
   const [query, setQuery] = useState("");
   const [b2bOpen, setB2bOpen] = useState(false);
   const [b2bType, setB2bType] = useState<B2BType>("summary");
@@ -177,10 +194,11 @@ export default function AdminInvoices() {
         acc.total += Number(row.block.total || 0);
         acc.pending += statusKey(String(row.block.status || "")) === "pending" ? 1 : 0;
         acc.paid += statusKey(String(row.block.status || "")) === "paid" ? 1 : 0;
+        if (blockOverdue(row.block)) { acc.overdue += 1; acc.overdueAmount += Number(row.block.total || 0); }
         acc.companies.add(row.company);
         return acc;
       },
-      { subtotal: 0, tax: 0, total: 0, pending: 0, paid: 0, companies: new Set<string>() },
+      { subtotal: 0, tax: 0, total: 0, pending: 0, paid: 0, overdue: 0, overdueAmount: 0, companies: new Set<string>() },
     );
   }, [filteredRows]);
 
@@ -193,13 +211,19 @@ export default function AdminInvoices() {
     setB2bOpen(true);
   };
 
-  const updateBlockStatus = (row: InvoiceRow, nextStatus: "pending" | "paid") => {
+  const updateBlockStatus = async (row: InvoiceRow, nextStatus: "pending" | "paid") => {
     const id = row.order.firestoreId || row.order.id;
     if (!id) {
       triggerToast("注文IDが見つからないため更新できません", "err");
       return;
     }
-
+    if (payingId) return; // 進行中はガード（連打防止）
+    // 入金済→未入金 の戻しは売掛消込を巻き戻す破壊的操作。誤クリック防止のため確認する。
+    if (nextStatus === "pending") {
+      const ok = await confirmDialog("この入金記録を取り消しますか？売掛の消込が巻き戻ります。", { okText: "取り消す", cancelText: "やめる", danger: true });
+      if (!ok) return;
+    }
+    setPayingId(row.block.id);
     // 入金時は入金日(paidAt)を記録し、未入金へ戻す時はクリアする（AR 追跡用メタデータ）。
     const stamp = new Date().toISOString();
     const nextBlocks = getOrGenerateInvoiceBlocks(row.order).map((block) =>
@@ -210,6 +234,7 @@ export default function AdminInvoices() {
 
     liveOrders.patchOrder(id, { invoiceBlocks: nextBlocks });
     triggerToast(nextStatus === "paid" ? "入金済みに更新しました" : "未入金に戻しました", "ok");
+    setTimeout(() => setPayingId(null), 400); // 反映までボタンを無効化
   };
 
   return (
@@ -238,10 +263,11 @@ export default function AdminInvoices() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         <StatCard icon="receipt_long" label="請求ブロック" value={`${filteredRows.length}件`} sub={`${invoiceOrders.length} 注文から集計`} />
         <StatCard icon="apartment" label="取引先" value={`${totals.companies.size}社`} tone="green" />
         <StatCard icon="mail" label="未入金" value={`${totals.pending}件`} sub={`入金済 ${totals.paid}件`} tone="amber" />
+        <StatCard icon="schedule" label="延滞" value={`${totals.overdue}件`} sub={totals.overdue > 0 ? yen(totals.overdueAmount) : "なし"} tone="amber" />
         <StatCard icon="payments" label="対象金額" value={yen(totals.total)} sub={`税抜 ${yen(totals.subtotal)} / 税 ${yen(totals.tax)}`} tone="blue" />
       </div>
 
@@ -354,7 +380,14 @@ export default function AdminInvoices() {
                     <td className="border-t border-[#e0f0ee] px-4 py-3 text-right font-mono font-bold text-slate-600">{yen(row.block.tax)}</td>
                     <td className="border-t border-[#e0f0ee] px-4 py-3 text-right font-mono text-base font-black text-[#173b38]">{yen(row.block.total)}</td>
                     <td className="border-t border-[#e0f0ee] px-4 py-3 text-center">
-                      <Badge tone={statusTone(String(row.block.status || ""))}>{statusLabel(String(row.block.status || ""))}</Badge>
+                      <div className="flex flex-col items-center gap-1">
+                        <Badge tone={statusTone(String(row.block.status || ""))}>{statusLabel(String(row.block.status || ""))}</Badge>
+                        {blockOverdue(row.block) && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-black text-red-600">
+                            <span className="material-symbols-outlined text-[12px]">schedule</span>延滞（期日 {blockDueDate(row.block)?.toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit" })}）
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="border-t border-[#e0f0ee] px-4 py-3">
                       <div className="flex justify-end gap-2">
@@ -362,11 +395,11 @@ export default function AdminInvoices() {
                           表示
                         </Btn>
                         {statusKey(String(row.block.status || "")) === "paid" ? (
-                          <Btn size="sm" variant="ghost" icon="undo" onClick={() => updateBlockStatus(row, "pending")}>
+                          <Btn size="sm" variant="ghost" icon="undo" disabled={payingId === row.block.id} onClick={() => updateBlockStatus(row, "pending")}>
                             未入金へ
                           </Btn>
                         ) : (
-                          <Btn size="sm" variant="primary" icon="check_circle" onClick={() => updateBlockStatus(row, "paid")}>
+                          <Btn size="sm" variant="primary" icon="check_circle" disabled={payingId === row.block.id} onClick={() => updateBlockStatus(row, "paid")}>
                             入金済
                           </Btn>
                         )}

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Btn, Field, Modal, Row, SelectInput, TextInput, triggerToast } from "../../components/AdminUI";
 import { useAdminCollection } from "../../context/AdminDataContext";
+import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { usePagedList } from "../../hooks/usePagedList";
 import { isVehicleCategory } from "../../utils/productUtils";
@@ -47,7 +48,9 @@ export default function AdminStockOut() {
   const [itemSelect, setItemSelect] = useState("");
   const [qty, setQty] = useState(10);
   const [dst, setDst] = useState("");
-  const [staff, setStaff] = useState("佐藤");
+  const { currentUser } = useUser();
+  const loginName = currentUser ? (`${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email || "") : "";
+  const [staff, setStaff] = useState(loginName || "佐藤");
 
   const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean)];
   const totalOutQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
@@ -73,6 +76,10 @@ export default function AdminStockOut() {
 
   const handleSaveStockOut = (e: React.FormEvent) => {
     e.preventDefault();
+    saveStockOut(false);
+  };
+  // keepOpen=true: 同じ出庫先の複数品目を連続登録（納品先/担当者は維持、品名・数量のみクリア）。
+  const saveStockOut = (keepOpen: boolean) => {
     if (!itemSelect.trim()) {
       triggerToast("品名を選択してください", "warn");
       return;
@@ -115,10 +122,12 @@ export default function AdminStockOut() {
     OrderBus.patch("products", match.id, { stock: Math.max(0, onHand - Number(qty)) });
 
     triggerToast(`${itemSelect} を -${qty} 出庫しました`, "ok");
-    setIsAddModalOpen(false);
     setItemSelect("");
     setQty(10);
-    setDst("");
+    if (!keepOpen) {
+      setDst("");
+      setIsAddModalOpen(false);
+    }
   };
 
   return (
@@ -216,9 +225,10 @@ export default function AdminStockOut() {
       <Modal
         open={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        onSubmit={() => saveStockOut(false)}
         title={`${actionKind}出庫を登録`}
         width={460}
-        footer={<><Btn variant="secondary" onClick={() => setIsAddModalOpen(false)}>キャンセル</Btn><Btn variant="primary" icon="check" onClick={handleSaveStockOut}>保存</Btn></>}
+        footer={<><Btn variant="secondary" onClick={() => setIsAddModalOpen(false)}>キャンセル</Btn><Btn variant="secondary" icon="add" onClick={() => saveStockOut(true)}>保存して続ける</Btn><Btn variant="primary" icon="check" onClick={() => saveStockOut(false)}>保存</Btn></>}
       >
         <form onSubmit={handleSaveStockOut} className="space-y-3">
           <Field label="対象品名" required>

@@ -533,7 +533,7 @@ export default function AdminStocktake() {
 
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
             <Panel title="棚卸入力" icon="checklist" sub={`${paged.shown.length} / ${filteredRows.length} 件`}>
-              <Table cols={cols} rows={paged.shown} />
+              <Table cols={cols} rows={paged.shown} maxHeight={520} />
               {paged.hasMore && (
                 <div className="flex justify-center mt-3">
                   <button onClick={paged.showMore} className="px-5 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-sm font-black text-blue-700">さらに表示（残り {paged.remaining} 件）</button>

@@ -250,7 +250,8 @@ export default function AdminVehicles() {
       inUse: vehicles.filter((v) => v.status === "使用中").length,
       idle: vehicles.filter((v) => v.status === "空車").length,
       maintenance: vehicles.filter((v) => v.status === "整備中").length,
-      inspectionSoon: vehicles.filter((v) => Number(v.inspectionDaysRemaining || 999) <= 30).length
+      inspectionSoon: vehicles.filter((v) => Number(v.inspectionDaysRemaining ?? 999) <= 30 && Number(v.inspectionDaysRemaining ?? 999) >= 0).length,
+      inspectionOverdue: vehicles.filter((v) => Number(v.inspectionDaysRemaining ?? 999) < 0).length
     };
   }, [vehicles]);
 
@@ -518,10 +519,12 @@ export default function AdminVehicles() {
     {
       h: "走行距離",
       align: "right" as const,
+      sortKey: (r: VehicleDetail) => Number(String(r.mileage ?? "").replace(/[^0-9]/g, "")) || 0,
       cell: (r: VehicleDetail) => <span className="font-mono font-semibold text-slate-700">{r.mileage}</span>
     },
     {
       h: "車検満了日",
+      sortKey: (r: VehicleDetail) => Number(r.inspectionDaysRemaining) || 0,
       cell: (r: VehicleDetail) => {
         const isWarning = r.inspectionDaysRemaining <= 30; // フィルタ/統計/アラート(<=30)と閾値を統一
         return (
@@ -537,6 +540,7 @@ export default function AdminVehicles() {
     {
       h: "ステータス",
       align: "center" as const,
+      sortKey: (r: VehicleDetail) => r.status || "",
       cell: (r: VehicleDetail) => (
         <Badge
           tone={r.statusColor === "emerald" ? "ok" : r.statusColor === "blue" ? "default" : "warning"}
@@ -544,13 +548,41 @@ export default function AdminVehicles() {
           {r.status}
         </Badge>
       )
+    },
+    {
+      // 一覧から直接 車検更新/点検記録/修理手配（ドロワーを開かずモーダル起動。行クリックは別なので stopPropagation）。
+      h: "操作",
+      align: "center" as const,
+      cell: (r: VehicleDetail) => (
+        <div className="flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {[["event_available", "inspection", "車検更新"], ["fact_check", "maintenance", "点検記録"], ["car_repair", "repair", "修理手配"]].map(([icon, kind, label]) => (
+            <button key={kind} title={label} onClick={() => handleOpenAction(kind as VehicleActionKind, r)}
+              className="w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-blue-700 hover:border-blue-300 flex items-center justify-center">
+              <span className="material-symbols-outlined text-[18px]">{icon}</span>
+            </button>
+          ))}
+        </div>
+      )
     }
   ];
 
   return (
     <div className="space-y-6">
+      {/* 車検 期限アラート（最重要の日次リスク。AdminMaintenance と同じパターン）。 */}
+      {(stats.inspectionOverdue > 0 || stats.inspectionSoon > 0) && (
+        <div className={`rounded-xl border p-4 flex items-center gap-3 ${stats.inspectionOverdue > 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+          <span className="material-symbols-outlined text-[24px]">{stats.inspectionOverdue > 0 ? "error" : "warning"}</span>
+          <p className="text-sm font-bold">
+            {stats.inspectionOverdue > 0 && <span>車検切れ {stats.inspectionOverdue}台</span>}
+            {stats.inspectionOverdue > 0 && stats.inspectionSoon > 0 && <span> ・ </span>}
+            {stats.inspectionSoon > 0 && <span>車検30日以内 {stats.inspectionSoon}台</span>}
+            <span className="font-semibold"> — 早急に車検更新の手配をしてください。</span>
+          </p>
+        </div>
+      )}
+
       {/* Metrics Header */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-xs text-slate-400 font-semibold">総車両数</p>
@@ -586,6 +618,15 @@ export default function AdminVehicles() {
             </h4>
           </div>
           <span className="material-symbols-outlined text-[32px] text-orange-100">build</span>
+        </div>
+        <div className={`bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between ${stats.inspectionOverdue > 0 ? "border-red-200" : "border-slate-200"}`}>
+          <div>
+            <p className="text-xs text-slate-400 font-semibold">車検 30日以内 / 超過</p>
+            <h4 className={`text-2xl font-black mt-1 font-mono ${stats.inspectionOverdue > 0 ? "text-red-600" : stats.inspectionSoon > 0 ? "text-amber-600" : "text-slate-800"}`}>
+              {stats.inspectionSoon}<span className="text-base text-slate-400"> / </span><span className={stats.inspectionOverdue > 0 ? "text-red-600" : "text-slate-400"}>{stats.inspectionOverdue}</span>
+            </h4>
+          </div>
+          <span className="material-symbols-outlined text-[32px] text-red-100">event_busy</span>
         </div>
       </div>
 

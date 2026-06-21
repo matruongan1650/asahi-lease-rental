@@ -26,6 +26,7 @@ import AdminSuppliers from "./AdminSuppliers";
 import AdminVendors from "./AdminVendors";
 import AdminSettings from "./AdminSettings";
 import { buildAdminNotifications } from "../../utils/notifications";
+import { isClosedOrder } from "../../utils/orderStatus";
 import { useNotificationReads } from "../../lib/notificationReads";
 import { useUser } from "../../context/UserContext";
 import { ROLES as INITIAL_ROLES } from "../../data/adminMockData";
@@ -105,6 +106,17 @@ export default function AdminDashboard() {
   );
   const { isRead, markRead, unreadCount } = useNotificationReads("admin");
   const notificationCount = unreadCount(notifications);
+
+  // サイドバーの未処理件数バッジ（どのタブに作業が溜まっているか一目で分かる）。
+  const badgeCounts = useMemo(() => {
+    const t0 = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+    const ords = liveOrders.orders || [];
+    const overdue = ords.filter((o: any) => !isClosedOrder(o.status) && o.rentalEndDate && new Date(String(o.rentalEndDate).replace(/\//g, "-") + "T00:00:00").getTime() < t0 && o.items?.some((i: any) => i.type === "rent")).length;
+    const reports = (fieldReports || []).filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length
+      + ords.filter((o: any) => (o.itemIssues?.length || 0) > 0 && !isClosedOrder(o.status)).length;
+    const vehOverdue = (vehicles || []).filter((v: any) => Number(v.inspectionDaysRemaining ?? 999) < 0).length;
+    return { collection: overdue, field_report: reports, vehicles: vehOverdue } as Partial<Record<AdminTab, number>>;
+  }, [liveOrders.orders, fieldReports, vehicles]);
   // 通知 → 該当タブへ遷移できるようにする（クリックで業務画面に直行）。
   const NOTIF_TAB: Record<string, AdminTab> = {
     "admin-new-orders": "orders",
@@ -143,7 +155,7 @@ export default function AdminDashboard() {
   return (
     <div className="admin-shell bg-[#eff8f7] min-h-screen text-[#173b38] flex font-body">
       {/* Sidebar Layout */}
-      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} allowedTabs={allowedTabs} />
+      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} allowedTabs={allowedTabs} badgeCounts={badgeCounts} />
 
       {/* Main Content */}
       <div className="flex-1 ml-[236px] flex flex-col h-screen overflow-hidden">

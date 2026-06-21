@@ -545,6 +545,30 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
   // ══════════════════════════════════════
   return (
     <div className="space-y-5">
+      {/* ─── 当日アクションバー（業務開始時の最優先: 配送/回収の残・延滞・未対応報告を最上部に） ─── */}
+      {(() => {
+        const t0 = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+        const overdue = orders.filter((o) => !isClosedOrder(o.status) && o.rentalEndDate && new Date(String(o.rentalEndDate).replace(/\//g, "-") + "T00:00:00").getTime() < t0 && o.items?.some((i: any) => i.type === "rent")).length;
+        const items = [
+          { label: "配送 残", n: todaySchedule.deliveries.length, tab: "orders", icon: "local_shipping", on: "bg-blue-50 border-blue-200 text-blue-700" },
+          { label: "回収 残", n: todaySchedule.collections.length, tab: "orders", icon: "assignment_return", on: "bg-emerald-50 border-emerald-200 text-emerald-700" },
+          { label: "延滞", n: overdue, tab: "collection", icon: "schedule", on: "bg-red-50 border-red-200 text-red-700" },
+          { label: "未対応報告", n: todaySchedule.fieldReports.length, tab: "field_report", icon: "report", on: "bg-red-50 border-red-200 text-red-700" },
+        ];
+        if (items.every((i) => i.n === 0)) return null;
+        return (
+          <div className="flex flex-wrap gap-2.5">
+            {items.map((it) => (
+              <button key={it.label} onClick={() => go(it.tab)} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border shadow-sm transition-all hover:shadow-md ${it.n > 0 ? it.on : "bg-white border-slate-200 text-slate-400"}`}>
+                <span className="material-symbols-outlined text-[20px]">{it.icon}</span>
+                <span className="text-sm font-bold">{it.label}</span>
+                <span className="text-lg font-black font-mono">{it.n}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* ─── Page Header ─── */}
       <div className="flex items-center justify-between rounded-lg border border-[#cfe6e3] bg-[#fffdf6] px-4 py-3 shadow-[0_4px_20px_rgba(43,168,162,0.08)]">
         <div>

@@ -55,12 +55,16 @@ export interface TableColumn<T = any> {
   align?: "left" | "center" | "right";
   wrap?: boolean;
   cell: (row: T) => ReactNode;
+  /** 指定するとその列ヘッダがクリックでソート可能になる（数値/文字列を返す）。 */
+  sortKey?: (row: T) => string | number;
 }
 
 export interface TableProps<T = any> {
   cols: TableColumn<T>[];
   rows: T[];
   onRow?: (row: T) => void;
+  /** 指定すると縦スクロール内に収め、ヘッダを sticky 固定する（長い一覧で見出しが消えない）。 */
+  maxHeight?: number | string;
 }
 
 export interface DrawerProps {
@@ -80,6 +84,8 @@ export interface ModalProps {
   width?: number;
   footer?: ReactNode;
   children: ReactNode;
+  /** 指定すると Enter（textarea以外）で送信する。Esc閉じは onSubmit 有無に関わらず有効。 */
+  onSubmit?: () => void;
 }
 
 export interface FieldProps {
@@ -270,25 +276,55 @@ export function Tabs({ tabs, active, onChange, counts }: TabsProps) {
 }
 
 // Generic Data Table
-export function Table({ cols, rows, onRow }: TableProps) {
+export function Table({ cols, rows, onRow, maxHeight }: TableProps) {
+  // 列ソート: sortKey を持つ列のヘッダをクリックで 昇順→降順→解除。
+  const [sort, setSort] = useState<{ i: number; dir: "asc" | "desc" } | null>(null);
+  const toggleSort = (i: number) =>
+    setSort((prev) => (!prev || prev.i !== i ? { i, dir: "asc" } : prev.dir === "asc" ? { i, dir: "desc" } : null));
+  let sortedRows = rows;
+  if (sort) {
+    const sk = cols[sort.i]?.sortKey;
+    if (sk) {
+      sortedRows = [...rows].sort((a, b) => {
+        const va = sk(a), vb = sk(b);
+        const c = (typeof va === "number" && typeof vb === "number") ? va - vb : String(va).localeCompare(String(vb), "ja");
+        return sort.dir === "asc" ? c : -c;
+      });
+    }
+  }
+  const scrollStyle: React.CSSProperties | undefined = maxHeight != null
+    ? { maxHeight: typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight, overflowY: "auto" }
+    : undefined;
   return (
-    <div className="w-full overflow-x-auto rounded-lg border border-[#cfe6e3] bg-white shadow-[0_2px_12px_rgba(43,168,162,0.05)]">
+    <div className="w-full overflow-x-auto rounded-lg border border-[#cfe6e3] bg-white shadow-[0_2px_12px_rgba(43,168,162,0.05)]" style={scrollStyle}>
       <table className="w-full border-collapse min-w-[500px]">
-        <thead className="bg-[#fff8e7]">
+        <thead className={`bg-[#fff8e7] ${maxHeight != null ? "sticky top-0 z-10" : ""}`}>
           <tr className="border-b border-[#eadfb6]">
-            {cols.map((c, i) => (
-              <th
-                key={i}
-                style={{ textAlign: c.align || "left" }}
-                className="text-[10.5px] font-black tracking-wider text-[#5f5a42] uppercase py-2.5 px-3 whitespace-nowrap"
-              >
-                {c.h}
-              </th>
-            ))}
+            {cols.map((c, i) => {
+              const sortable = !!c.sortKey;
+              const active = sort?.i === i;
+              return (
+                <th
+                  key={i}
+                  style={{ textAlign: c.align || "left" }}
+                  onClick={sortable ? () => toggleSort(i) : undefined}
+                  className={`text-[10.5px] font-black tracking-wider text-[#5f5a42] uppercase py-2.5 px-3 whitespace-nowrap bg-[#fff8e7] ${sortable ? "cursor-pointer select-none hover:text-[#173b38]" : ""}`}
+                >
+                  <span className="inline-flex items-center gap-0.5">
+                    {c.h}
+                    {sortable && (
+                      <span className="material-symbols-outlined text-[14px] leading-none opacity-70">
+                        {active ? (sort!.dir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}
+                      </span>
+                    )}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody className="divide-y divide-[#e0f0ee] bg-white">
-          {rows.map((r, ri) => (
+          {sortedRows.map((r, ri) => (
             <tr
               key={ri}
               onClick={onRow ? () => onRow(r) : undefined}
@@ -337,6 +373,13 @@ export function Avatar({ initials, size = 30, color = "#2563eb" }: { initials: s
 
 // Drawer Side Slide Panel
 export function Drawer({ open, onClose, title, sub, width = 560, footer, children }: DrawerProps) {
+  // Esc で閉じる（背景クリックと同等の操作をキーボードでも）。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <div
@@ -374,7 +417,23 @@ export function Drawer({ open, onClose, title, sub, width = 560, footer, childre
 }
 
 // Modal Centered PopUp
-export function Modal({ open, onClose, title, width = 440, footer, children }: ModalProps) {
+export function Modal({ open, onClose, title, width = 440, footer, children, onSubmit }: ModalProps) {
+  // キーボード操作: Esc で閉じる / Enter で送信（textarea 入力中は除く）。高頻度のモーダル操作を速くする。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Enter" && onSubmit) {
+        const t = e.target as HTMLElement | null;
+        const tag = (t?.tagName || "").toLowerCase();
+        if (tag === "textarea" || tag === "button" || tag === "a" || t?.isContentEditable) return;
+        e.preventDefault();
+        onSubmit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose, onSubmit]);
   if (!open) return null;
   return (
     <div

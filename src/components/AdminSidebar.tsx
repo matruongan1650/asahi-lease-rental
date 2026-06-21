@@ -29,6 +29,8 @@ interface AdminSidebarProps {
   activeTab: AdminTab;
   setActiveTab: (tab: AdminTab) => void;
   allowedTabs?: Set<AdminTab>;
+  /** タブごとの未処理件数バッジ（延滞→collection、現場報告→field_report 等）。 */
+  badgeCounts?: Partial<Record<AdminTab, number>>;
 }
 
 type SidebarItem = {
@@ -42,6 +44,7 @@ export default function AdminSidebar({
   activeTab,
   setActiveTab,
   allowedTabs,
+  badgeCounts,
 }: AdminSidebarProps) {
   const { currentUser, logout } = useUser();
   const handleLogout = async () => {
@@ -145,9 +148,9 @@ export default function AdminSidebar({
                       {item.icon}
                     </span>
                     {item.label}
-                    {item.badge && (
+                    {((badgeCounts?.[item.id] ?? item.badge) || 0) > 0 && (
                       <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        {item.badge}
+                        {badgeCounts?.[item.id] ?? item.badge}
                       </span>
                     )}
                   </button>
