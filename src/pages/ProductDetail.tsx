@@ -171,9 +171,12 @@ function ProductDetailMobile() {
             const isVeh = isVehicleCategory(product.category);
             const minD = getMinDays(isVeh);
             const days = Math.max(1, Number(periodDays) || minD);
-            const s = new Date(); const e = new Date(); e.setDate(e.getDate() + days);
+            // 開始日〜終了日は「両端含む日数」で課金されるため、入力したN日になるよう end = start + (N-1)日。
+            const s = new Date(); const e = new Date(); e.setDate(e.getDate() + days - 1);
             const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-            const per = calculateRentalPrice(product.rentPrice as number, fmt(s), fmt(e), isVeh, isVeh, product.rentPriceLongTerm).totalPrice;
+            const calc = calculateRentalPrice(product.rentPrice as number, fmt(s), fmt(e), isVeh, isVeh, product.rentPriceLongTerm);
+            const per = calc.totalPrice;
+            const billedDays = calc.totalBilledDays || days; // 最低日数で切り上げられた実課金日数を表示に使う
             const qty = Math.max(1, Number(quantity) || 1);
             return (
               <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-100 dark:border-slate-700">
@@ -185,7 +188,7 @@ function ProductDetailMobile() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
-                  <span className="text-xs text-slate-400">目安（{days}日 × {qty}点）</span>
+                  <span className="text-xs text-slate-400">目安（{billedDays}日 × {qty}点）</span>
                   <span className="text-lg font-extrabold text-primary">¥{(per * qty).toLocaleString()}</span>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">※最低{minD}日分から。正式な料金は会計時の日付選択で確定します。</p>
