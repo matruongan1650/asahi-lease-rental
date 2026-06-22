@@ -70,8 +70,11 @@ try {
         $cu = current_user();
         if ($cu && !is_privileged_role($cu['role'])) {
             if ($name === 'orders') {
-                if (is_array($previous) && (string) ($previous['userId'] ?? '') !== '' && (string) $previous['userId'] !== $cu['uid']) {
-                    json_out(['error' => 'forbidden'], 403); // 他人の注文の上書きを拒否
+                // デフォルト拒否: 既存注文の更新は所有者本人のみ。userId が空/未設定の既存注文も
+                // 「自分のものでない」扱いで更新を拒否する（所有者未設定の注文を任意の顧客が乗っ取り・
+                // データ上書きするのを防ぐ）。新規作成($previous===null)は許可し、下で userId を本人に固定する。
+                if ($previous !== null && (string) ($previous['userId'] ?? '') !== $cu['uid']) {
+                    json_out(['error' => 'forbidden'], 403); // 他人/所有者未設定の注文の上書きを拒否
                 }
                 $incoming = (string) ($body['userId'] ?? '');
                 if ($incoming !== '' && $incoming !== $cu['uid']) {

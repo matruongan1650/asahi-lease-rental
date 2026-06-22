@@ -39,6 +39,24 @@ try {
     // 基本フィルタ（store / 未削除 / 種別 / 検索）
     $base = ['store = ?', 'deleted = 0'];
     $baseParams = [$name];
+
+    // 顧客スコープ: 有効なユーザートークンを提示した非特権(顧客)には自分の orders / 自分の users のみ返す
+    //（store.php GET と同方針）。トークン未提示(旧クライアント)は後方互換で従来どおり全件、admin/staff は全件。
+    // これが無いと共有 api_token を持つ顧客が /api/query?name=orders|users で全社の注文・ユーザーを照会できる。
+    // $base/$baseParams は total/sum/page/counts の全クエリに渡るため、ここで注入すれば全てに一貫して効く。
+    $cu = current_user();
+    if ($cu && !is_privileged_role($cu['role'])) {
+        if ($name === 'orders') {
+            $base[] = "JSON_UNQUOTE(JSON_EXTRACT(data, '$.userId')) = ?";
+            $baseParams[] = $cu['uid'];
+        } elseif ($name === 'users') {
+            $base[] = "id = ?";
+            $baseParams[] = $cu['uid'];
+        } else {
+            json_out(['error' => 'forbidden'], 403);
+        }
+    }
+
     if ($hasType === 'rent' || $hasType === 'buy') {
         $base[] = 'data LIKE ?';
         $baseParams[] = '%"type":"' . $hasType . '"%';

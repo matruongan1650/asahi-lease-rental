@@ -177,12 +177,24 @@ function mail_log_exists(PDO $pdo, string $id): bool
 
 function insert_mail_log(PDO $pdo, string $id, array $data): void
 {
-    $rev = next_rev($pdo);
-    $stmt = $pdo->prepare(
-        "INSERT INTO records (store, id, data, deleted, rev) VALUES ('mailLogs', ?, ?, 0, ?)
-         ON DUPLICATE KEY UPDATE data = VALUES(data), deleted = 0, rev = VALUES(rev)"
-    );
-    $stmt->execute([$id, json_encode(['id' => $id] + $data, JSON_UNESCAPED_UNICODE), $rev]);
+    // rev 採番→INSERT を1トランザクションで直列化（store.php POST/DELETE と同方針）。
+    // autocommit のままだと next_rev のロックが INSERT コミット前に解放され、コミット順が rev 順と
+    // ズレて sync の増分カーソルが mailLogs 行を恒久的に飛ばし得る。
+    $pdo->beginTransaction();
+    try {
+        $rev = next_rev($pdo);
+        $stmt = $pdo->prepare(
+            "INSERT INTO records (store, id, data, deleted, rev) VALUES ('mailLogs', ?, ?, 0, ?)
+             ON DUPLICATE KEY UPDATE data = VALUES(data), deleted = 0, rev = VALUES(rev)"
+        );
+        $stmt->execute([$id, json_encode(['id' => $id] + $data, JSON_UNESCAPED_UNICODE), $rev]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
 }
 
 function send_due_return_reminders(PDO $pdo): array
