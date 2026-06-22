@@ -47,8 +47,9 @@ export interface RentalPeriodDetailed {
 }
 
 export function parseDateLocal(dateStr: string): Date {
-  // Always set to 00:00:00 local time
-  return new Date(dateStr + 'T00:00:00');
+  // スラッシュ("2026/06/01")・余分な時刻部分を許容してローカル 00:00 で解釈する。
+  // （正規化しないと slash 形式で Invalid Date になり、請求 breakdown が空＝¥0 になる事故が起きる）
+  return new Date(String(dateStr).replace(/\//g, '-').slice(0, 10) + 'T00:00:00');
 }
 
 export function daysBetween(a: Date, b: Date): number {
@@ -230,10 +231,16 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
     (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
   );
   const endDate = billingEndDate(order);
-  // 期待される月の集合（レンタル開始日〜課金終了日）。保存済み breakdown がこの全期間を
-  // カバーしていない場合（例: 過去開始の長期/さかのぼり契約なのに作成月1か月分しか無い）も再計算する。
-  // これが無いと、さかのぼり登録した注文の過去月の請求書が生成されない（作成月のみ・他月が欠落）。
-  const expectedMonths = monthsInSpan(order.rentalStartDate, endDate);
+  // 確定済み(キャッシュ済み invoiceBlocks がある)注文では breakdown を作り直さない。
+  // 作り直すと、frozen なブロック合計と PDF 明細がズレ／管理者の手動単価(calculatedPrice)上書きが消える。
+  // span 全体の再計算は「未確定(invoiceBlocks 空)」の注文にのみ適用する。
+  const hasCachedBlocks = !!(order.invoiceBlocks && order.invoiceBlocks.length > 0);
+  // 日付はスラッシュ形式を含み得るのでハイフンへ正規化（calculateRentalPrice が壊れて breakdown 空＝¥0 になるのを防ぐ）。
+  const startNorm = order.rentalStartDate ? String(order.rentalStartDate).replace(/\//g, "-").slice(0, 10) : "";
+  const endNorm = endDate ? String(endDate).replace(/\//g, "-").slice(0, 10) : "";
+  // 期待される月の集合（開始〜課金終了）。未確定注文で breakdown が全期間をカバーしない（さかのぼり/長期で
+  // 作成月1か月分しか無い）場合に再計算するための判定。確定注文では使わない。
+  const expectedMonths = hasCachedBlocks ? [] : monthsInSpan(startNorm, endNorm);
   return (order.items || []).map((item: any) => {
     const mb = item?.monthlyBreakdown;
     const storedMonths: string[] = Array.isArray(mb) ? mb.map((b: any) => b?.monthStr).filter(Boolean) : [];
@@ -241,32 +248,33 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
       expectedMonths.length > 0 &&
       storedMonths.length === expectedMonths.length &&
       expectedMonths.every((m) => storedMonths.includes(m));
-    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || !spansFull;
+    // 未確定注文: breakdown が空 or 全期間を覆っていなければ再計算。確定注文: 空のときだけ補完。
+    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || (!hasCachedBlocks && !spansFull);
     if (
       item &&
       item.type === "rent" &&
       needsRecompute &&
       item.rentPrice &&
-      order.rentalStartDate &&
-      endDate
+      startNorm &&
+      endNorm
     ) {
       try {
         const { totalPrice, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(
           item.rentPrice,
-          order.rentalStartDate,
-          endDate,
+          startNorm,
+          endNorm,
           hasVehicle,
           isVehicleCategory(item.category),
           item.rentPriceLongTerm
         );
-        // 再計算した breakdown と整合するよう、金額・日数も新しい値で上書きする
-        //（古い1か月分の calculatedPrice を残すと全期間の breakdown と総額が食い違うため）。
+        // 未確定の span 再計算時は新値で上書き（古い1か月分の値を残すと breakdown と総額が食い違う）。
+        // 確定注文での空補完時は既存の手動上書き値を尊重する。
         return {
           ...item,
           monthlyBreakdown: breakdown,
-          calculatedPrice: totalPrice,
-          rentalDays: totalActualDays,
-          billedDays: totalBilledDays,
+          calculatedPrice: hasCachedBlocks ? (item.calculatedPrice ?? totalPrice) : totalPrice,
+          rentalDays: hasCachedBlocks ? (item.rentalDays ?? totalActualDays) : totalActualDays,
+          billedDays: hasCachedBlocks ? (item.billedDays ?? totalBilledDays) : totalBilledDays,
         };
       } catch {
         return item;
@@ -406,8 +414,9 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
         extraCosts,
       });
     });
-    // 弁償費が未計上ならここで注入（キャッシュ済みブロックにも反映。冪等・削除尊重）。
+    // 弁償費・配送料が未計上ならここで注入（キャッシュ済みブロックにも反映。冪等・削除尊重）。
     injectCompensationCharge(order, cached);
+    injectDeliveryCharge(order, cached);
     return cached;
   }
 
@@ -555,6 +564,7 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
   }
 
   injectCompensationCharge(order, blocks);
+  injectDeliveryCharge(order, blocks);
 
   return blocks;
 }
@@ -631,4 +641,26 @@ function injectCompensationCharge(order: any, blocks: InvoiceBlock[]): void {
     isTaxable: true,
   } as any);
   recalculateInvoiceBlock(last);
+}
+
+/**
+ * 管理者が入力した配送料(order.delivery)を先頭ブロックへ ExtraCost(id="delivery-fee") として注入する。
+ * order.subtotal/total には含まれるのに請求書・PDF へ出ていなかった（請求漏れ）ため、ブロックにも計上する。
+ * 冪等（既にあれば再追加しない）。先頭ブロックのみに付け、複数月で二重計上しない。
+ */
+function injectDeliveryCharge(order: any, blocks: InvoiceBlock[]): void {
+  const delivery = Math.round(Number(order?.delivery) || 0);
+  if (!(delivery > 0) || !blocks.length) return;
+  const already = blocks.some((b) => (b.extraCosts || []).some((e: any) => e.id === "delivery-fee"));
+  if (already) return;
+  const first = blocks[0];
+  first.extraCosts = first.extraCosts || [];
+  first.extraCosts.push({
+    id: "delivery-fee",
+    itemName: "配送料",
+    note: "配送料",
+    amount: delivery,
+    isTaxable: true,
+  } as any);
+  recalculateInvoiceBlock(first);
 }

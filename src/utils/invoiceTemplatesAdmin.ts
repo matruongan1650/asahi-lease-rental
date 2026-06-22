@@ -683,22 +683,30 @@ export function renderBreakdownSummary(groups: CompanyGroup[], overallPageCount:
 // ============================================================
 
 export function buildOrderInvoice(order: any, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
+  // 全体合計(monthPeriod 無し)の請求書は、生成済みブロック合計を使う。getPrintItems は
+  // ブロックの extraCosts(弁償費・燃料費・配送料)を明細行に出すため、合計も order.subtotal/total
+  // ではなくブロック合計に揃えないと「明細合計≠総額」になる（過少請求/不整合）。
+  const allBlocks = !monthPeriod ? getOrGenerateInvoiceBlocks(order) : null;
   const block = monthPeriod
     ? getOrGenerateInvoiceBlocks(order).find((b: any) => b.monthPeriod === monthPeriod)
     : null;
+  const sumBlk = (k: "subtotal" | "tax" | "total" | "guaranteeFee") =>
+    (allBlocks || []).reduce((s: number, b: any) => s + Number(b[k] || 0), 0);
 
   const guaranteeFee = block
     ? Number(block.guaranteeFee || 0)
-    : (order.items || [])
-        .filter((i: any) => i?.type === "rent")
-        .reduce((s: number, i: any) => s + Number(i.guaranteeFeeFlat || 0), 0);
+    : (allBlocks && allBlocks.length
+        ? sumBlk("guaranteeFee")
+        : (order.items || [])
+            .filter((i: any) => i?.type === "rent")
+            .reduce((s: number, i: any) => s + Number(i.guaranteeFeeFlat || 0), 0));
 
   const renter: RenterGroup = {
     personName: order.personName?.trim() || order.employeeName?.trim() || order.customerName?.trim() || "(担当者未設定)",
     orders: [order],
-    subtotal: block ? block.subtotal || 0 : order.subtotal || 0,
-    tax: block ? block.tax || 0 : order.tax || 0,
-    total: block ? block.total || 0 : order.total || 0,
+    subtotal: block ? block.subtotal || 0 : (allBlocks && allBlocks.length ? sumBlk("subtotal") : order.subtotal || 0),
+    tax: block ? block.tax || 0 : (allBlocks && allBlocks.length ? sumBlk("tax") : order.tax || 0),
+    total: block ? block.total || 0 : (allBlocks && allBlocks.length ? sumBlk("total") : order.total || 0),
     guaranteeFee,
   };
 

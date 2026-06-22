@@ -21,10 +21,12 @@ function ReturnItemsMobile() {
   // 所有者を証明できない注文（userId 未設定）も拒否（deny-by-default）。
   const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
   const foundOrder = orders.find(o => o.id === orderId);
+  // deny-by-default: 特権、または「ログイン中 かつ 注文に userId があり 一致」のときだけ許可。
+  // 未ログイン(undefined)や userId 未設定の注文で undefined===undefined となり素通りするのを防ぐ（OrderDetail と統一）。
   const order =
-    foundOrder && !isPrivileged && foundOrder.userId !== currentUser?.id
-      ? undefined
-      : foundOrder;
+    foundOrder && (isPrivileged || (!!currentUser?.id && !!foundOrder.userId && foundOrder.userId === currentUser.id))
+      ? foundOrder
+      : undefined;
 
   useEffect(() => {
     if (order) {

@@ -475,7 +475,7 @@ export default function AdminWarehouse() {
     setSelectedVehicle((prev) => prev ? { ...prev, ...updates } : prev);
     if (status === "整備中") {
       OrderBus.push("maintenance", {
-        id: "MN-" + Math.floor(550 + Math.random() * 4000),
+        id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
         name: selectedVehicle.name,
         cat: selectedVehicle.category,
         cycle: "臨時",
@@ -1025,7 +1025,7 @@ export default function AdminWarehouse() {
         onUpdateStatus={(id, status, staffStatus) => {
           // 「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
           OrderBus.patch("orders", id, { status, staffStatus, ...flags });
           setSelectedOrder((prev: any) => prev ? { ...prev, status, staffStatus, ...flags } : prev);
           triggerToast("注文ステータスを更新しました", "ok");

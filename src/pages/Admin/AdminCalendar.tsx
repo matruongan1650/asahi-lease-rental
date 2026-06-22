@@ -536,7 +536,7 @@ export default function AdminCalendar() {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           // （他画面 AdminRental/AdminWarehouse と同じく在庫台帳を必ず通す）
           const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
           patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}

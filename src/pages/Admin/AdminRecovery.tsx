@@ -253,7 +253,9 @@ export default function AdminRecovery() {
         order={selectedOrder}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={(id, status, staffStatus) => {
-          const flags = settleReturnStock(selectedOrder, status);
+          // 在庫戻しは描画時スナップショットではなく最新の注文(raw)で計算する（数量/itemIssues の取りこぼし防止）。
+          const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || selectedOrder;
+          const flags = settleReturnStock(raw, status);
           patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}

@@ -96,10 +96,18 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
   const allBlocks = getOrGenerateInvoiceBlocks(order);
   const block = blockId ? allBlocks.find((b: any) => b.id === blockId) : null;
 
-  // Totals to display
-  const subtotal = block ? block.subtotal : order.subtotal;
-  const tax = block ? block.tax : order.tax;
-  const total = block ? block.total : order.total;
+  // Totals to display.
+  // 全体合計(block 無し)の請求書は、order.subtotal/total（弁償費・燃料費・配送料が反映されない
+  // 古い値になり得る）ではなく、生成済みブロック allBlocks の合計を使う。これで印字明細(下で
+  // allBlocks の extraCosts を行追加)と総額が一致する。
+  const blocksTotal = (allBlocks || []).reduce(
+    (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+    { subtotal: 0, tax: 0, total: 0 },
+  );
+  const useBlockSum = !block && type === "請求書" && allBlocks.length > 0;
+  const subtotal = block ? block.subtotal : (useBlockSum ? blocksTotal.subtotal : order.subtotal);
+  const tax = block ? block.tax : (useBlockSum ? blocksTotal.tax : order.tax);
+  const total = block ? block.total : (useBlockSum ? blocksTotal.total : order.total);
 
   // Issue date
   const issueDate = type === "請求書"
@@ -143,12 +151,14 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
         calculatedPrice: perUnit * qty,
       };
     });
-    if (type === "請求書" && order.invoiceBlocks) {
-      order.invoiceBlocks.forEach((b: any) => {
+    if (type === "請求書") {
+      // 生成済みブロック(allBlocks)の追加費用を行に出す。order.invoiceBlocks（弁償費を剥がした
+      // 保存値など）ではなく canonical な allBlocks を使い、上の合計(blocksTotal)と一致させる。
+      allBlocks.forEach((b: any) => {
         if (b.extraCosts) {
           b.extraCosts.forEach((cost: any) => {
             itemsToRender.push({
-              name: cost.itemName,
+              name: cost.itemName || cost.note || "追加費用",
               isExtraCost: true,
               quantity: 1,
               price: cost.amount,

@@ -265,11 +265,15 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
     const total = activeRentQty + maintCount + repairCount + availableStock;
     const inUsePct = total > 0 ? Math.round((activeRentQty / total) * 100) : 0;
     const maintPct = total > 0 ? Math.round((maintCount / total) * 100) : 0;
-    const repairPct = total > 0 ? Math.max(0, 100 - inUsePct - maintPct) : 0;
+    // 修理待ちは repairCount から直接算出する（以前は残差で算出していたため空き在庫を吸収して過大表示だった）。
+    const repairPct = total > 0 ? Math.round((repairCount / total) * 100) : 0;
+    // 空き在庫は独立スライスとして表示し、全セグメントが正しく合算するようにする。
+    const availPct = total > 0 ? Math.max(0, 100 - inUsePct - maintPct - repairPct) : 0;
     return [
       { name: "稼働中", value: inUsePct, color: "#2BA8A2" },
       { name: "点検中", value: maintPct, color: "#FFD23F" },
       { name: "修理待ち", value: repairPct, color: "#EF6C4A" },
+      { name: "空き在庫", value: availPct, color: "#CBD5E1" },
     ];
   }, [orders, products, vehicles, maintenance, repairs, fieldReports]);
   const donutTotalPct = donutData.reduce((sum, item) => sum + item.value, 0);
@@ -374,8 +378,10 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       });
     }
 
-    // Vehicle maintenance
-    const vehicleAlerts = vehicles.filter((v) => v.inspectionDaysRemaining <= 30);
+    // Vehicle maintenance（保存済み残日数ではなく inspectionDate から毎回再計算。time経過で
+    // 車検切れになった車両も拾えるよう、他のアラートと同じ深夜0時(t0)基準で算出する）。
+    const liveInspDays = (d?: string) => d ? Math.round((new Date(String(d).replace(/\//g, "-") + "T00:00:00").getTime() - t0) / 86400000) : 999;
+    const vehicleAlerts = vehicles.filter((v) => liveInspDays(v.inspectionDate) <= 30);
     if (vehicleAlerts.length > 0) {
       list.push({
         icon: <Truck size={18} />,
@@ -1311,7 +1317,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
         onUpdateStatus={(id, status, staffStatus) => {
           // 受注確定(確認済み)で出庫、返却系クローズで入庫（AdminRental と同じ在庫台帳処理）。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("注文ステータスを更新しました", "ok");
         }}

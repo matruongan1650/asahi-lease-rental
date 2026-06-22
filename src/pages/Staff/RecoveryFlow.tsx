@@ -152,7 +152,7 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
       step,
       absentMode,
       absentNote,
-      prods: prods.map(p => ({ id: p.id, scanned: !!p.scanned, counted: p.counted, report: p.report || [], manualConfirm: !!p.manualConfirm })),
+      prods: prods.map(p => ({ id: p.id, scanned: !!p.scanned, counted: p.counted, report: (p.report || []).map((e: any) => ({ ...e, photos: undefined })), manualConfirm: !!p.manualConfirm })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, absentMode, absentNote, prods]);
@@ -342,7 +342,7 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
                     <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 1 }}>{p.qr} ・ 予定 {p.expected}</div>
                   </div>
                   {p.scanned
-                    ? <QtyStepper value={p.counted} max={p.expected + 20} onChange={v => setProds(ps => ps.map(x => x.id === p.id ? { ...x, counted: v } : x))} />
+                    ? <QtyStepper value={p.counted} max={p.expected + 20} shortBelow={p.expected} onChange={v => setProds(ps => ps.map(x => x.id === p.id ? { ...x, counted: v } : x))} />
                     : <button onClick={() => markManual(p)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 4, background: "var(--surface-3)", border: "1px solid var(--border-2)", borderRadius: 9, color: "var(--brand-accent)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "var(--font-jp)", padding: "7px 9px", whiteSpace: "nowrap" }}><Icon name="edit" size={13} />手動で確認</button>}
                 </div>
                 {p.scanned && (
@@ -391,7 +391,7 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
         {!absentMode && <SignaturePad onChange={setSigned} />}
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--border)" }}>
           {!absentMode ? (
-            <Btn full variant="ghost" size="sm" onClick={() => setAbsentMode(true)}>受領者が不在の場合</Btn>
+            <Btn full variant="ghost" size="sm" onClick={() => { setAbsentMode(true); setSigned(null); }}>受領者が不在の場合</Btn>
           ) : (
             <Card pad={14} style={{ border: "1.5px solid var(--warning-bright)", background: "var(--warning-tint)" }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--fg)", marginBottom: 8, display: "flex", alignItems: "center", gap: 7 }}>

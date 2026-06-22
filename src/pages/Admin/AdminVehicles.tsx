@@ -221,9 +221,16 @@ export default function AdminVehicles() {
   const addCategoryOptions = Array.from(new Set([...VEHICLE_CATEGORY_PRESETS, ...vehicleCategories]));
   const editCategoryOptions = Array.from(new Set([...(editForm.category ? [editForm.category] : []), ...vehicleCategories, ...VEHICLE_CATEGORY_PRESETS]));
 
+  // 車検残日数は登録/編集時にしか保存されないため、表示・集計の直前に inspectionDate から毎回再計算する。
+  // これが無いと時間経過で車検切れになった車両が KPI/アラート/フィルタに反映されない（AdminMaintenance と同方針）。
+  const vehiclesLive = useMemo(
+    () => vehicles.map((v: any) => ({ ...v, inspectionDaysRemaining: daysUntil(v.inspectionDate) })),
+    [vehicles],
+  );
+
   const filteredVehicles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return vehicles.filter((v) => {
+    return vehiclesLive.filter((v) => {
       const matchSearch =
         !q ||
         [v.id, v.name, v.plate, v.category, v.manufacturer, v.vin].some((value) =>
@@ -236,24 +243,24 @@ export default function AdminVehicles() {
       const matchCategory = categoryFilter === "all" || v.category === categoryFilter;
       return matchSearch && matchStatus && matchCategory;
     });
-  }, [vehicles, search, statusFilter, categoryFilter]);
+  }, [vehiclesLive, search, statusFilter, categoryFilter]);
 
   const inspectionSchedule = useMemo(() => {
-    return [...vehicles]
+    return [...vehiclesLive]
       .sort((a, b) => Number(a.inspectionDaysRemaining || 999) - Number(b.inspectionDaysRemaining || 999))
       .slice(0, 8);
-  }, [vehicles]);
+  }, [vehiclesLive]);
 
   const stats = useMemo(() => {
     return {
-      total: vehicles.length,
-      inUse: vehicles.filter((v) => v.status === "使用中").length,
-      idle: vehicles.filter((v) => v.status === "空車").length,
-      maintenance: vehicles.filter((v) => v.status === "整備中").length,
-      inspectionSoon: vehicles.filter((v) => Number(v.inspectionDaysRemaining ?? 999) <= 30 && Number(v.inspectionDaysRemaining ?? 999) >= 0).length,
-      inspectionOverdue: vehicles.filter((v) => Number(v.inspectionDaysRemaining ?? 999) < 0).length
+      total: vehiclesLive.length,
+      inUse: vehiclesLive.filter((v) => v.status === "使用中").length,
+      idle: vehiclesLive.filter((v) => v.status === "空車").length,
+      maintenance: vehiclesLive.filter((v) => v.status === "整備中").length,
+      inspectionSoon: vehiclesLive.filter((v) => Number(v.inspectionDaysRemaining ?? 999) <= 30 && Number(v.inspectionDaysRemaining ?? 999) >= 0).length,
+      inspectionOverdue: vehiclesLive.filter((v) => Number(v.inspectionDaysRemaining ?? 999) < 0).length
     };
-  }, [vehicles]);
+  }, [vehiclesLive]);
 
   const handleSaveItem = (e: React.FormEvent) => {
     e.preventDefault();
@@ -341,7 +348,7 @@ export default function AdminVehicles() {
     updateVehicle(selectedVehicle.id, updates);
     if (status === "整備中") {
       OrderBus.push("maintenance", {
-        id: "MN-" + Math.floor(550 + Math.random() * 4000),
+        id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
         name: selectedVehicle.name,
         cat: selectedVehicle.category,
         cycle: "臨時",
@@ -369,17 +376,17 @@ export default function AdminVehicles() {
 
     if (vehicleAction.kind === "maintenance") {
       const entry = { date: dateSlash, item: actionTitle || "定期点検", mileage };
+      // 点検記録は作業履歴の追加のみ。現在の運用ステータス（使用中＝現場へ出払い 等）は変更しない。
+      // 以前は無条件で「空車」に戻し、現場にある車両が待機・割当可能と誤表示されていた。
       const updates: Partial<VehicleDetail> = {
         mileage,
         maintenanceDesc: entry.item,
         maintenanceDate: dateSlash,
         maintenanceHistory: [entry, ...(vehicle.maintenanceHistory || [])],
-        status: "空車",
-        statusColor: "blue"
       };
       updateVehicle(vehicle.id, updates);
       OrderBus.push("maintenance", {
-        id: "MN-" + Math.floor(550 + Math.random() * 4000),
+        id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
         name: vehicle.name,
         cat: vehicle.category,
         cycle: "記録",
