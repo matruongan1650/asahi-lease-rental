@@ -210,7 +210,9 @@ function send_due_return_reminders(PDO $pdo): array
         $order = json_decode($r['data'], true);
         if (!is_array($order)) continue;
         $status = (string) ($order['status'] ?? '');
-        if (in_array($status, ['返却済', '返却済み', '完了', 'キャンセル'], true)) continue;
+        // 実際に配送・稼働中の注文のみ催促対象にする（ホワイトリスト）。未配送(処理中/確認済み/準備中/配送中)や
+        // 返却進行中(回収中/検品待ち)へ「返却手続きを」と誤送信しない。
+        if (!in_array($status, ['レンタル中', '配送済み', '一部返却'], true)) continue;
         $hasRent = false;
         foreach (($order['items'] ?? []) as $item) {
             if (($item['type'] ?? '') === 'rent') {
@@ -249,8 +251,9 @@ function send_due_return_reminders(PDO $pdo): array
         $body .= "https://shuyei.online/return\n\n";
         $body .= "アサヒリース株式会社";
 
+        // claim-then-send: 先に重複防止ログを書いてから送信する。送信に失敗したら claim を取り消し、
+        // 次回クロンで再試行可能にする。これで「送信成功後にログ書込が失敗→同日二重送信」を防ぐ。
         try {
-            send_smtp_mail($email, $subject, $body);
             insert_mail_log($pdo, $logId, [
                 'type' => 'due_return',
                 'orderId' => (string) ($order['id'] ?? ''),
@@ -258,8 +261,16 @@ function send_due_return_reminders(PDO $pdo): array
                 'to' => $email,
                 'sentAt' => date('c'),
             ]);
+        } catch (Throwable $e) {
+            $errors[] = ['order' => $orderNo, 'error' => 'log claim failed'];
+            continue;
+        }
+        try {
+            send_smtp_mail($email, $subject, $body);
             $sent++;
         } catch (Throwable $e) {
+            // 送信失敗 → claim を取り消して次回再試行可能にする（mail_log_exists は deleted=0 のみ見る）。
+            try { $pdo->prepare("UPDATE records SET deleted = 1 WHERE store = 'mailLogs' AND id = ?")->execute([$logId]); } catch (Throwable $e2) { /* ignore cleanup failure */ }
             $errors[] = ['order' => $orderNo, 'error' => $e->getMessage()];
         }
     }

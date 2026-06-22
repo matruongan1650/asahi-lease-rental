@@ -1,6 +1,10 @@
 <?php
 declare(strict_types=1);
 
+// 日付計算(返却催促の当日判定・date('c') 等)を JST に統一する。
+// 共有ホストの既定が UTC だと深夜帯に「今日」が1日ズレ、催促日や重複防止キーが狂う。
+date_default_timezone_set('Asia/Tokyo');
+
 /**
  * db.php — XServer (PHP + MySQL/MariaDB) 用の共通ライブラリ。
  * フロントエンド(OrderBus)は /api/store と /api/sync を叩く。.htaccess で .php へルーティング。

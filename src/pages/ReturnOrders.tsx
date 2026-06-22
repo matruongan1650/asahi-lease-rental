@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { useIsDesktop } from "../hooks/useIsDesktop";
+import { isReturnEligible } from "../utils/orderStatus";
 import ReturnOrdersDesktop from "./desktop/ReturnOrdersDesktop";
 
 export default function ReturnOrders() {
@@ -17,6 +18,7 @@ function ReturnOrdersMobile() {
   // （注文履歴と同様、同じ会社でもアカウントごとに分離する）。
   const returnableOrders = orders.filter(order =>
     currentUser && order.userId === currentUser.id &&
+    isReturnEligible(order.status) &&
     order.items.some(item => item.type === 'rent' && (item.returnedQuantity || 0) < item.quantity)
   );
 

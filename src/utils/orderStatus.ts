@@ -18,3 +18,11 @@ export function isFullyReturned(status?: string | null): boolean {
 export function isClosedOrder(status?: string | null): boolean {
   return CLOSED_STATUSES.includes(String(status ?? "") as (typeof CLOSED_STATUSES)[number]);
 }
+
+// 返却手続きを開始できる（実際に納品済みで、まだ返却/回収が進行中でない）状態。
+// 未配送(処理中/確認済み/準備中/配送中)・返却進行中(検品待ち/回収中/回収予定)・クローズ(キャンセル/返却済/完了)は不可。
+const RETURN_ELIGIBLE_STATUSES = ["レンタル中", "配送済み", "一部返却", "遅延", "延滞"];
+/** 顧客が返却手続きを開始できる注文か（ステータスで判定）。 */
+export function isReturnEligible(status?: string | null): boolean {
+  return RETURN_ELIGIBLE_STATUSES.includes(String(status ?? ""));
+}

@@ -60,7 +60,9 @@ try {
         $id = (string) $body['id'];
         $previous = null;
         if ($name === 'orders' || $name === 'returnInspections') {
-            $prevStmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND id = ? AND deleted = 0");
+            // deleted=0 で絞らない: ソフト削除済みの行も「存在し所有者がいる」とみなして所有権判定する。
+            // （絞ると削除済み注文が見えず、他人の削除済み注文IDを顧客が復活・上書きできてしまう）。
+            $prevStmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND id = ?");
             $prevStmt->execute([$name, $id]);
             $prevRaw = $prevStmt->fetchColumn();
             if (is_string($prevRaw) && $prevRaw !== '') {
@@ -95,8 +97,23 @@ try {
                 if (is_privileged_role((string) ($body['role'] ?? 'customer'))) {
                     json_out(['error' => 'forbidden'], 403); // 権限昇格(role=admin/staff)を拒否
                 }
+            } elseif ($name === 'walkinReturns') {
+                // 顧客は「自分の注文に紐づく」持込返却(walkinReturns)チケットのみ作成/更新できる。
+                // 直接持ち込み返却フローがこのストアへ書くため、許可しないと返却が 403 で失われる。
+                $oid = (string) ($body['orderId'] ?? '');
+                $ownsOrder = false;
+                if ($oid !== '') {
+                    $os = $pdo->prepare("SELECT data FROM records WHERE store = 'orders' AND id = ?");
+                    $os->execute([$oid]);
+                    $oraw = $os->fetchColumn();
+                    $odec = is_string($oraw) ? json_decode($oraw, true) : null;
+                    $ownsOrder = is_array($odec) && (string) ($odec['userId'] ?? '') === $cu['uid'];
+                }
+                if (!$ownsOrder) {
+                    json_out(['error' => 'forbidden'], 403);
+                }
             } else {
-                // 非特権顧客が書き込めるのは自分の orders / users のみ。
+                // 非特権顧客が書き込めるのは自分の orders / users / 自注文の walkinReturns のみ。
                 // products・stockLedger 等のマスターデータへの書き込みは拒否
                 //（共有トークンを悪用した在庫・商品改ざんを防ぐ。デフォルト拒否）。
                 json_out(['error' => 'forbidden'], 403);
@@ -161,6 +178,24 @@ try {
                 $rawChk = $chk->fetchColumn();
                 $recChk = is_string($rawChk) ? json_decode($rawChk, true) : null;
                 $own = is_array($recChk) && (string) ($recChk['userId'] ?? '') === $cu['uid'];
+            } elseif ($name === 'walkinReturns') {
+                // 顧客は自分の注文に紐づく walkinReturns のみ削除可。レコードが存在しなければ no-op として許可。
+                $wchk = $pdo->prepare("SELECT data FROM records WHERE store = 'walkinReturns' AND id = ?");
+                $wchk->execute([$id]);
+                $wraw = $wchk->fetchColumn();
+                if (!is_string($wraw) || $wraw === '') {
+                    $own = true; // 既に無いものの削除は無害
+                } else {
+                    $wdec = json_decode($wraw, true);
+                    $oid = is_array($wdec) ? (string) ($wdec['orderId'] ?? '') : '';
+                    if ($oid !== '') {
+                        $os = $pdo->prepare("SELECT data FROM records WHERE store = 'orders' AND id = ?");
+                        $os->execute([$oid]);
+                        $oraw = $os->fetchColumn();
+                        $odec = is_string($oraw) ? json_decode($oraw, true) : null;
+                        $own = is_array($odec) && (string) ($odec['userId'] ?? '') === $cu['uid'];
+                    }
+                }
             }
             if (!$own) {
                 json_out(['error' => 'forbidden'], 403);

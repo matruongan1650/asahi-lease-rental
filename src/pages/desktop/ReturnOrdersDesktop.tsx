@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useOrders } from "../../context/OrderContext";
 import { useUser } from "../../context/UserContext";
+import { isReturnEligible } from "../../utils/orderStatus";
 
 /** PC 用 返却する注文の選択（お客様デスクトップサイト）。モバイル ReturnOrders と同じ抽出ロジックを再利用。 */
 export default function ReturnOrdersDesktop() {
@@ -12,6 +13,7 @@ export default function ReturnOrdersDesktop() {
   // （注文履歴と同様、同じ会社でもアカウントごとに分離する）。
   const returnableOrders = orders.filter(order =>
     currentUser && order.userId === currentUser.id &&
+    isReturnEligible(order.status) &&
     order.items.some(item => item.type === 'rent' && (item.returnedQuantity || 0) < item.quantity)
   );
 
