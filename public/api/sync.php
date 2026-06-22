@@ -19,6 +19,10 @@ try {
     // トークン未提示(旧クライアント/移行中)は後方互換で全件配信（強制は別フェーズ）。
     $cu = current_user();
     $scopeCustomer = $cu && !is_privileged_role($cu['role']);
+    // fail-closed 強制(config: enforce_user_token=true)時、トークン未提示/不正には機密ストア
+    // (orders/users/staffMessages)の内容を配信しない。カーソル(rev)は前進するので他ストアの同期は継続。
+    // 既定(false)では従来どおり後方互換 fail-open（この変数は常に false で挙動不変）。
+    $denyTokenless = enforce_user_token_enabled() && $cu === null;
 
     $changes = [];
     $maxReturnedRev = $since;
@@ -34,20 +38,25 @@ try {
         $data = $deleted ? null : json_decode($row['data'], true);
         // 社内連絡(staffMessages)は顧客端末へ配信しない（管理者→スタッフの内部メッセージ。情報漏洩防止）。
         // カーソルは上で前進済みなので skip しても取りこぼしは起きない。
-        if ($scopeCustomer && $store === 'staffMessages') {
+        if (($scopeCustomer || $denyTokenless) && $store === 'staffMessages') {
             continue;
         }
-        if ($scopeCustomer && !$deleted && ($store === 'orders' || $store === 'users')) {
-            $ownerOk = false;
-            if (is_array($data)) {
-                if ($store === 'orders') {
-                    $ownerOk = ((string) ($data['userId'] ?? '') === $cu['uid']);
-                } elseif ($store === 'users') {
-                    $ownerOk = ((string) ($data['id'] ?? '') === $cu['uid']);
-                }
+        if (!$deleted && ($store === 'orders' || $store === 'users')) {
+            if ($denyTokenless) {
+                continue; // fail-closed: 未認証には機密ストア内容を配信しない（カーソルは上で前進済み）
             }
-            if (!$ownerOk) {
-                continue; // 本人以外のレコードは配信しない（カーソルは上で前進済み）
+            if ($scopeCustomer) {
+                $ownerOk = false;
+                if (is_array($data)) {
+                    if ($store === 'orders') {
+                        $ownerOk = ((string) ($data['userId'] ?? '') === $cu['uid']);
+                    } elseif ($store === 'users') {
+                        $ownerOk = ((string) ($data['id'] ?? '') === $cu['uid']);
+                    }
+                }
+                if (!$ownerOk) {
+                    continue; // 本人以外のレコードは配信しない（カーソルは上で前進済み）
+                }
             }
         }
         $changes[] = [

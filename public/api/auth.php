@@ -52,11 +52,42 @@ if (count($matches) !== 1) {
 
 $user = $matches[0];
 $stored = (string) ($user['password'] ?? '');
-if ($stored === '' || !hash_equals($stored, $password)) {
+if ($stored === '') {
+    json_out(['error' => 'invalid credentials'], 401);
+}
+// パスワード照合: bcrypt/argon2 ハッシュは password_verify、未移行の平文は hash_equals。
+// これにより平文・ハッシュが混在する移行期間でも一貫して認証できる（後方互換）。
+$isHashed = isset($stored[0]) && $stored[0] === '$' && (bool) preg_match('/^\$(2y|2a|2b|argon2(id|i)?)\$/', $stored);
+$ok = $isHashed ? password_verify($password, $stored) : hash_equals($stored, $password);
+if (!$ok) {
     json_out(['error' => 'invalid credentials'], 401);
 }
 if ((string) ($user['status'] ?? 'active') === 'inactive') {
     json_out(['error' => 'account inactive'], 403);
+}
+// 遅延移行(config hash_passwords=true のときのみ): 平文で認証成功したユーザーを bcrypt へ再ハッシュして保存。
+// 一斉リセット不要・ロックアウトを起こさない段階移行。rev 採番→更新は store.php と同じくトランザクションで直列化。
+// ★クライアントが平文比較を撤廃(サーバー認証へ移行)した後に有効化すること。
+if (!$isHashed && hash_passwords_enabled()) {
+    $uidRow = (string) ($user['id'] ?? '');
+    if ($uidRow !== '') {
+        try {
+            $user['password'] = password_hash($password, PASSWORD_BCRYPT);
+            $pdo->beginTransaction();
+            $rev = next_rev($pdo);
+            $up = $pdo->prepare(
+                "INSERT INTO records (store, id, data, deleted, rev) VALUES ('users', ?, ?, 0, ?)
+                 ON DUPLICATE KEY UPDATE data = VALUES(data), deleted = 0, rev = VALUES(rev)"
+            );
+            $up->execute([$uidRow, json_encode($user, JSON_UNESCAPED_UNICODE), $rev]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('[auth rehash] ' . $e->getMessage()); // 再ハッシュ失敗はログインを妨げない（次回再試行）
+        }
+    }
 }
 
 $secret = auth_secret(); // サーバー専用 auth_secret（未設定時のみ api_token にフォールバック）

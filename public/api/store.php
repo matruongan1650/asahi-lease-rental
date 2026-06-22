@@ -14,6 +14,13 @@ if (!valid_store($name)) {
 try {
     $pdo = db();
 
+    // fail-closed 強制(config: enforce_user_token=true)時、機密ストア(orders/users)は
+    // 有効なユーザートークン必須。未提示/不正(current_user()===null)は GET/POST/DELETE 共通で拒否。
+    // 既定(false)では従来どおり後方互換 fail-open。
+    if (enforce_user_token_enabled() && is_sensitive_store($name) && current_user() === null) {
+        json_out(['error' => 'unauthorized'], 401);
+    }
+
     if ($method === 'GET') {
         $stmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND deleted = 0 ORDER BY rev DESC");
         $stmt->execute([$name]);

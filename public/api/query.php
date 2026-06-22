@@ -45,6 +45,10 @@ try {
     // これが無いと共有 api_token を持つ顧客が /api/query?name=orders|users で全社の注文・ユーザーを照会できる。
     // $base/$baseParams は total/sum/page/counts の全クエリに渡るため、ここで注入すれば全てに一貫して効く。
     $cu = current_user();
+    // fail-closed 強制時、機密ストアは有効なユーザートークン必須（未提示/不正は拒否）。既定は fail-open。
+    if (enforce_user_token_enabled() && is_sensitive_store($name) && $cu === null) {
+        json_out(['error' => 'unauthorized'], 401);
+    }
     if ($cu && !is_privileged_role($cu['role'])) {
         if ($name === 'orders') {
             $base[] = "JSON_UNQUOTE(JSON_EXTRACT(data, '$.userId')) = ?";

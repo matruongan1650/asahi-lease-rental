@@ -119,6 +119,33 @@ function is_privileged_role(?string $role): bool
     return $role === 'admin' || $role === 'staff';
 }
 
+/**
+ * ユーザートークンの強制(fail-closed)が config で有効か。既定 false（後方互換 fail-open）。
+ * true にすると、機密ストアはトークン未提示/不正のリクエストを拒否する。
+ * ★全クライアント(web リロード済み + 新 APK)が X-User-Token を送る状態にしてから有効化すること。
+ *   先に有効化すると未更新クライアントが壊れる。auth_secret ローテーション後は全員の再ログインが前提。
+ */
+function enforce_user_token_enabled(): bool
+{
+    return (bool) (get_config()['enforce_user_token'] ?? false);
+}
+
+/** 機密ストア（顧客 PII/財務）。fail-closed 強制時は有効なユーザートークンを要求する。 */
+function is_sensitive_store(?string $name): bool
+{
+    return $name === 'orders' || $name === 'users';
+}
+
+/**
+ * パスワードの遅延ハッシュ化(平文→bcrypt)が config で有効か。既定 false。
+ * ★クライアント側の平文比較を撤廃し、サーバー認証(auth.php)へ移行してから有効化すること。
+ *   先に有効化すると、ハッシュ化済みレコードに対しクライアントの平文比較が失敗しログイン不能になる。
+ */
+function hash_passwords_enabled(): bool
+{
+    return (bool) (get_config()['hash_passwords'] ?? false);
+}
+
 function db(): PDO
 {
     static $pdo = null;
