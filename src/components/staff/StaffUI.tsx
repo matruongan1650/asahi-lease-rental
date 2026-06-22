@@ -810,16 +810,18 @@ function stepBtnStyle(dis: boolean, kind: "minus" | "plus", size: number): React
   };
 }
 
-export function QtyStepper({ value, max, onChange }: { value: number; max: number; onChange: (v: number) => void }) {
+export function QtyStepper({ value, max, onChange, shortBelow }: { value: number; max: number; onChange: (v: number) => void; shortBelow?: number }) {
   const btn = (dir: number, ic: "minus" | "plus", dis: boolean) => (
     <button disabled={dis} onClick={() => onChange(Math.max(0, value + dir))} style={stepBtnStyle(dis, ic, 40)}>
       <Icon name={ic} size={18} stroke={2.6} />
     </button>
   );
+  // 不足のときだけ赤。max は入力上限であって不足閾値ではない（以前は value<max で常に赤になっていた）。
+  const isShort = shortBelow !== undefined && value < shortBelow;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       {btn(-1, "minus", value <= 0)}
-      <span style={{ minWidth: 30, textAlign: "center", fontSize: 17, fontWeight: 800, fontFamily: "var(--font-mono)", color: value < max ? "var(--danger-bright)" : "var(--fg)" }}>{value}</span>
+      <span style={{ minWidth: 30, textAlign: "center", fontSize: 17, fontWeight: 800, fontFamily: "var(--font-mono)", color: isShort ? "var(--danger-bright)" : "var(--fg)" }}>{value}</span>
       {btn(1, "plus", value >= max)}
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import Icon from "../../components/staff/Icon";
 import { confirmDialog } from "../../components/AppDialog";
+import { isVehicleCategory } from "../../utils/productUtils";
 import { loadDraft, saveDraft, clearDraft } from "./flowDraft";
 import {
   TopBar,
@@ -99,8 +100,10 @@ export default function DeliveryFlow({ o, onComplete, onExit, staffName }: Deliv
   // 保安車両の貸出記録（走行距離・状態）。注文に車両品目がある場合のみ入力。
   const [vehKm, setVehKm] = useState<string>(() => draft.vehKm || "");
   const [vehCondition, setVehCondition] = useState<string>(() => draft.vehCondition || "");
+  // 保安車両の判定は正規の whitelist を使う。部分一致("車両"等)だと保安用品「車両衝突緩衝材」が
+  // 誤って車両扱いになり、配送完了がブロック/燃料費が誤計上される。
   const hasVehicleItems = ((o.rawOrder?.items || o.items || []) as any[]).some((i: any) =>
-    ["軽トラック", "軽バン", "2tノーマル", "2tロング", "2t Wキャブノーマル", "車両"].some(c => ((i.category || i.name || "") + "").includes(c))
+    isVehicleCategory(i.category)
   );
   const buildExtra = () => {
     const extra: any = {};
@@ -145,7 +148,7 @@ export default function DeliveryFlow({ o, onComplete, onExit, staffName }: Deliv
       vehCondition,
       dlvReports: dlvItems
         .filter((it) => it.report && it.report.length > 0)
-        .map((it) => ({ id: it.id, report: it.report })),
+        .map((it) => ({ id: it.id, report: (it.report || []).map((e: any) => ({ ...e, photos: undefined })) })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, absentMode, absentNote, vehKm, vehCondition, dlvItems]);
@@ -343,7 +346,7 @@ export default function DeliveryFlow({ o, onComplete, onExit, staffName }: Deliv
         {!absentMode && <SignaturePad onChange={setSigned} />}
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--border)" }}>
           {!absentMode ? (
-            <Btn full variant="ghost" size="sm" onClick={() => setAbsentMode(true)}>受領者が不在の場合</Btn>
+            <Btn full variant="ghost" size="sm" onClick={() => { setAbsentMode(true); setSigned(null); }}>受領者が不在の場合</Btn>
           ) : (
             <Card pad={14} style={{ border: "1.5px solid var(--warning-bright)", background: "var(--warning-tint)" }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--fg)", marginBottom: 8, display: "flex", alignItems: "center", gap: 7 }}>

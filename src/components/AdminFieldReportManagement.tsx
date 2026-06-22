@@ -4,6 +4,7 @@ import { useUser } from "../context/UserContext";
 import { CartItem } from "../context/CartContext";
 import { useAdminCollection } from "../context/AdminDataContext";
 import OrderBus from "../lib/orderBus";
+import { restoreOrderStock } from "../utils/stockLedger";
 import { computeCompensationCharge } from "../utils/billing";
 import { triggerToast } from "./AdminUI";
 import {
@@ -388,12 +389,19 @@ export default function AdminFieldReportManagement() {
       ? selectedOrder.invoiceBlocks.map((b: any) => ({ ...b, extraCosts: (b.extraCosts || []).filter((e: any) => e.id !== "compensation-charge") }))
       : undefined;
 
+    // 返却検品の確定で在庫台帳を通す（良品分のみ入庫）。これが無いと「返却済」にしても
+    // products.stock が戻らず、倉庫最終検品キューにも出ないため在庫が永久に欠落する。
+    // restoreOrderStock は stockRestored ライブガードで二重入庫を防止（冪等）。
+    const live = OrderBus.getAll<any>("orders").find((o: any) => o.id === selectedOrder.id || o.firestoreId === selectedOrder.id) || selectedOrder;
+    const restockFlags = restoreOrderStock(live, formattedIssues);
+
     await updateOrder(selectedOrder.id, {
       status: "返却済",
       itemIssues: formattedIssues.length > 0 ? formattedIssues : undefined,
       compensationCharge: newComp || undefined,
       compensationDismissed: false,
       ...(strippedBlocks ? { invoiceBlocks: strippedBlocks } : {}),
+      ...restockFlags,
     });
 
     setSelectedOrder(null);

@@ -123,7 +123,7 @@ export default function AdminVendors() {
                 vendor: sel.name,
                 vendorId: sel.id,
                 status: "修理待ち",
-                req: new Date().toISOString().split("T")[0],
+                req: new Date().toLocaleDateString("sv-SE"), // JST ローカル日付(YYYY-MM-DD)。toISOString は UTC で夜間に前日へズレる。
                 cost: null,
                 warranty: false,
                 issue: "修理業者画面からの依頼",

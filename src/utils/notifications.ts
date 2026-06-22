@@ -13,6 +13,9 @@ export interface AppNotification {
 }
 
 const CLOSED = ["返却済", "返却済み", "完了", "キャンセル"];
+// 返却が既に進行中/完了している状態。「返却期限が近い」催促はこれらを除外する
+//（既に回収依頼/持込済みの注文へ「返却手続きを」と促す誤通知を防ぐ）。
+const RETURN_IN_PROGRESS = [...CLOSED, "回収中", "回収予定", "一部返却", "検品待ち"];
 
 function dateOnly(raw: any): Date | null {
   if (!raw) return null;
@@ -157,7 +160,7 @@ export function buildCustomerNotifications({
   }
 
   const returnReady = orders.filter((o: any) => {
-    if (CLOSED.includes(String(o.status || "")) || !hasRentItems(o)) return false;
+    if (RETURN_IN_PROGRESS.includes(String(o.status || "")) || !hasRentItems(o)) return false;
     const end = dateOnly(o.rentalEndDate);
     if (!end) return false;
     const diff = Math.ceil((end.getTime() - today.getTime()) / 86400000);

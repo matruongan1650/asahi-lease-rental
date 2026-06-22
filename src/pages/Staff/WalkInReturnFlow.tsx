@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import Icon from "../../components/staff/Icon";
+import { isVehicleCategory } from "../../utils/productUtils";
 import {
   TopBar,
   IconBtn,
@@ -125,8 +126,9 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
 
   const isRecheck = order?.stage === "recheck";
   const priorSignature = order?.receptionSignature || order?.fieldSignature || null;
+  // 正規 whitelist で判定（部分一致だと「車両衝突緩衝材」等の保安用品が誤って車両扱いになる）。
   const hasVehicleItems = (order?.products || []).some((p: any) =>
-    (p.category || "").includes("車") || ["軽トラック", "軽バン", "2tノーマル", "2tロング", "2t Wキャブノーマル"].some(c => (p.category || p.name || "").includes(c))
+    isVehicleCategory(p.category)
   );
 
   const buildExtra = () => {
@@ -419,7 +421,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
                     <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 1 }}>{p.qr} ・ 予定 {p.expected}</div>
                   </div>
                   {p.scanned
-                    ? <QtyStepper value={p.counted} max={p.expected + 20} onChange={v => setProds(ps => ps.map(x => x.id === p.id ? { ...x, counted: v } : x))} />
+                    ? <QtyStepper value={p.counted} max={p.expected + 20} shortBelow={p.expected} onChange={v => setProds(ps => ps.map(x => x.id === p.id ? { ...x, counted: v } : x))} />
                     : <button onClick={() => markManual(p)} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 4, background: "var(--surface-3)", border: "1px solid var(--border-2)", borderRadius: 9, color: "var(--brand-accent)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "var(--font-jp)", padding: "7px 9px", whiteSpace: "nowrap" }}><Icon name="edit" size={13} />手動で確認</button>}
                 </div>
                 {p.scanned && (
@@ -495,7 +497,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
                     満タンではありません — お客様へ連絡のうえ給油し、給油レシートを請求書に添付します。
                   </div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>給油金額（円・税抜）</div>
-                  <input value={fuelCost} onChange={e => setFuelCost(e.target.value)} inputMode="numeric" placeholder="例: 4200"
+                  <input value={fuelCost} onChange={e => setFuelCost(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" placeholder="例: 4200"
                     style={{ width: "100%", borderRadius: 12, border: "1.5px solid var(--border-2)", background: "var(--surface)", color: "var(--fg)", padding: "11px 13px", fontSize: 14.5, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box", marginBottom: 9 }} />
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 5 }}>給油レシート写真</div>
                   <input type="file" accept="image/*" onChange={e => {

@@ -350,7 +350,7 @@ export default function AdminRental() {
         onUpdateStatus={(id, status, staffStatus) => {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(selectedOrder, status);
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);

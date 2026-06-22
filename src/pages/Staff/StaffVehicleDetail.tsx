@@ -17,6 +17,7 @@ import {
   statusVariant,
 } from "../../components/staff/StaffUI";
 import { useVehicles } from "../../context/VehicleContext";
+import { daysUntil } from "../../context/MobileLiveContext";
 
 type VehicleTab = "basic" | "legal" | "history" | "docs";
 
@@ -103,7 +104,8 @@ export default function StaffVehicleDetail() {
   const alerts = useMemo(() => {
     if (!vehicle) return [];
     const list = [...(vehicle.alerts || [])];
-    const days = vehicle.inspectionDaysRemaining ?? null;
+    // 保存値ではなく inspectionDate から毎回再計算（時間経過で車検切れになった車両のアラートを出す）。
+    const days = daysUntil(vehicle.inspectionDate) ?? (vehicle.inspectionDaysRemaining ?? null);
     if (days !== null && days < 0 && !list.some(a => a.title.includes("車検"))) {
       list.unshift({ id: 1, type: "danger" as const, title: "車検が期限切れです", subtitle: `${Math.abs(days)}日超過 ・ 至急対応してください`, icon: "alert" });
     }
@@ -158,7 +160,7 @@ export default function StaffVehicleDetail() {
     setEditingLegal(false);
   };
 
-  const inspectionDays = vehicle.inspectionDaysRemaining ?? 0;
+  const inspectionDays = daysUntil(vehicle.inspectionDate) ?? (vehicle.inspectionDaysRemaining ?? 0);
   const docs = vehicle.documents || [];
   const files = vehicle.vehicleFiles || [];
   const photos = vehicle.photos || [];

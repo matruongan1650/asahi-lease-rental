@@ -10,7 +10,9 @@ import type { AppNotification } from "../utils/notifications";
  * 既読キー集合は localStorage に scope（サイト + ユーザー）ごとに保存する。
  */
 export function notifKey(n: AppNotification): string {
-  return n.id + "|" + (n.body || n.title || "");
+  // 件数は title（例「新規注文 3件」）に入るため、title を必ずキーに含める。
+  // 以前は body 優先だったが、件数が body に無い通知では件数が増えても再表示されなかった。
+  return n.id + "|" + (n.title || "") + "|" + (n.body || "");
 }
 
 function storageKey(scope: string): string {

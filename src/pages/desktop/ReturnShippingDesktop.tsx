@@ -36,7 +36,8 @@ export default function ReturnShippingDesktop() {
   const returnMinDate = normalizeDateInput(order?.rentalStartDate);
   const returnMaxDate = normalizeDateInput(order?.rentalEndDate);
   // 延滞（終了予定日 < 今日）でも返却/回収日を選べるよう、上限は「終了予定日」と「今日」の遅い方。
-  const todayStr = normalizeDateInput(new Date().toISOString().slice(0, 10));
+  const _now = new Date(); // JST ローカルの「今日」（toISOString は UTC のため早朝にズレる）。
+  const todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}-${String(_now.getDate()).padStart(2, "0")}`;
   const returnMaxEffective = [returnMaxDate, todayStr].filter(Boolean).sort().pop() || "";
 
   const [address, setAddress] = useState(profile.address);

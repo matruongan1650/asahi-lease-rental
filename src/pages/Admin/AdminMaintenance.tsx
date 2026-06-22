@@ -36,6 +36,11 @@ function addCycle(from: Date, cycle: string): Date {
     case "1年":
       d.setFullYear(d.getFullYear() + 1);
       break;
+    default:
+      // 未知の周期(車両由来の "臨時"/"記録" 等)は既定 3ヶ月先へ進める。
+      // 進めないと次回予定日=実施日となり点検直後に即「超過」表示になる。
+      d.setMonth(d.getMonth() + 3);
+      break;
   }
   return d;
 }
@@ -110,7 +115,7 @@ export default function AdminMaintenance() {
     }
     const today = new Date();
     const nextD = new Date(newNext);
-    const id = "MN-" + Math.floor(550 + Math.random() * 4000);
+    const id = "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
     OrderBus.push("maintenance", {
       id,
       name: newName,
@@ -143,7 +148,7 @@ export default function AdminMaintenance() {
     const days = daysBetween(new Date(), nextDate);
 
     // 点検履歴を1件追加してマスタを更新
-    const history = Array.isArray(inspecting.history) ? inspecting.history : [];
+    const history = Array.isArray(inspecting.history) ? [...inspecting.history] : [];
     history.unshift({
       id: "INS-" + Date.now(),
       date: fmtDate(doneDate),

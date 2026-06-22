@@ -611,7 +611,7 @@ export default function AdminInvoices() {
         onUpdateStatus={(id, status, staffStatus) => {
           // 受注確定（確認済み）は出庫、返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || openOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(openOrder, status);
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}
