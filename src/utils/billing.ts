@@ -55,6 +55,22 @@ export function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / 86400000) + 1;
 }
 
+/** 期間(YYYY-MM-DD 〜 YYYY-MM-DD)を月単位 "YYYY-MM" の配列に展開（両端の月を含む）。 */
+export function monthsInSpan(startStr?: string, endStr?: string): string[] {
+  if (!startStr || !endStr) return [];
+  const start = parseDateLocal(String(startStr).replace(/\//g, "-").slice(0, 10));
+  const end = parseDateLocal(String(endStr).replace(/\//g, "-").slice(0, 10));
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
+  const out: string[] = [];
+  let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  const last = new Date(end.getFullYear(), end.getMonth(), 1);
+  while (cur <= last) {
+    out.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`);
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+  return out;
+}
+
 /**
  * Checks if the list of cart items contains any vehicle.
  */
@@ -214,11 +230,22 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
     (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
   );
   const endDate = billingEndDate(order);
+  // 期待される月の集合（レンタル開始日〜課金終了日）。保存済み breakdown がこの全期間を
+  // カバーしていない場合（例: 過去開始の長期/さかのぼり契約なのに作成月1か月分しか無い）も再計算する。
+  // これが無いと、さかのぼり登録した注文の過去月の請求書が生成されない（作成月のみ・他月が欠落）。
+  const expectedMonths = monthsInSpan(order.rentalStartDate, endDate);
   return (order.items || []).map((item: any) => {
+    const mb = item?.monthlyBreakdown;
+    const storedMonths: string[] = Array.isArray(mb) ? mb.map((b: any) => b?.monthStr).filter(Boolean) : [];
+    const spansFull =
+      expectedMonths.length > 0 &&
+      storedMonths.length === expectedMonths.length &&
+      expectedMonths.every((m) => storedMonths.includes(m));
+    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || !spansFull;
     if (
       item &&
       item.type === "rent" &&
-      (!item.monthlyBreakdown || item.monthlyBreakdown.length === 0) &&
+      needsRecompute &&
       item.rentPrice &&
       order.rentalStartDate &&
       endDate
@@ -232,13 +259,14 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
           isVehicleCategory(item.category),
           item.rentPriceLongTerm
         );
-        // rentalDays/billedDays も補完して、請求明細の「○日間」が "-日間" にならないようにする。
+        // 再計算した breakdown と整合するよう、金額・日数も新しい値で上書きする
+        //（古い1か月分の calculatedPrice を残すと全期間の breakdown と総額が食い違うため）。
         return {
           ...item,
           monthlyBreakdown: breakdown,
-          calculatedPrice: item.calculatedPrice ?? totalPrice,
-          rentalDays: item.rentalDays ?? totalActualDays,
-          billedDays: item.billedDays ?? totalBilledDays,
+          calculatedPrice: totalPrice,
+          rentalDays: totalActualDays,
+          billedDays: totalBilledDays,
         };
       } catch {
         return item;
