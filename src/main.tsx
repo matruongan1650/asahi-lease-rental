@@ -3,6 +3,10 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import './lib/taxSync'; // 設定の消費税率を請求計算へ反映（side-effect）
+import { installNumberInputWheelGuard } from './utils/numberInputWheelGuard';
+
+// 数値入力上のマウスホイールで値が誤変更され、ページがスクロールしない問題を防ぐ（在庫数等の入力対策）。
+installNumberInputWheelGuard();
 
 // 一度だけ実行: 既存の注文データ（admin/staff/customer 共通）をローカルから削除する。
 // XServer 実データ運用へ移行したため、古いキャッシュをクリアする。
