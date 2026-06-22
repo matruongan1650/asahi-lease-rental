@@ -32,7 +32,9 @@ export default function AdminStockOut() {
   // 参照していたため出庫が実在庫に反映されなかった（常に「倉庫に見つかりません」）。products へ統一。
   const { rows: products } = useAdminCollection("products");
   const supplyProducts = useMemo(
-    () => (products || []).filter((p: any) => p && !isVehicleCategory(p.category)),
+    // 車両に連動する商品(P-<id>, vehicleId 付き)は保安用品から除外する。
+    // カテゴリー名が車両プリセットからずれても二重計上しないための堅牢なフィルタ。
+    () => (products || []).filter((p: any) => p && !p.vehicleId && !isVehicleCategory(p.category)),
     [products],
   );
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -105,7 +107,7 @@ export default function AdminStockOut() {
 
     const now = Date.now();
     const newId = "OUT-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);
-    const dateStr = new Date().toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
+    const dateStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/"); // JST（他の入出庫画面と統一）
     const stockOutItem = {
       id: newId,
       item: itemSelect,

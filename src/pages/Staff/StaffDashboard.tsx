@@ -816,7 +816,17 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
   const savedDone = loadDraft(doneKey, { dlv: [] as string[], rtn: [] as string[] });
   const [doneDlv, setDoneDlv] = useState<string[]>(() => Array.isArray(savedDone.dlv) ? savedDone.dlv : []);
   const [doneRtn, setDoneRtn] = useState<string[]>(() => Array.isArray(savedDone.rtn) ? savedDone.rtn : []);
+  const doneKeyRef = useRef(doneKey);
   useEffect(() => {
+    // JST 日付境界をまたいでアプリを開いたままにすると doneKey が変わる。その際は古い state を
+    // 新キーで保存せず、新キーの保存値をロードして state をリセットする（前日の完了が新日へ持ち越されるのを防ぐ）。
+    if (doneKeyRef.current !== doneKey) {
+      const fresh = loadDraft(doneKey, { dlv: [] as string[], rtn: [] as string[] });
+      setDoneDlv(Array.isArray(fresh.dlv) ? fresh.dlv : []);
+      setDoneRtn(Array.isArray(fresh.rtn) ? fresh.rtn : []);
+      doneKeyRef.current = doneKey;
+      return;
+    }
     saveDraft(doneKey, { dlv: doneDlv, rtn: doneRtn });
   }, [doneDlv, doneRtn, doneKey]);
 

@@ -401,6 +401,10 @@ const _SYNCED_KEY = "asahi._synced_v1";
 // 次回起動時、増分同期では間引かれた画像が戻らない（サーバーの rev は進んでいないため）ので、
 // このフラグがあれば rev=0 でフル再同期し、サーバーから完全なレコード（画像つき）を取り直す。
 const _SLIM_KEY = "asahi._cache_slimmed_v1";
+// 間引き後の復元フル再同期が「今セッションで保留中」かどうか。
+// 一度フル再同期に成功したら _SLIM_KEY を消し、次回起動からは増分同期へ戻す
+//（消さないと容量超過を一度起こした端末は毎回起動時に rev=0 のフル再同期を続けてしまう）。
+let _slimResyncPending = false;
 
 function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; deleted: boolean; data: BusRecord | null }>): void {
   const cur = _read(store);
@@ -490,6 +494,13 @@ async function _apiTick(): Promise<void> {
       try { localStorage.setItem(_REV_KEY, String(_lastRev)); } catch { /* ignore */ }
     }
 
+    // 間引き復元のフル再同期に成功した → フラグを解除し、次回起動から増分同期へ戻す。
+    // （まだ容量が足りなければ再シリアライズ時に _SLIM_KEY が立て直され自己修復する。）
+    if (res && _slimResyncPending) {
+      _slimResyncPending = false;
+      try { localStorage.removeItem(_SLIM_KEY); } catch { /* ignore */ }
+    }
+
     // 同期成功 → 未送信(pending)の現場変更を再送（オフライン復帰時の取りこぼし防止）。
     _retryPendingUpserts();
   } catch {
@@ -516,6 +527,7 @@ function _startApiPoller(): void {
     // サーバーから完全なレコード（画像つき）を取り直す。
     _lastRev = 0;
     _firstPoll = false;
+    _slimResyncPending = true; // フル再同期成功後に _SLIM_KEY を解除して増分へ戻すため
   } else {
     _lastRev = 0; // 初回はフル同期（since=0）でサーバー全件を取得しローカルとマージ
     _firstPoll = true;

@@ -172,7 +172,8 @@ export default function AdminWarehouse() {
 
   const supplyRows: SupplyRow[] = useMemo(() => {
     return (products || [])
-      .filter((p: any) => p && !isVehicleCategory(p.category))
+      // 車両連動商品(P-<id>, vehicleId 付き)は保安用品から除外（在庫の二重計上防止）。
+      .filter((p: any) => p && !p.vehicleId && !isVehicleCategory(p.category))
       .map((p: any) => {
         const onHand = Number(p.stock || 0);            // 現物在庫（出庫で減算・返却で加算済み）
         const rented = Number(rentedCounts[p.id] || 0); // 現在貸出中（出庫済み・未返却）

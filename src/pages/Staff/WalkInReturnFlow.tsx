@@ -164,7 +164,12 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
 
   // 実カメラで読み取った QR と一致した品目のみ検品済みにする（以前は順番に立てる偽スキャナだった）。
   const markScanned = (product: any) => {
-    setProds(ps => ps.map(p => (p.id === product.id || (p.qr && p.qr === product.qr)) ? { ...p, scanned: true } : p));
+    // 同一商品が複数行ある場合、1スキャンで全行を検品済みにしない（未検品の最初の1行だけ立てる）。
+    // 全行を立てると物理的に1個しか確認していなくても検品ゲートを通過できてしまう。
+    setProds(ps => {
+      const t = ps.find(p => (p.id === product.id || (p.qr && p.qr === product.qr)) && !p.scanned);
+      return t ? ps.map(p => p === t ? { ...p, scanned: true } : p) : ps;
+    });
   };
 
   // QRラベルが破損・読取不可の場合の手動確認（admin に QR未照合と分かるようタグ付け）。

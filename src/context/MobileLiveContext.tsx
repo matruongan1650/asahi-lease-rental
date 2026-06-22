@@ -355,13 +355,6 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const deliveredDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     // レンタル開始日 = 実際に納品が完了した日。課金はこの日から開始する。
     const updates: any = { staffStatus: "配送完了", status: "レンタル中", rentalStartDate: deliveredDate, deliveryConfirmedAt: now.toISOString() };
-    // 開始日が変わるため、注文時に計算した請求スナップショットを破棄して再計算させる
-    //（getOrGenerateInvoiceBlocks / ensureMonthlyBreakdowns が納品日基準で作り直す）。
-    if (target0 && Array.isArray(target0.items)) {
-      updates.items = target0.items.map((it: any) =>
-        it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
-      );
-    }
     updates.invoiceBlocks = [];
     // 受領サインは Order スキーマ上の deliverySignature と、既存表示が参照する signature の両方に保存
     if (signature) {
@@ -390,10 +383,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     // 受注確定前モデルの旧注文（未出庫）救済として deductOrderStock を冪等に呼ぶ
     //（stockDeducted 済みなら何もしない）。出庫伝票（stockOut）も stockLedger 側で作成される。
     Object.assign(updates, deductOrderStock(target0));
+    // 開始日が変わるため請求スナップショット(monthlyBreakdown/calculatedPrice)を破棄し納品日基準で再計算させる。
+    // deductOrderStock は target0.items に stockDeductedQty を書き込むため、items の再構築は減算「後」に行う。
+    // 減算前に作ると stockDeductedQty を落とし、返却時の入庫キャップが数量へフォールバックして過大入庫になる。
+    if (target0 && Array.isArray(target0.items)) {
+      updates.items = target0.items.map((it: any) =>
+        it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
+      );
+    }
     OrderBus.patch("orders", deliveryKey, updates);
   };
 
-  const completeRecovery = (id: string, signature?: string | null, photos?: any[], inspected?: any[], staffName?: string, extra?: any) => {
+  const completeRecovery =(id: string, signature?: string | null, photos?: any[], inspected?: any[], staffName?: string, extra?: any) => {
     // 現場回収の完了 = 注文の終了ではない。
     // 持ち帰った品は倉庫で「最終検品（再検品）」を行ってから確定・請求書発行する。
     // そのため在庫計上もここでは行わず、最終検品完了時（completeReturn）に行う。
@@ -650,7 +651,9 @@ export function pushFieldReportsLocal({ source, ref, reporter, customer, site, p
         note: e.note || "",
       };
     });
-    const id = "FR-" + String(Date.now()).slice(-6) + Math.floor(Math.random() * 10);
+    // 複数商品を同時に報告すると Date.now() が同一ミリ秒・乱数も 0-9 のみで衝突し得る
+    //（衝突すると 2件目が同期されず admin に届かない／React key 重複）。十分な乱数桁で一意化する。
+    const id = "FR-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     ids.push(id);
     OrderBus.push("fieldReports", {
       id,

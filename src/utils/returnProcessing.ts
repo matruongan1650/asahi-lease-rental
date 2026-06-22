@@ -49,9 +49,12 @@ export function computeReturnSplit(
   let remainingTotalBuyPrice = 0;
 
   (order.items || []).forEach((item: any) => {
-    const returningQty = returnQuantities[item.id] || 0;
     const alreadyReturnedQty = item.returnedQuantity || 0;
     const currentRemainingQty = item.quantity - alreadyReturnedQty;
+    // 返却数は「貸出中の残数」を上限にクランプする。倉庫最終検品の QtyStepper は expected+20 まで
+    // 入力できるため、数量超過（誤カウント/別物混入）があってもレンタル料が過大請求にならないようにする
+    //（超過分は数量超過レポートで扱う。弁償費側 computeCompensationCharge は既にクランプ済み）。
+    const returningQty = Math.min(returnQuantities[item.id] || 0, Math.max(0, currentRemainingQty));
     const newRemainingQty = currentRemainingQty - returningQty;
 
     // 1. 返却される品目

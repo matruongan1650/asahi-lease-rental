@@ -26,7 +26,7 @@ function ProductDetailMobile() {
   const [periodDays, setPeriodDays] = useState<number | string>("");
   const [actionType, setActionType] = useState<'rent' | 'buy'>('rent');
 
-  const product = products.find(p => p && p.id === id) || products.filter(Boolean)[0];
+  const product = products.find(p => p && p.id === id);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -38,10 +38,18 @@ function ProductDetailMobile() {
   // 商品リストが空（クラウド同期前など）でも product が undefined になり得る。
   // 全フックの後で早期 return し、以降の product.* アクセスによるクラッシュを防ぐ。
   if (!product) {
+    // 商品リスト未ロード（クラウド同期前）はローディング表示。ロード済みで該当 id が無い場合のみ
+    // 「見つかりません」を出す（削除済み/誤URL で先頭商品に誤フォールバックさせない）。
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center">
-        <p className="text-slate-500 font-bold">商品が見つかりませんでした</p>
-        <button onClick={() => navigate(-1)} className="px-4 py-2 rounded-lg bg-slate-100 font-bold text-slate-700">戻る</button>
+        {products.length === 0 ? (
+          <p className="text-slate-500 font-bold">読み込み中...</p>
+        ) : (
+          <>
+            <p className="text-slate-500 font-bold">商品が見つかりませんでした</p>
+            <button onClick={() => navigate(-1)} className="px-4 py-2 rounded-lg bg-slate-100 font-bold text-slate-700">戻る</button>
+          </>
+        )}
       </div>
     );
   }

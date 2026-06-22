@@ -78,17 +78,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const addToCart = useCallback((newItem: CartItem) => {
     setItems((prevItems) => {
+      // マージ後の合計が在庫を超えないよう上限クランプする（updateQuantity/setQuantityAmount と同じ防御）。
+      // 在庫5の商品を5個入れた状態でさらに5個追加 → 10 にならず在庫5に丸める（在庫超過注文の作成防止）。
+      const stock = products.find(p => p && p.id === newItem.id)?.stock ?? 999;
       const existingItemIndex = prevItems.findIndex(item => item.id === newItem.id && item.type === newItem.type);
       if (existingItemIndex >= 0) {
         // 直接 mutate せず新しいオブジェクトに置き換える（前の state を壊さない／
         // StrictMode の二重呼び出しで数量が二重加算されるのを防ぐ）。
         return prevItems.map((item, i) =>
-          i === existingItemIndex ? { ...item, quantity: item.quantity + newItem.quantity } : item
+          i === existingItemIndex ? { ...item, quantity: Math.min(stock, item.quantity + newItem.quantity) } : item
         );
       }
-      return [...prevItems, newItem];
+      return [...prevItems, { ...newItem, quantity: Math.min(stock, newItem.quantity) }];
     });
-  }, []);
+  }, [products]);
 
   const updateQuantity = useCallback((id: string, delta: number) => {
     setItems((prevItems) => {

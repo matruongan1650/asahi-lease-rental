@@ -17,7 +17,7 @@ export default function ProductDetailDesktop() {
   const [quantity, setQuantity] = useState<number>(1);
   const [actionType, setActionType] = useState<"rent" | "buy">("rent");
 
-  const product = products.find((p) => p && p.id === id) || products.filter(Boolean)[0];
+  const product = products.find((p) => p && p.id === id);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -26,10 +26,17 @@ export default function ProductDetailDesktop() {
   }, [id, product]);
 
   if (!product) {
+    // 未ロード時はローディング、ロード済みで該当なしのときのみ「見つかりません」（先頭商品に誤フォールバックしない）。
     return (
       <div className="max-w-7xl mx-auto px-6 py-20 text-center">
-        <p className="text-slate-500 font-bold">商品が見つかりませんでした。</p>
-        <Link to="/products" className="inline-block mt-4 px-5 py-2.5 rounded-xl bg-primary text-white font-bold">商品一覧へ</Link>
+        {products.length === 0 ? (
+          <p className="text-slate-500 font-bold">読み込み中...</p>
+        ) : (
+          <>
+            <p className="text-slate-500 font-bold">商品が見つかりませんでした。</p>
+            <Link to="/products" className="inline-block mt-4 px-5 py-2.5 rounded-xl bg-primary text-white font-bold">商品一覧へ</Link>
+          </>
+        )}
       </div>
     );
   }

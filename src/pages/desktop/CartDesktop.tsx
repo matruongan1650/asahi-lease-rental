@@ -2,7 +2,7 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "../../context/CartContext";
 import { useProducts } from "../../context/ProductContext";
-import { calculateRentalPrice } from "../../utils/billing";
+import { calculateRentalPrice, getTaxRate } from "../../utils/billing";
 import { isVehicleCategory } from "../../utils/productUtils";
 
 /** PC 用 カート（お客様デスクトップサイト）。モバイル Cart と同じ料金計算・カート処理を再利用。 */
@@ -44,7 +44,7 @@ export default function CartDesktop() {
   });
 
   const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-  const tax = Math.floor(subtotal * 0.1);
+  const tax = Math.floor(subtotal * getTaxRate()); // 管理設定の税率（軽減税率8%等）を反映。他画面と一致させる。
   const total = subtotal + tax;
 
   if (items.length === 0) {
@@ -122,7 +122,7 @@ export default function CartDesktop() {
               <div className="flex justify-between"><span className="text-slate-500">レンタル料</span><span className="font-bold text-slate-800">¥{totalRentalPrice.toLocaleString()}</span></div>
               {totalGuaranteeFee > 0 && <div className="flex justify-between"><span className="text-slate-500">初回準備・保証料</span><span className="font-bold text-slate-800">¥{totalGuaranteeFee.toLocaleString()}</span></div>}
               {totalBuyPrice > 0 && <div className="flex justify-between"><span className="text-slate-500">購入金額</span><span className="font-bold text-slate-800">¥{totalBuyPrice.toLocaleString()}</span></div>}
-              <div className="flex justify-between"><span className="text-slate-500">消費税 (10%)</span><span className="font-bold text-slate-800">¥{tax.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">消費税 ({Math.round(getTaxRate() * 100)}%)</span><span className="font-bold text-slate-800">¥{tax.toLocaleString()}</span></div>
               <div className="h-px bg-slate-100 my-1" />
               <div className="flex items-center justify-between"><span className="font-extrabold text-slate-900">合計</span><span className="text-2xl font-extrabold text-primary">¥{total.toLocaleString()}</span></div>
             </div>

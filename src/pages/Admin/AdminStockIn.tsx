@@ -31,7 +31,9 @@ export default function AdminStockIn() {
   // 参照していたため入庫が実在庫に反映されなかった。products へ統一する。
   const { rows: products } = useAdminCollection("products");
   const supplyProducts = useMemo(
-    () => (products || []).filter((p: any) => p && !isVehicleCategory(p.category)),
+    // 車両に連動する商品(P-<id>, vehicleId 付き)は保安用品から除外する。
+    // カテゴリー名が車両プリセットからずれても二重計上しないための堅牢なフィルタ。
+    () => (products || []).filter((p: any) => p && !p.vehicleId && !isVehicleCategory(p.category)),
     [products],
   );
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -55,7 +57,7 @@ export default function AdminStockIn() {
 
   const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean), "その他 (直接入力)"];
   const totalInQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
-  const todayCount = rows.filter((row: any) => String(row.date || "").slice(0, 10) === new Date().toISOString().slice(0, 10).replace(/-/g, "/")).length;
+  const todayCount = rows.filter((row: any) => String(row.date || "").slice(0, 10) === new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "/")).length; // JST 当日（toISOString は UTC のため早朝に前日扱いになるのを防ぐ）
   const purchaseCount = rows.filter((row: any) => row.type === "新規購入").length;
 
   const filteredRows = useMemo(() => {
@@ -87,7 +89,7 @@ export default function AdminStockIn() {
 
     const now = Date.now();
     const newId = "IN-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);
-    const dateStr = new Date().toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/");
+    const dateStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/"); // JST（他の入出庫画面と統一）
     const stockInItem = {
       id: newId,
       item: itemName,

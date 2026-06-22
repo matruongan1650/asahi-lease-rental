@@ -153,7 +153,8 @@ export default function AdminStocktake() {
 
   const baseRows = useMemo<StocktakeRow[]>(() => {
     const supplyRows = (products || [])
-      .filter((p: any) => p && !isVehicleCategory(p.category))
+      // 車両連動商品(P-<id>, vehicleId 付き)は保安用品から除外（車両在庫と二重計上しない）。
+      .filter((p: any) => p && !p.vehicleId && !isVehicleCategory(p.category))
       .map((p: any): StocktakeRow => {
         const system = Number(p.stock || 0);
         // 実際にカウント入力された行のみ判定する。未入力は「未確認」とし、

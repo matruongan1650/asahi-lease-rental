@@ -121,8 +121,13 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
   const buildExtra = () => (absentMode ? { collectionUnsigned: true, absentReason: absentNote.trim() } : undefined);
 
   const markScanned = (product: any) => {
-    // qr の空文字どうしが一致して無関係な行まで検品済みになるのを防ぐ（WalkInReturnFlow と同方針）。
-    setProds(ps => ps.map(p => (p.id === product.id || (p.qr && p.qr === product.qr)) ? { ...p, scanned: true } : p));
+    // 同一商品が複数行ある注文では、1回のスキャンで全行を検品済みにしない（未検品の最初の1行だけ立てる）。
+    // 全行を立てると物理的に1個しか確認していなくても検品ゲートを通過できてしまう。
+    // qr の空文字どうしが一致して無関係な行まで検品済みになるのも防ぐ。
+    setProds(ps => {
+      const t = ps.find(p => (p.id === product.id || (p.qr && p.qr === product.qr)) && !p.scanned);
+      return t ? ps.map(p => p === t ? { ...p, scanned: true } : p) : ps;
+    });
     setScannerOpen(false);
   };
 

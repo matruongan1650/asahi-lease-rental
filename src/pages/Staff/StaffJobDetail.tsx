@@ -119,11 +119,6 @@ export default function StaffJobDetail() {
       updates.deliveryConfirmedAt = now.toISOString();
       // レンタル開始日 = 実際の納品完了日。課金スナップショットを破棄して納品日基準で再計算させる。
       updates.rentalStartDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      if (Array.isArray(order.items)) {
-        updates.items = order.items.map((it: any) =>
-          it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
-        );
-      }
       updates.invoiceBlocks = [];
       if (photoUrls.length) updates.deliveryPhotos = photos;
       if (signature) {
@@ -165,6 +160,13 @@ export default function StaffJobDetail() {
     // 現場回収（collection）は倉庫最終検品で計上するため、ここでは在庫を動かさない。
     if (role === "delivery") {
       Object.assign(updates, deductOrderStock(ord));
+      // deductOrderStock は ord.items に stockDeductedQty を書き込むため、請求スナップショット破棄(items 再構築)は
+      // 減算「後」に行う。減算前に作ると stockDeductedQty を落とし、返却時の入庫キャップが過大になる。
+      if (Array.isArray(ord.items)) {
+        updates.items = ord.items.map((it: any) =>
+          it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
+        );
+      }
     } else if (role === "warehouse") {
       // 倉庫最終検品 = 返却確定。良品分のみ在庫へ戻し、stockRestored を注文へ記録する。
       Object.assign(updates, restoreOrderStock(ord, updates.itemIssues));
