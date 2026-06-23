@@ -129,6 +129,16 @@ export default function OrderConfirmationDesktop() {
 
         {/* Totals */}
         <div className="px-6 py-5 bg-slate-50 border-t border-slate-100 space-y-2.5">
+          {(() => {
+            // 保証料は明細の calculatedPrice に含めず subtotal に内包されるため、別行で明示する（×数量しない）。
+            const g = (items || []).reduce((s: number, it: any) => s + Number(it.guaranteeFeeFlat || 0), 0);
+            return g > 0 ? (
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-500">初回準備・保証料</span>
+                <span className="font-bold text-slate-800">¥{g.toLocaleString()}</span>
+              </div>
+            ) : null;
+          })()}
           <div className="flex justify-between items-center text-sm">
             <span className="text-slate-500">小計</span>
             <span className="font-bold text-slate-800">¥{subtotal.toLocaleString()}</span>

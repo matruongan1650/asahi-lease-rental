@@ -12,6 +12,7 @@ export default function ReturnConfirmationDesktop() {
   const navigate = useNavigate();
   const location = useLocation();
   const { updateOrder } = useOrders();
+  const submittingRef = React.useRef(false); // 二重送信ガード（モバイル版と同様）
 
   const { returnQuantities, order, method, address, pickupDate, pickupTime, photos } = location.state || {};
 
@@ -32,6 +33,8 @@ export default function ReturnConfirmationDesktop() {
   const totalItemsCount = itemsToReturn.reduce((sum: number, item: any) => sum + returnQuantities[item.id], 0);
 
   const handleSubmit = () => {
+    if (submittingRef.current) return; // 連打で updateOrder/walkinReturns/alert が二重実行されるのを防ぐ
+    submittingRef.current = true;
     // Determine actual return date (pickupDate or today)
     let actualReturnDate = pickupDate;
     if (!actualReturnDate) {

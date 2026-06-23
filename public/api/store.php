@@ -35,19 +35,47 @@ try {
         // orders は発注者(userId)一致、users は自分のレコードのみ。トークン未提示(旧クライアント/移行中)は
         // 後方互換で従来どおり全件返す（強制は全クライアント更新後の別フェーズ）。
         $cu = current_user();
-        if ($cu && !is_privileged_role($cu['role']) && ($name === 'orders' || $name === 'users')) {
-            $scoped = [];
-            foreach ($out as $o) {
-                if (!is_array($o)) {
-                    continue;
+        if ($cu && !is_privileged_role($cu['role'])) {
+            if ($name === 'orders' || $name === 'users') {
+                $scoped = [];
+                foreach ($out as $o) {
+                    if (!is_array($o)) {
+                        continue;
+                    }
+                    if ($name === 'orders' && (string) ($o['userId'] ?? '') === $cu['uid']) {
+                        $scoped[] = $o;
+                    } elseif ($name === 'users' && (string) ($o['id'] ?? '') === $cu['uid']) {
+                        $scoped[] = $o;
+                    }
                 }
-                if ($name === 'orders' && (string) ($o['userId'] ?? '') === $cu['uid']) {
-                    $scoped[] = $o;
-                } elseif ($name === 'users' && (string) ($o['id'] ?? '') === $cu['uid']) {
-                    $scoped[] = $o;
+                $out = $scoped;
+            } elseif ($name === 'mailLogs' || $name === 'staffMessages') {
+                $out = []; // 顧客には配信しない（送信メールログ・社内連絡）
+            } elseif ($name === 'returnInspections') {
+                // 自分の注文に紐づく検品のみ返す（他顧客の検品結果の漏洩防止）。
+                $owned = [];
+                $os = $pdo->prepare("SELECT id, data FROM records WHERE store = 'orders' AND deleted = 0");
+                $os->execute();
+                foreach ($os as $orow) {
+                    $od = json_decode((string) $orow['data'], true);
+                    if (is_array($od) && (string) ($od['userId'] ?? '') === $cu['uid']) {
+                        $owned[(string) $orow['id']] = true;
+                        if (!empty($od['orderNumber'])) $owned[(string) $od['orderNumber']] = true;
+                    }
                 }
+                $scoped = [];
+                foreach ($out as $o) {
+                    if (!is_array($o)) {
+                        continue;
+                    }
+                    $oid = (string) ($o['orderId'] ?? '');
+                    $onum = (string) ($o['orderNumber'] ?? '');
+                    if (isset($owned[$oid]) || ($onum !== '' && isset($owned[$onum]))) {
+                        $scoped[] = $o;
+                    }
+                }
+                $out = $scoped;
             }
-            $out = $scoped;
         }
         json_out($out);
     }

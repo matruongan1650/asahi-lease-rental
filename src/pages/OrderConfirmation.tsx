@@ -119,6 +119,17 @@ function OrderConfirmationMobile() {
     </div>
 
     <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-border-light dark:border-border-dark space-y-2">
+      {(() => {
+        // 保証料は明細の calculatedPrice に含めず order.subtotal に内包されるため、
+        // 別行で明示しないと「明細合計＜小計」に見える。subtotal と同じ集計(×数量しない)で表示する。
+        const g = (items || []).reduce((s: number, it: any) => s + Number(it.guaranteeFeeFlat || 0), 0);
+        return g > 0 ? (
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-slate-500 dark:text-slate-400">初回準備・保証料</span>
+            <span className="font-medium">¥{g.toLocaleString()}</span>
+          </div>
+        ) : null;
+      })()}
       <div className="flex justify-between items-center text-sm">
         <span className="text-slate-500 dark:text-slate-400">小計</span>
         <span className="font-medium">¥{subtotal.toLocaleString()}</span>

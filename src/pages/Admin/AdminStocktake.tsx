@@ -283,7 +283,10 @@ export default function AdminStocktake() {
     e.target.value = "";
   };
 
+  const finalizingRef = React.useRef(false); // 棚卸確定の二重送信ガード
   const finalizeStocktake = () => {
+    if (finalizingRef.current) return; // 連打で stocktake セッション/stockMoves 調整が重複生成されるのを防ぐ
+    finalizingRef.current = true;
     const date = formatDateTime();
     const sessionId = "ST-" + Date.now();
     const items = baseRows.map((row) => ({
@@ -345,6 +348,7 @@ export default function AdminStocktake() {
     setFiles([]);
     setNote("");
     triggerToast(`棚卸を確定しました（差異 ${diffRows.length} 件）`, "ok");
+    setTimeout(() => { finalizingRef.current = false; }, 800);
   };
 
   const exportCsv = () => {

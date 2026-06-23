@@ -24,6 +24,20 @@ try {
     // 既定(false)では従来どおり後方互換 fail-open（この変数は常に false で挙動不変）。
     $denyTokenless = enforce_user_token_enabled() && $cu === null;
 
+    // 顧客の所有注文 id/orderNumber 集合（returnInspections のスコープ判定に使う）。1回だけ構築。
+    $ownedOrderKeys = [];
+    if ($scopeCustomer) {
+        $os = $pdo->prepare("SELECT id, data FROM records WHERE store = 'orders' AND deleted = 0");
+        $os->execute();
+        foreach ($os as $orow) {
+            $od = json_decode((string) $orow['data'], true);
+            if (is_array($od) && (string) ($od['userId'] ?? '') === $cu['uid']) {
+                $ownedOrderKeys[(string) $orow['id']] = true;
+                if (!empty($od['orderNumber'])) $ownedOrderKeys[(string) $od['orderNumber']] = true;
+            }
+        }
+    }
+
     $changes = [];
     $maxReturnedRev = $since;
     $rowCount = 0;
@@ -36,10 +50,23 @@ try {
         $deleted = ((int) $row['deleted']) === 1;
         $store = $row['store'];
         $data = $deleted ? null : json_decode($row['data'], true);
-        // 社内連絡(staffMessages)は顧客端末へ配信しない（管理者→スタッフの内部メッセージ。情報漏洩防止）。
+        // 社内連絡(staffMessages)・メール送信ログ(mailLogs, 顧客メール等を含む)は顧客端末へ配信しない。
         // カーソルは上で前進済みなので skip しても取りこぼしは起きない。
-        if (($scopeCustomer || $denyTokenless) && $store === 'staffMessages') {
+        if (($scopeCustomer || $denyTokenless) && ($store === 'staffMessages' || $store === 'mailLogs')) {
             continue;
+        }
+        // 検品(returnInspections)は自分の注文に紐づくものだけ配信する（他顧客の検品結果の漏洩防止）。
+        if (!$deleted && $store === 'returnInspections') {
+            if ($denyTokenless) {
+                continue;
+            }
+            if ($scopeCustomer && is_array($data)) {
+                $rOid = (string) ($data['orderId'] ?? '');
+                $rNum = (string) ($data['orderNumber'] ?? '');
+                if (!(isset($ownedOrderKeys[$rOid]) || ($rNum !== '' && isset($ownedOrderKeys[$rNum])))) {
+                    continue;
+                }
+            }
         }
         if (!$deleted && ($store === 'orders' || $store === 'users')) {
             if ($denyTokenless) {

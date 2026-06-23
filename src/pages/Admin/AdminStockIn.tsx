@@ -71,6 +71,7 @@ export default function AdminStockIn() {
 
   const paged = usePagedList(filteredRows, 50, [query, typeFilter, monthFilter]);
 
+  const savingRef = React.useRef(false); // 在庫書き込みの二重送信ガード
   const handleSaveStockIn = (e: React.FormEvent) => {
     e.preventDefault();
     saveStockIn(false);
@@ -86,6 +87,10 @@ export default function AdminStockIn() {
       triggerToast("数量は1以上にしてください", "warn");
       return;
     }
+    // 二重送信ガード: 連打/Enter+クリックで在庫が二重入庫されるのを防ぐ（再レンダーまでボタンは押下可能）。
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setTimeout(() => { savingRef.current = false; }, 800);
 
     const now = Date.now();
     const newId = "IN-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);

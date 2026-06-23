@@ -80,6 +80,7 @@ export default function AdminStockOut() {
     e.preventDefault();
     saveStockOut(false);
   };
+  const savingRef = React.useRef(false); // 在庫書き込みの二重送信ガード
   // keepOpen=true: 同じ出庫先の複数品目を連続登録（納品先/担当者は維持、品名・数量のみクリア）。
   const saveStockOut = (keepOpen: boolean) => {
     if (!itemSelect.trim()) {
@@ -104,6 +105,10 @@ export default function AdminStockOut() {
       triggerToast(`在庫不足です (現在庫: ${onHand}点)`, "warn");
       return;
     }
+    // 二重送信ガード: 連打/Enter+クリックで在庫が二重出庫される(オーバーセル)のを防ぐ。
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setTimeout(() => { savingRef.current = false; }, 800);
 
     const now = Date.now();
     const newId = "OUT-" + now.toString().slice(-8) + "-" + Math.floor(Math.random() * 900 + 100);

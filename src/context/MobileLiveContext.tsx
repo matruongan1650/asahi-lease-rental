@@ -405,11 +405,14 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const ordersList = OrderBus.getAll<any>("orders");
     const targetOrder = ordersList.find(o => o.id === id || o.firestoreId === id || o.orderNumber === id);
     if (!targetOrder) return;
+    // 二度押しガード: 既に回収完了済みなら何もしない（再実行で statusBeforeRecovery が「検品待ち」に
+    // 壊れ、undoRecovery が誤った状態へ戻すのを防ぐ）。
+    if (targetOrder.staffStatus === "回収完了") return;
     const recoveryKey = targetOrder?.firestoreId || targetOrder?.id || id;
 
     const now = new Date();
-    // 取消(undoRecovery)で正しく戻せるよう、回収前の status を控えておく。
-    const updates: any = { staffStatus: "回収完了", status: "検品待ち", statusBeforeRecovery: targetOrder.status || "レンタル中", collectionConfirmedAt: now.toISOString() };
+    // 取消(undoRecovery)で正しく戻せるよう、回収前の status を控えておく（既存値があれば上書きしない）。
+    const updates: any = { staffStatus: "回収完了", status: "検品待ち", statusBeforeRecovery: targetOrder.statusBeforeRecovery || targetOrder.status || "レンタル中", collectionConfirmedAt: now.toISOString() };
     if (signature) updates.collectionSignature = signature;
     if (photos && photos.length > 0) updates.collectionPhotos = photos;
     // 回収担当者（誰が回収したか）と、回収時の現場検品(1次検品)担当者を記録する。
