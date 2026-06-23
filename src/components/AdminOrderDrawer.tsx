@@ -255,8 +255,9 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
         subtotal: overallSubtotal,
         tax: overallTax,
         total: overallTotal,
-        // 自動計上の弁償費を admin が削除した場合は再計上を抑止する。
+        // 自動計上の弁償費/配送料を admin が削除した場合は再計上を抑止する。
         ...(costId === "compensation-charge" ? { compensationDismissed: true } : {}),
+        ...(costId === "delivery-fee" ? { deliveryDismissed: true } : {}),
       });
       triggerToast("追加費用を削除しました", "ok");
     }

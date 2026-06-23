@@ -357,8 +357,12 @@ export default function AdminFieldReportManagement() {
     });
   };
 
+  const savingRef = React.useRef(false); // 報告確定の二重送信ガード（restoreOrderStock の二重入庫防止）
   const submitReport = async () => {
     if (!selectedOrder) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setTimeout(() => { savingRef.current = false; }, 800);
 
     const formattedIssues: NonNullable<Order["itemIssues"]> = [];
 

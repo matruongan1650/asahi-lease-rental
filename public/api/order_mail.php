@@ -270,7 +270,7 @@ function send_due_return_reminders(PDO $pdo): array
             $sent++;
         } catch (Throwable $e) {
             // 送信失敗 → claim を取り消して次回再試行可能にする（mail_log_exists は deleted=0 のみ見る）。
-            try { $pdo->prepare("UPDATE records SET deleted = 1 WHERE store = 'mailLogs' AND id = ?")->execute([$logId]); } catch (Throwable $e2) { /* ignore cleanup failure */ }
+            try { $pdo->beginTransaction(); $rrev = next_rev($pdo); $pdo->prepare("UPDATE records SET deleted = 1, rev = ? WHERE store = 'mailLogs' AND id = ?")->execute([$rrev, $logId]); $pdo->commit(); } catch (Throwable $e2) { if ($pdo->inTransaction()) { $pdo->rollBack(); } }
             $errors[] = ['order' => $orderNo, 'error' => $e->getMessage()];
         }
     }

@@ -899,7 +899,9 @@ export function deriveAdminData(rawOrders: BusRecord[]): AdminDerivedData {
       const itemBuyPrice = (item.buyPrice || 0) as number;
       const itemCalculated = (item.calculatedPrice) as number | undefined;
 
-      const itemVal = itemCalculated || (itemType === "rent" ? itemRentPrice * itemQty : itemBuyPrice * itemQty);
+      // calculatedPrice は「1単位あたりの期間合計」のため必ず数量を掛ける（掛けないと数量>1 で売上 KPI が過少）。
+      const itemUnit = itemCalculated != null ? itemCalculated : (itemType === "rent" ? itemRentPrice : itemBuyPrice);
+      const itemVal = itemUnit * itemQty;
       if (itemType === "rent") {
         orderRentSub += itemVal;
       } else {

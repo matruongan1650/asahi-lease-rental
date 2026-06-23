@@ -651,6 +651,7 @@ function injectCompensationCharge(order: any, blocks: InvoiceBlock[]): void {
 function injectDeliveryCharge(order: any, blocks: InvoiceBlock[]): void {
   const delivery = Math.round(Number(order?.delivery) || 0);
   if (!(delivery > 0) || !blocks.length) return;
+  if ((order as any)?.deliveryDismissed) return; // admin が配送料行を削除したら再計上しない（弁償費と同方針）
   const already = blocks.some((b) => (b.extraCosts || []).some((e: any) => e.id === "delivery-fee"));
   if (already) return;
   const first = blocks[0];
