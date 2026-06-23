@@ -850,6 +850,13 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
         OrderBus.patch("walkinReturns", walkinOrder.id, {
           stage: "recheck",
           receptionAt: new Date().toLocaleString("ja-JP"),
+          // 一次受付日（＝顧客が持ち込んだ日）を YYYY-MM-DD で保持する。
+          // 返却分(-R)注文のレンタル課金は「この一次受付日」までで締める。
+          // 最終検品が後日にずれても検品日まで課金を伸ばさない（過大請求防止）。
+          receptionReturnDate: (() => {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          })(),
           // 一次受付検品(検品1回目)の担当者を記録。
           fieldInspector: staff.name,
           receptionSignature: signature || null,
@@ -939,8 +946,12 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
       );
 
       if (targetOrder) {
+        // 返却分(-R)注文は「顧客が持ち込んだ日（一次受付日）」までで課金する。
+        // 一次受付で記録した receptionReturnDate を優先し、
+        // それを経ない経路（現場回収など receptionReturnDate 無し）は最終検品日にフォールバック。
         const today = new Date();
-        const actualReturnDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const actualReturnDate = (walkinOrder as any).receptionReturnDate || todayStr;
 
         // 検品実数（counted）を返却数量として確定
         const returnQuantities: Record<string, number> = {};

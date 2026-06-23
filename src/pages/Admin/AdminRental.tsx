@@ -152,7 +152,11 @@ export default function AdminRental() {
     if (items.length === 0) { triggerToast("品目を1件以上追加してください", "warn"); return; }
 
     const now = new Date();
-    const ongoing = draft.status === "レンタル中"; // 既に納品済み・稼働中の契約
+    // 登録ステータスに応じて在庫の扱いと工程フラグを決める。
+    const st = String(draft.status || "確認済み");
+    const isClosedReg = ["返却済", "返却済み", "完了"].includes(st); // 過去契約の記録（在庫を動かさない）
+    const isCollected = st === "検品待ち";                          // 回収済み・倉庫検品待ち（在庫はまだ出庫中）
+    const delivered = st !== "確認済み";                            // 確認済み のみ未納品
     const orderNumber = `RN-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     // 在庫を出庫（フラグ未設定のオブジェクトに対して減算 → 確実に1回だけ引く）。
     const seed: any = {
@@ -177,21 +181,31 @@ export default function AdminRental() {
       date: now.toLocaleDateString("ja-JP") + " • " + now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
       createdAt: now.toISOString(),
     };
-    const flags = deductOrderStock(seed);
-    const finalOrder: any = {
-      ...seed,
-      ...flags,
-      ...(ongoing
-        ? { staffStatus: "配送完了", deliveryConfirmedAt: now.toISOString() }
-        : { staffStatus: "配送予定" }),
-    };
+    // 在庫: 進行中(出庫中)の契約は減算する。返却済/完了 は「過去契約の記録」のため在庫を動かさず、
+    // 「出庫済み＋入庫済み(=精算済み)」フラグのみ立てて以後の在庫操作（自動入庫等）を起こさない。
+    let flags: any;
+    let lifecycle: any;
+    if (isClosedReg) {
+      flags = { stockDeducted: true, stockDeductedAt: now.toISOString(), stockRestored: true };
+      lifecycle = { staffStatus: "検品完了", deliveryConfirmedAt: now.toISOString(), actualReturnDate: draft.rentalEndDate || "" };
+    } else {
+      flags = deductOrderStock(seed); // 出庫（現物在庫を減算 + 出庫伝票）
+      lifecycle = delivered
+        ? {
+            staffStatus: isCollected ? "回収完了" : "配送完了",
+            deliveryConfirmedAt: now.toISOString(),
+            ...(isCollected ? { collectionConfirmedAt: now.toISOString() } : {}),
+          }
+        : { staffStatus: "配送予定" };
+    }
+    const finalOrder: any = { ...seed, ...flags, ...lifecycle };
     const blocks = getOrGenerateInvoiceBlocks(finalOrder);
     const t = (blocks || []).reduce(
       (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
       { subtotal: 0, tax: 0, total: 0 },
     );
     OrderBus.push("orders", { ...finalOrder, invoiceBlocks: blocks, subtotal: t.subtotal, tax: t.tax, total: t.total });
-    triggerToast(`レンタル契約 ${orderNumber} を${ongoing ? "稼働中として" : ""}登録しました`, "ok");
+    triggerToast(`レンタル契約 ${orderNumber} を「${st}」で登録しました`, "ok");
     setDocDrawerOpen(false);
     setTimeout(refresh, 300);
   };

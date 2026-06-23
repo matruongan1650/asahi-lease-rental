@@ -49,7 +49,7 @@ export default function AdminRentalRegisterModal({ open, onClose, onCreate }: Pr
   const [rentalStartDate, setRentalStartDate] = useState("");
   const [rentalEndDate, setRentalEndDate] = useState("");
   const [notes, setNotes] = useState("");
-  const [status, setStatus] = useState<"レンタル中" | "確認済み">("レンタル中");
+  const [status, setStatus] = useState<string>("レンタル中");
   const [lines, setLines] = useState<Line[]>([]);
 
   useEffect(() => {
@@ -97,7 +97,10 @@ export default function AdminRentalRegisterModal({ open, onClose, onCreate }: Pr
     const p = productById(pid);
     return p && requestedByProduct[pid] > Number(p.stock || 0);
   });
-  const hasStockShortage = stockShortProductIds.length > 0;
+  // 返却済/完了 は「過去契約の記録」として登録し在庫を出庫しないため、在庫不足でも登録を妨げない。
+  const CLOSED_REG_STATUSES = ["返却済", "完了"];
+  const deductsStock = !CLOSED_REG_STATUSES.includes(status);
+  const hasStockShortage = deductsStock && stockShortProductIds.length > 0;
   const canSubmit = !!companyName && !!personUserId && !!rentalStartDate && !!rentalEndDate
     && rentalEndDate >= rentalStartDate && validLines.length > 0 && !hasStockShortage;
 
@@ -271,10 +274,14 @@ export default function AdminRentalRegisterModal({ open, onClose, onCreate }: Pr
           <Field label="登録ステータス" required>
             <SelectInput
               value={status}
-              onChange={(e) => setStatus(e.target.value as "レンタル中" | "確認済み")}
+              onChange={(e) => setStatus(e.target.value)}
               options={[
-                { v: "レンタル中", l: "レンタル中（既に納品済み・稼働中）" },
                 { v: "確認済み", l: "確認済み（これから配送手配）" },
+                { v: "レンタル中", l: "レンタル中（既に納品済み・稼働中）" },
+                { v: "回収予定", l: "回収予定（回収手配済み・稼働中）" },
+                { v: "検品待ち", l: "検品待ち（回収済み・倉庫検品待ち）" },
+                { v: "返却済", l: "返却済（返却完了・過去契約の記録／在庫は動かしません）" },
+                { v: "完了", l: "完了（取引完了・過去契約の記録／在庫は動かしません）" },
               ]}
             />
           </Field>
