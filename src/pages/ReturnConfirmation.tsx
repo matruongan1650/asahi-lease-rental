@@ -170,11 +170,11 @@ function ReturnConfirmationMobile() {
       } catch { /* ignore */ }
 
       OrderBus.push("walkinReturns", {
+        // 決定的ID: 同一注文の同時／二重送信でも同じIDになり、OrderBus.push が upsert して
+        // 1件に集約される（多端末同時提出での幽霊伝票・二重 -R 注文を防止）。注文ID（一意・安定）を優先。
         id:
           "WIN-" +
-          (order.orderNumber || order.id || "").toString().replace(/[^0-9A-Za-z]/g, "") +
-          "-" +
-          Math.floor(Math.random() * 1000),
+          (order.id || order.orderNumber || "").toString().replace(/[^0-9A-Za-z]/g, ""),
         orderId: order.id,
         orderNumber: order.orderNumber,
         firestoreId: order.firestoreId,
