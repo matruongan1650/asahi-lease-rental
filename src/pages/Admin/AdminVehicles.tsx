@@ -238,7 +238,7 @@ export default function AdminVehicles() {
         );
       const matchStatus =
         statusFilter === "all" ||
-        (statusFilter === "inspection" && Number(v.inspectionDaysRemaining || 999) <= 30) ||
+        (statusFilter === "inspection" && Number(v.inspectionDaysRemaining ?? 999) <= 30) ||
         v.status === statusFilter;
       const matchCategory = categoryFilter === "all" || v.category === categoryFilter;
       return matchSearch && matchStatus && matchCategory;
@@ -247,7 +247,7 @@ export default function AdminVehicles() {
 
   const inspectionSchedule = useMemo(() => {
     return [...vehiclesLive]
-      .sort((a, b) => Number(a.inspectionDaysRemaining || 999) - Number(b.inspectionDaysRemaining || 999))
+      .sort((a, b) => Number(a.inspectionDaysRemaining ?? 999) - Number(b.inspectionDaysRemaining ?? 999))
       .slice(0, 8);
   }, [vehiclesLive]);
 
@@ -695,7 +695,7 @@ export default function AdminVehicles() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="font-black text-sm text-slate-800 truncate">{v.name}</div>
-                  <Badge tone={Number(v.inspectionDaysRemaining || 999) <= 30 ? "danger" : "default"}>
+                  <Badge tone={Number(v.inspectionDaysRemaining ?? 999) <= 30 ? "danger" : "default"}>
                     残り{v.inspectionDaysRemaining}日
                   </Badge>
                 </div>

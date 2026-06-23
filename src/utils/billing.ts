@@ -47,9 +47,12 @@ export interface RentalPeriodDetailed {
 }
 
 export function parseDateLocal(dateStr: string): Date {
-  // スラッシュ("2026/06/01")・余分な時刻部分を許容してローカル 00:00 で解釈する。
-  // （正規化しないと slash 形式で Invalid Date になり、請求 breakdown が空＝¥0 になる事故が起きる）
-  return new Date(String(dateStr).replace(/\//g, '-').slice(0, 10) + 'T00:00:00');
+  // スラッシュ("2026/06/01")・ゼロ埋め無し("2026/6/8")・余分な時刻部分を許容してローカル 00:00 で解釈する。
+  // （正規化しないと slash や非ゼロ埋めで Invalid Date になり、請求 breakdown が空＝¥0 になる事故が起きる）
+  const clean = String(dateStr).replace(/\//g, '-');
+  const m = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(clean.slice(0, 10) + 'T00:00:00');
 }
 
 export function daysBetween(a: Date, b: Date): number {

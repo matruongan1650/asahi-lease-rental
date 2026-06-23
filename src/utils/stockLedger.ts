@@ -136,7 +136,7 @@ export function deductOrderStock(order: any): { stockDeducted?: boolean; stockDe
  *
  * @param issuesList 省略時は order.itemIssues を使用。
  */
-export function restoreOrderStock(order: any, issuesList?: any[]): { stockRestored?: boolean } {
+export function restoreOrderStock(order: any, issuesList?: any[], opts?: { includeBuy?: boolean }): { stockRestored?: boolean } {
   if (!order) return {};
   // ライブの注文でガード（連打・多端末での二重加算防止）。
   const live = resolveLiveOrder(order);
@@ -144,11 +144,16 @@ export function restoreOrderStock(order: any, issuesList?: any[]): { stockRestor
   if (!wasDeducted(guard)) return {}; // 未出庫 → 戻す在庫なし
   if (guard.stockRestored) return {}; // 既に戻し済み（ライブ判定で二重加算防止）
   const issues = issuesByItemId(issuesList !== undefined ? issuesList : (order.itemIssues || []));
-  const rentItems = Array.isArray(order.items) ? order.items.filter((it: any) => it && it.type === "rent") : [];
+  // 通常はレンタル品のみ戻す（売却済み販売品は戻さない）。納品前キャンセル(出庫取消)のみ includeBuy で
+  // 販売品も戻す（受注確定で減算した buy 在庫が永久欠損するのを防ぐ）。
+  const includeBuy = !!(opts && opts.includeBuy);
+  const targetItems = Array.isArray(order.items)
+    ? order.items.filter((it: any) => it && (it.type === "rent" || (includeBuy && it.type === "buy")))
+    : [];
   const date = stampDate();
   const ref = order.orderNumber || order.id || "";
   let restored = false;
-  rentItems.forEach((it: any) => {
+  targetItems.forEach((it: any) => {
     const id = String(it.id || it.productId || "");
     // 戻し上限 = 受注時に実際に在庫から引けた数量。過剰受注で 0 クランプされた分は戻さない（在庫水増し防止）。
     const cap = it.stockDeductedQty != null ? Math.max(0, Number(it.stockDeductedQty)) : Number(it.quantity || 0);
@@ -194,5 +199,8 @@ export function settleReturnStock(order: any, nextStatus?: string): { stockResto
   if (String(nextStatus) === "キャンセル" && (order as any).deliveryConfirmedAt) {
     return {};
   }
-  return restoreOrderStock(order);
+  // 納品前キャンセル(出庫取消)は販売品(buy)も在庫へ戻す。返却済/完了 など正規クローズは rent のみ
+  //（売却完了した販売品は手元に戻らないため戻さない）。
+  const isPreDeliveryCancel = String(nextStatus) === "キャンセル" && !(order as any).deliveryConfirmedAt;
+  return restoreOrderStock(order, undefined, { includeBuy: isPreDeliveryCancel });
 }
