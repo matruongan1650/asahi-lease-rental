@@ -131,7 +131,7 @@ export default function CheckoutConfirmDesktop() {
                     <h4 className="text-sm font-bold text-slate-900 truncate">{item.name}</h4>
                     <p className="text-xs text-slate-500">
                       {item.type === 'rent' ? 'レンタル' : '販売'} × {item.quantity}{getItemUnit(item)}
-                      {item.guaranteeFeeFlat && item.guaranteeFeeFlat > 0 ? <span className="block text-[10px] text-slate-400 mt-0.5">※初回保証料(¥{Math.round(item.guaranteeFeeFlat).toLocaleString()})含む</span> : null}
+                      {item.guaranteeFeeFlat && item.guaranteeFeeFlat > 0 ? <span className="block text-[10px] text-slate-400 mt-0.5">※初回保証料 ¥{Math.round(item.guaranteeFeeFlat).toLocaleString()} を別途加算</span> : null}
                     </p>
                   </div>
                   <div className="text-right shrink-0">

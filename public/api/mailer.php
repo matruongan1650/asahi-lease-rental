@@ -104,8 +104,10 @@ function send_smtp_mail(string $to, string $subject, string $body): array
     $message = implode("\r\n", $headers) . "\r\n\r\n" . chunk_split(base64_encode($body));
     fwrite($fp, str_replace("\n.", "\n..", $message) . "\r\n.\r\n");
     smtp_expect($fp, ['250']);
-    smtp_cmd($fp, 'QUIT', ['221']);
-    fclose($fp);
+    // 250 受領 = メールは受理済み。以降の QUIT/切断失敗で例外を投げない
+    //（投げると呼び出し側の claim 取消→翌クロンで同一顧客へ二重送信になるため）。
+    try { smtp_cmd($fp, 'QUIT', ['221']); } catch (Throwable $e) { /* already accepted */ }
+    @fclose($fp);
 
     return ['ok' => true, 'to' => $to];
 }

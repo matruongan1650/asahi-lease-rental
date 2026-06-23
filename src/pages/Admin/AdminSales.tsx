@@ -6,7 +6,7 @@ import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
 import OrderBus from "../../lib/orderBus";
 import { confirmDialog } from "../../components/AppDialog";
-import { deductOrderStock } from "../../utils/stockLedger";
+import { deductOrderStock, settleReturnStock } from "../../utils/stockLedger";
 import { getTaxRate } from "../../utils/billing";
 
 type SalesView = "all" | "pending" | "confirmed" | "closed";
@@ -271,7 +271,7 @@ export default function AdminSales() {
         onUpdateStatus={(id, status, staffStatus) => {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定。出庫を確実に行う。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : {};
+          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status); // 混在注文のキャンセル/返却でレンタル在庫を戻す（他画面と統一）
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);

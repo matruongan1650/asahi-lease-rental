@@ -250,6 +250,7 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
       expectedMonths.every((m) => storedMonths.includes(m));
     // 未確定注文: breakdown が空 or 全期間を覆っていなければ再計算。確定注文: 空のときだけ補完。
     const needsRecompute = !Array.isArray(mb) || mb.length === 0 || (!hasCachedBlocks && !spansFull);
+    let result: any = item;
     if (
       item &&
       item.type === "rent" &&
@@ -269,7 +270,7 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
         );
         // 未確定の span 再計算時は新値で上書き（古い1か月分の値を残すと breakdown と総額が食い違う）。
         // 確定注文での空補完時は既存の手動上書き値を尊重する。
-        return {
+        result = {
           ...item,
           monthlyBreakdown: breakdown,
           calculatedPrice: hasCachedBlocks ? (item.calculatedPrice ?? totalPrice) : totalPrice,
@@ -277,10 +278,28 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
           billedDays: hasCachedBlocks ? (item.billedDays ?? totalBilledDays) : totalBilledDays,
         };
       } catch {
-        return item;
+        result = item;
       }
     }
-    return item;
+    // 管理者が単価(calculatedPrice)を手動上書きすると、月別 breakdown の合計が calculatedPrice と食い違い、
+    // 請求ブロック(breakdown 基準)と明細(calculatedPrice 基準)・総額がズレる。breakdown を calculatedPrice に
+    // 比例スケールして、ブロック合計＝明細＝総額を一致させ、上書きを請求へ反映する（端数は最終月で吸収）。
+    if (result && result.type === "rent" && Array.isArray(result.monthlyBreakdown) && result.monthlyBreakdown.length && result.calculatedPrice != null) {
+      const sum = result.monthlyBreakdown.reduce((s: number, b: any) => s + Number(b?.price || 0), 0);
+      const target = Number(result.calculatedPrice) || 0;
+      if (sum > 0 && target > 0 && Math.abs(sum - target) > 1) {
+        const factor = target / sum;
+        let acc = 0;
+        const scaled = result.monthlyBreakdown.map((b: any, i: number, arr: any[]) => {
+          if (i === arr.length - 1) return { ...b, price: Math.max(0, target - acc) };
+          const p = Math.round(Number(b?.price || 0) * factor);
+          acc += p;
+          return { ...b, price: p };
+        });
+        result = { ...result, monthlyBreakdown: scaled };
+      }
+    }
+    return result;
   });
 }
 
