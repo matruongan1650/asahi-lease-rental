@@ -133,8 +133,8 @@ export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
             detail: "販売品",
             quantity: it.quantity ?? 1,
             unit: getItemUnit(it),
-            unitPrice: it.buyPrice || 0,
-            lineTotal: (it.buyPrice || 0) * (it.quantity ?? 1),
+            unitPrice: Number(it.calculatedPrice ?? it.buyPrice) || 0,
+            lineTotal: (Number(it.calculatedPrice ?? it.buyPrice) || 0) * (it.quantity ?? 1),
             typeLabel: "販売"
           });
         }

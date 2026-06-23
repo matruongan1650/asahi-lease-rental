@@ -325,13 +325,15 @@ export function calculateMonthlyInvoice(order: Order, monthStr: string): { subto
       // Buy items are billed in the order month
       const orderMonth = orderMonthKey(order);
       if (orderMonth === monthStr) {
-        const itemPrice = (item.buyPrice || 0) * item.quantity;
+        // calculatedPrice を単価の正とする（管理者の手動上書きを反映。未上書き時は buyPrice と同値）。
+        const buyUnit = Number(item.calculatedPrice ?? item.buyPrice) || 0;
+        const itemPrice = buyUnit * item.quantity;
         subtotal += itemPrice;
         itemsBreakdown.push({
           id: item.id,
           name: item.name,
           quantity: item.quantity,
-          price: item.buyPrice || 0,
+          price: buyUnit,
           total: itemPrice,
           type: 'buy'
         });
@@ -536,7 +538,8 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
         }
       } else if (item.type === 'buy') {
         if (monthStr === orderMonth) {
-          buySubtotal += (item.buyPrice || 0) * item.quantity;
+          // calculatedPrice を単価の正とする（管理者の手動上書きを反映。未上書き時は buyPrice と同値）。
+          buySubtotal += (Number(item.calculatedPrice ?? item.buyPrice) || 0) * item.quantity;
         }
       }
     });
