@@ -152,6 +152,10 @@ export interface FinalizeReturnOptions {
    *  保安車両の返却記録（vehicleCheckin）や燃料補給費（fuelCharge）など。
    *  fuelCharge は請求書ブロック生成時に extraCosts として計上される。 */
   extraFields?: Record<string, any>;
+  /** 本サイクルで実際に在庫へ戻した数量（注文明細ID別）。一部返却の継続（残存）注文の
+   *  stockDeductedQty 予算をこの分だけ減算し、次サイクル以降の戻し上限を正しく引き継ぐ
+   *  （過剰受注×複数回部分返却での over-restock 防止）。 */
+  restockedByItem?: Record<string, number>;
 }
 
 /**
@@ -168,7 +172,7 @@ export async function finalizePartialReturn(
   options: FinalizeReturnOptions = {}
 ): Promise<ReturnSplit> {
   const split = computeReturnSplit(order, returnQuantities, actualReturnDate, options.itemIssues || []);
-  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature, collectionPhotos, extraFields = {} } = options;
+  const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature, collectionPhotos, extraFields = {}, restockedByItem = {} } = options;
   const photoUpdate = collectionPhotos && collectionPhotos.length > 0 ? { collectionPhotos } : {};
   // 請求ブロックには弁償費・燃料費などの ExtraCost が注入されるため、注文の subtotal/tax/total は
   // ブロック合計から取る（split.* のままだと弁償費が注文合計に反映されず、明細と総額が食い違う）。
@@ -222,9 +226,28 @@ export async function finalizePartialReturn(
       ...photoUpdate,
     });
   } else {
+    // 継続（残存）注文の在庫予算を本サイクルの実戻し分だけ減算する（draw-down）。
+    // stockDeductedQty は「出庫済みで未だ戻していない数量」を表す予算であり、複数サイクルの部分返却で
+    // 据え置くと過剰受注時に出庫した以上に戻して over-restock になる。明細ID（無ければ名称）で突合し、
+    // stockDeductedQty が未設定（旧データ）の品目は据え置く（次サイクルは quantity を上限に正しく動く）。
+    const remainingItemsDrawnDown = split.remainingItemsList.map((it: any) => {
+      const restocked = Number(restockedByItem[it.id] ?? restockedByItem[it.name] ?? 0);
+      if (restocked <= 0 || it.stockDeductedQty == null) return it;
+      return { ...it, stockDeductedQty: Math.max(0, Number(it.stockDeductedQty) - restocked) };
+    });
+    // 出庫済み在庫を本サイクルで全量戻し切った（残予算0）場合のみ、継続注文に stockRestored を立てて
+    // 以後の二重入庫（admin 救済クローズ settleReturnStock 等）を明示的に防ぐ。残予算>0 なら正当な
+    // 残数返却が残るため立てない（立てると次サイクルの正当な戻しがブロックされる）。
+    const anyRestocked = Object.values(restockedByItem).some((v: any) => Number(v) > 0);
+    const totalRemainingBudget = remainingItemsDrawnDown.reduce(
+      (s: number, it: any) => s + (it.stockDeductedQty != null ? Math.max(0, Number(it.stockDeductedQty)) : Number(it.quantity || 0)),
+      0,
+    );
+    const restoredBackstop = anyRestocked && totalRemainingBudget === 0 ? { stockRestored: true } : {};
+
     const tempRemaining = {
       ...order,
-      items: split.remainingItemsList,
+      items: remainingItemsDrawnDown,
       subtotal: split.remaining.subtotal,
       tax: split.remaining.tax,
       total: split.remaining.total,
@@ -235,7 +258,7 @@ export async function finalizePartialReturn(
     const rt = sumBlocks(remainingInvoiceBlocks);
 
     await deps.updateOrder(order.id, {
-      items: split.remainingItemsList,
+      items: remainingItemsDrawnDown,
       subtotal: rt.subtotal,
       tax: rt.tax,
       total: rt.total,
@@ -245,6 +268,7 @@ export async function finalizePartialReturn(
       ...(itemIssues ? { itemIssues } : {}),
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
       ...(collectionSignature ? { collectionSignature } : {}),
+      ...restoredBackstop,
       ...photoUpdate,
     });
 

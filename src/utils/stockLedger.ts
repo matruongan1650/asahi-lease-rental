@@ -135,8 +135,15 @@ export function deductOrderStock(order: any): { stockDeducted?: boolean; stockDe
  * 戻した場合は { stockRestored: true } を返すので、呼び出し側で注文更新へマージすること。
  *
  * @param issuesList 省略時は order.itemIssues を使用。
+ * @param opts.collect 渡すと「実際に在庫へ戻した数量」を品目ID別に積算して書き込む（商品が見つかり
+ *   現物在庫を加算できた分のみ）。一部返却の複数サイクルで stockDeductedQty 予算を正しく減算する（draw-down）
+ *   ために、呼び出し側がこの実戻し数を使う。商品未発見で戻せなかった分は積算しない（幽霊減算の防止）。
  */
-export function restoreOrderStock(order: any, issuesList?: any[], opts?: { includeBuy?: boolean }): { stockRestored?: boolean } {
+export function restoreOrderStock(
+  order: any,
+  issuesList?: any[],
+  opts?: { includeBuy?: boolean; collect?: Record<string, number> },
+): { stockRestored?: boolean } {
   if (!order) return {};
   // ライブの注文でガード（連打・多端末での二重加算防止）。
   const live = resolveLiveOrder(order);
@@ -176,6 +183,11 @@ export function restoreOrderStock(order: any, issuesList?: any[], opts?: { inclu
           orderId: ref,
         });
         restored = true;
+        // 実際に戻せた分だけ積算（draw-down 用）。商品未発見（else 節）では積算しない。
+        if (opts && opts.collect) {
+          const ck = id || String(it.name || "");
+          opts.collect[ck] = (opts.collect[ck] || 0) + back;
+        }
       } else {
         // 商品マスタに該当が無く在庫へ戻せなかった（id/名称不一致）。サイレント欠損を防ぐため警告する。
         console.warn(`[restoreOrderStock] 商品が見つからず入庫できません: id=${id}, name=${it.name}, qty=${back}, order=${ref}`);

@@ -36,6 +36,7 @@ import { useOrders } from "../../context/OrderContext";
 import { useUser, UserProfile } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { finalizePartialReturn } from "../../utils/returnProcessing";
+import { restoreOrderStock } from "../../utils/stockLedger";
 import { computeCompensationCharge } from "../../utils/billing";
 import { byOrderDateDesc } from "../../utils/orderSort";
 import { usePagedList } from "../../hooks/usePagedList";
@@ -902,17 +903,9 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
     const defectiveQtyOf = (p: any) =>
       (p.report || []).filter((r: any) => !isShortageReason(r?.reason)).reduce((s: number, r: any) => s + Number(r?.qty || 0), 0);
     const goodQtyOf = (p: any) => Math.max(0, Number(p.counted || 0) - defectiveQtyOf(p));
-    // 紐づく注文がある場合は、その明細の出庫数(stockDeductedQty)を上限に良品戻しをクランプする。
-    // （過去に在庫不足で過剰予約された注文を返却した際、出庫した以上に在庫が増える over-restock を防ぐ。
-    //   restoreOrderStock の cap と同じ方針。注文に紐づかない持込は現物が戻っているので従来どおり無制限。）
-    const cappedGoodOf = (p: any) => {
-      const good = goodQtyOf(p);
-      if (!linkedOrder) return good;
-      const oi = ((linkedOrder as any).items || []).find((x: any) => x.id === p.id || x.name === p.name);
-      if (!oi) return good;
-      const cap = oi.stockDeductedQty != null ? Math.max(0, Number(oi.stockDeductedQty)) : Number(oi.quantity || good);
-      return Math.max(0, Math.min(good, cap));
-    };
+    // 実際に在庫へ戻した数量（注文明細ID別）。一部返却の継続注文へ伝播し、stockDeductedQty 予算を減算する
+    //（複数サイクルでの over-restock 防止。詳細は finalizePartialReturn / stockLedger.restoreOrderStock）。
+    const restockedByItem: Record<string, number> = {};
     // 多端末で同じ最終検品を同時確定した際の二重入庫を防ぐ:
     // restock 直前にライブの注文を再取得し、既に stockRestored 済みならスキップする
     //（restoreOrderStock と同じライブガード。先に確定した端末のフラグが同期していれば二重加算しない）。
@@ -920,19 +913,47 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
       ? OrderBus.getAll<any>("orders").find((o: any) => o.id === (linkedOrder as any).id || o.firestoreId === (linkedOrder as any).firestoreId)
       : null;
     const liveAlreadyRestored = !!(freshLinked && (freshLinked as any).stockRestored);
-    if (ml.addStockMove && shouldRestock && !liveAlreadyRestored) {
-      valid.forEach(p => {
-        const good = cappedGoodOf(p);
-        if (good <= 0) return; // 全数が不良/不足なら在庫へ戻さない
-        ml.addStockMove("入庫", { item: p.name, qty: good, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" });
-      });
-      if (ml.adjustStock && ml.findProductByName) {
+    if (shouldRestock && !liveAlreadyRestored) {
+      if (linkedOrder) {
+        // 注文に紐づく返却: 在庫戻しを唯一の権威 restoreOrderStock に委譲する（インラインの cappedGoodOf を廃止）。
+        // 出庫数(stockDeductedQty)を予算上限に、本サイクルの良品数(良品=counted−不良)だけ戻す。
+        // 合成注文の items に「今回の良品数」を quantity、現在の残予算を stockDeductedQty として渡すと、
+        // restoreOrderStock は back = min(quantity, stockDeductedQty) を戻す（issues は良品計算で控除済みのため空）。
+        // id/firestoreId/orderNumber を持たせない＝resolveLiveOrder が null を返し、合成注文自身がガード対象になる
+        //（stockRestored 未設定なので戻しが実行される）。実際に戻せた数は restockedByItem に積算される。
+        const restockItems = valid
+          .map((p: any) => {
+            const oi = ((linkedOrder as any).items || []).find((x: any) => x.id === p.id || x.name === p.name);
+            if (!oi) return null; // 注文に無い品目は予算が無いため戻さない（無制限戻しは no-linkedOrder 経路のみ）。
+            const budget = oi.stockDeductedQty != null ? Math.max(0, Number(oi.stockDeductedQty)) : Number(oi.quantity || 0);
+            return {
+              id: oi.id,
+              name: oi.name,
+              type: oi.type || "rent",
+              quantity: goodQtyOf(p),
+              returnedQuantity: 0,
+              stockDeductedQty: budget,
+            };
+          })
+          .filter(Boolean);
+        if (restockItems.length > 0) {
+          restoreOrderStock({ items: restockItems, stockDeducted: true }, [], { collect: restockedByItem });
+        }
+      } else if (ml.addStockMove) {
+        // 注文に紐づかない持込（来客の直接返却）: 現物が戻っているので従来どおり無制限に戻す。
         valid.forEach(p => {
-          const good = cappedGoodOf(p);
-          if (good <= 0) return;
-          const fp = ml.findProductByName(p.name);
-          if (fp) ml.adjustStock(fp.firestoreId || fp.id, good);
+          const good = goodQtyOf(p);
+          if (good <= 0) return; // 全数が不良/不足なら在庫へ戻さない
+          ml.addStockMove("入庫", { item: p.name, qty: good, ref: "持込返却", icon: isVehicle(p) ? "car" : "package" });
         });
+        if (ml.adjustStock && ml.findProductByName) {
+          valid.forEach(p => {
+            const good = goodQtyOf(p);
+            if (good <= 0) return;
+            const fp = ml.findProductByName(p.name);
+            if (fp) ml.adjustStock(fp.firestoreId || fp.id, good);
+          });
+        }
       }
     }
 
@@ -1012,6 +1033,8 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
               collectionSignature: effectiveSignature,
               collectionPhotos: Array.isArray(walkinOrder.photos) ? walkinOrder.photos : [],
               extraFields,
+              // 今回戻した数を継続注文へ伝播し stockDeductedQty 予算を減算（複数サイクルの over-restock 防止）。
+              restockedByItem,
             }
           );
         } catch (e) {
