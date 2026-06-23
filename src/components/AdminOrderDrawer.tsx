@@ -315,14 +315,22 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
 
   const handleSaveEdit = () => {
     if (!onUpdateOrder || !editDraft) return;
-    const normalizedItems = (editDraft.items || []).map((item: any) => ({
-      ...item,
-      quantity: Number(item.quantity || 0),
-      rentPrice: item.rentPrice === "" || item.rentPrice === undefined ? item.rentPrice : Number(item.rentPrice),
-      buyPrice: item.buyPrice === "" || item.buyPrice === undefined ? item.buyPrice : Number(item.buyPrice),
-      calculatedPrice: item.calculatedPrice === "" || item.calculatedPrice === undefined ? item.calculatedPrice : Number(item.calculatedPrice),
-      guaranteeFeeFlat: Number(item.guaranteeFeeFlat || 0),
-    }));
+    const normalizedItems = (editDraft.items || []).map((item: any) => {
+      const newCalc = item.calculatedPrice === "" || item.calculatedPrice === undefined ? item.calculatedPrice : Number(item.calculatedPrice);
+      const orig = (order.items || []).find((o: any) => o && o.id === item.id && o.type === item.type);
+      // 管理者が単価(calculatedPrice)を手動変更した品目には priceOverride を立て、請求の自動再計算
+      //（さかのぼり/期限延長）で上書き額が消えないようにする。既存の override も保持する。
+      const priceChanged = orig != null && Number(orig.calculatedPrice) !== Number(newCalc);
+      return {
+        ...item,
+        quantity: Number(item.quantity || 0),
+        rentPrice: item.rentPrice === "" || item.rentPrice === undefined ? item.rentPrice : Number(item.rentPrice),
+        buyPrice: item.buyPrice === "" || item.buyPrice === undefined ? item.buyPrice : Number(item.buyPrice),
+        calculatedPrice: newCalc,
+        guaranteeFeeFlat: Number(item.guaranteeFeeFlat || 0),
+        ...((priceChanged || item.priceOverride) ? { priceOverride: true } : {}),
+      };
+    });
 
     // 品目ゼロでの保存を禁止する。空のまま保存すると注文の items が空になり（金額¥0・受注/レンタル一覧から消える等）、
     // 過去に RN-2026-9091 が items を失った原因でもある。最低1品目を必須にする。
@@ -376,7 +384,8 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       updates.invoiceBlocks = undefined;
       // 「金額を再計算」ボタンの押し忘れで明細と合計が乖離したまま保存されるのを防ぐため、
       // 保存時に明細＋配送料から subtotal/tax/total を確定的に再計算する。
-      const recomputedSubtotal = normalizedItems.reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + Number(editDraft.delivery || 0);
+      // 配送料は admin が削除済み(deliveryDismissed)なら合計へ再加算しない（請求ブロック側も注入しないため整合させる）。
+      const recomputedSubtotal = normalizedItems.reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + ((editDraft as any).deliveryDismissed ? 0 : Number(editDraft.delivery || 0));
       const recomputedTax = Math.floor(recomputedSubtotal * getTaxRate());
       updates.subtotal = recomputedSubtotal;
       updates.tax = recomputedTax;

@@ -238,21 +238,16 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
   // 作り直すと、frozen なブロック合計と PDF 明細がズレ／管理者の手動単価(calculatedPrice)上書きが消える。
   // span 全体の再計算は「未確定(invoiceBlocks 空)」の注文にのみ適用する。
   const hasCachedBlocks = !!(order.invoiceBlocks && order.invoiceBlocks.length > 0);
-  // 日付はスラッシュ形式を含み得るのでハイフンへ正規化（calculateRentalPrice が壊れて breakdown 空＝¥0 になるのを防ぐ）。
+  // 日付はスラッシュ/ゼロ埋め無しを含み得るので正規化（calculateRentalPrice が壊れて breakdown 空＝¥0 になるのを防ぐ）。
   const startNorm = order.rentalStartDate ? String(order.rentalStartDate).replace(/\//g, "-").slice(0, 10) : "";
   const endNorm = endDate ? String(endDate).replace(/\//g, "-").slice(0, 10) : "";
-  // 期待される月の集合（開始〜課金終了）。未確定注文で breakdown が全期間をカバーしない（さかのぼり/長期で
-  // 作成月1か月分しか無い）場合に再計算するための判定。確定注文では使わない。
-  const expectedMonths = hasCachedBlocks ? [] : monthsInSpan(startNorm, endNorm);
   return (order.items || []).map((item: any) => {
     const mb = item?.monthlyBreakdown;
-    const storedMonths: string[] = Array.isArray(mb) ? mb.map((b: any) => b?.monthStr).filter(Boolean) : [];
-    const spansFull =
-      expectedMonths.length > 0 &&
-      storedMonths.length === expectedMonths.length &&
-      expectedMonths.every((m) => storedMonths.includes(m));
-    // 未確定注文: breakdown が空 or 全期間を覆っていなければ再計算。確定注文: 空のときだけ補完。
-    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || (!hasCachedBlocks && !spansFull);
+    // 未確定(invoiceBlocks 空)の注文は常に rentPrice + billingEndDate から breakdown を作り直す。
+    // これでさかのぼり登録・期限超過の自動延長(同一月内の日数延長を含む)が正しく課金される。
+    // 例外: 管理者が単価を手動上書きした注文(priceOverride)は作り直さず、上書き額を尊重し下のスケーリングで整合させる。
+    // 確定(キャッシュ済み)注文は frozen。breakdown が空のときだけ補完する。
+    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || (!hasCachedBlocks && !item?.priceOverride);
     let result: any = item;
     if (
       item &&

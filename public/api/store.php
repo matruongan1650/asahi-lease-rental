@@ -51,8 +51,8 @@ try {
                 $out = $scoped;
             } elseif ($name === 'mailLogs' || $name === 'staffMessages') {
                 $out = []; // 顧客には配信しない（送信メールログ・社内連絡）
-            } elseif ($name === 'returnInspections') {
-                // 自分の注文に紐づく検品のみ返す（他顧客の検品結果の漏洩防止）。
+            } elseif ($name === 'returnInspections' || $name === 'walkinReturns') {
+                // 自分の注文に紐づく検品/持込返却のみ返す（他顧客の検品結果・PII の漏洩防止）。
                 $owned = [];
                 $os = $pdo->prepare("SELECT id, data FROM records WHERE store = 'orders' AND deleted = 0");
                 $os->execute();
@@ -128,17 +128,28 @@ try {
             } elseif ($name === 'walkinReturns') {
                 // 顧客は「自分の注文に紐づく」持込返却(walkinReturns)チケットのみ作成/更新できる。
                 // 直接持ち込み返却フローがこのストアへ書くため、許可しないと返却が 403 で失われる。
-                $oid = (string) ($body['orderId'] ?? '');
-                $ownsOrder = false;
-                if ($oid !== '') {
+                $ownsOrderId = static function (string $oid) use ($pdo, $cu): bool {
+                    if ($oid === '') return false;
                     $os = $pdo->prepare("SELECT data FROM records WHERE store = 'orders' AND id = ?");
                     $os->execute([$oid]);
                     $oraw = $os->fetchColumn();
                     $odec = is_string($oraw) ? json_decode($oraw, true) : null;
-                    $ownsOrder = is_array($odec) && (string) ($odec['userId'] ?? '') === $cu['uid'];
-                }
-                if (!$ownsOrder) {
+                    return is_array($odec) && (string) ($odec['userId'] ?? '') === $cu['uid'];
+                };
+                // 入力 orderId が本人所有であること。
+                if (!$ownsOrderId((string) ($body['orderId'] ?? ''))) {
                     json_out(['error' => 'forbidden'], 403);
+                }
+                // 既存レコードがある場合、その保存済み orderId も本人所有でなければ拒否
+                //（他人のチケット id を狙って本人 orderId を送る上書き乗っ取りを防ぐ）。
+                $wprev = $pdo->prepare("SELECT data FROM records WHERE store = 'walkinReturns' AND id = ?");
+                $wprev->execute([$id]);
+                $wpraw = $wprev->fetchColumn();
+                if (is_string($wpraw) && $wpraw !== '') {
+                    $wpdec = json_decode($wpraw, true);
+                    if (!is_array($wpdec) || !$ownsOrderId((string) ($wpdec['orderId'] ?? ''))) {
+                        json_out(['error' => 'forbidden'], 403);
+                    }
                 }
             } else {
                 // 非特権顧客が書き込めるのは自分の orders / users / 自注文の walkinReturns のみ。

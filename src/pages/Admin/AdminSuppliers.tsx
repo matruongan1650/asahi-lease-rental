@@ -186,7 +186,7 @@ export default function AdminSuppliers() {
       setSel((prev: any) => prev && prev.id === editingId ? { ...prev, ...item } : prev);
       triggerToast(`仕入先 ${item.name} を更新しました`, "ok");
     } else {
-      OrderBus.push("suppliers", { id: "SP-" + Date.now().toString().slice(-5), ...item });
+      OrderBus.push("suppliers", { id: "SP-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6), ...item });
       triggerToast(`仕入先 ${item.name} を追加しました`, "ok");
     }
     setIsAddModalOpen(false);
