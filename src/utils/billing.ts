@@ -244,10 +244,11 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
   return (order.items || []).map((item: any) => {
     const mb = item?.monthlyBreakdown;
     // 未確定(invoiceBlocks 空)の注文は常に rentPrice + billingEndDate から breakdown を作り直す。
-    // これでさかのぼり登録・期限超過の自動延長(同一月内の日数延長を含む)が正しく課金される。
-    // 例外: 管理者が単価を手動上書きした注文(priceOverride)は作り直さず、上書き額を尊重し下のスケーリングで整合させる。
+    // これでさかのぼり登録・期限超過の自動延長(同一月内の日数延長を含む)・月集合の変化が正しく反映される。
+    // 管理者が単価を手動上書きした注文(priceOverride)も「月割り」は作り直すが、calculatedPrice は
+    // 上書き額を温存し、下のスケーリングで recomputed breakdown を上書き総額へ比例配分して整合させる。
     // 確定(キャッシュ済み)注文は frozen。breakdown が空のときだけ補完する。
-    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || (!hasCachedBlocks && !item?.priceOverride);
+    const needsRecompute = !Array.isArray(mb) || mb.length === 0 || !hasCachedBlocks;
     let result: any = item;
     if (
       item &&
@@ -271,7 +272,9 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
         result = {
           ...item,
           monthlyBreakdown: breakdown,
-          calculatedPrice: hasCachedBlocks ? (item.calculatedPrice ?? totalPrice) : totalPrice,
+          // 確定注文 or 手動上書きは calculatedPrice を温存（override は下のスケーリングで breakdown を総額へ整合）。
+          // それ以外は再計算した自然総額を採用（期限延長を反映）。日数は常に再計算値（実期間）を使う。
+          calculatedPrice: (hasCachedBlocks || item.priceOverride) ? (item.calculatedPrice ?? totalPrice) : totalPrice,
           rentalDays: hasCachedBlocks ? (item.rentalDays ?? totalActualDays) : totalActualDays,
           billedDays: hasCachedBlocks ? (item.billedDays ?? totalBilledDays) : totalBilledDays,
         };

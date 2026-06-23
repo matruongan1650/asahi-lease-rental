@@ -150,6 +150,8 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       const perUnit = item.calculatedPrice ?? (item.type === 'rent' ? ((item.rentPrice || 0) * (item.rentalDays || 1)) : (item.buyPrice || 0));
       return {
         ...item,
+        // 単価列は perUnit（1単位あたりの期間合計）。設定しないと単価列が ¥0 表示になる。
+        price: perUnit,
         // 金額列は明細合計（単価×数量）にする。block 無しフォールバックで単価のまま出すと、
         // 数量2以上のとき金額列の合計が小計(order.subtotal=単価×数量)に一致しなかった。
         calculatedPrice: perUnit * qty,

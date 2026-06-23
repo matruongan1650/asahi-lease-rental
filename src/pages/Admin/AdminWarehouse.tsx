@@ -17,6 +17,7 @@ import {
 } from "../../components/AdminUI";
 import { useAdminCollection, useAdminData } from "../../context/AdminDataContext";
 import { useVehicles, type VehicleDetail } from "../../context/VehicleContext";
+import { daysUntil } from "../../context/MobileLiveContext";
 import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { getCategoryIcon, getSupplyCategories, isVehicleCategory } from "../../utils/productUtils";
@@ -222,9 +223,15 @@ export default function AdminWarehouse() {
     });
   }, [supplyRows, supplySearch, supplyCategory, stockFilter]);
 
+  // 車検残日数は保存値ではなく inspectionDate から毎回再計算（経過で車検切れになった車両も拾う。AdminVehicles と同方針）。
+  const vehiclesLive = useMemo(
+    () => (vehicles || []).map((v: any) => ({ ...v, inspectionDaysRemaining: daysUntil(v.inspectionDate) ?? v.inspectionDaysRemaining })),
+    [vehicles],
+  );
+
   const filteredVehicles = useMemo(() => {
     const q = vehicleSearch.trim().toLowerCase();
-    return (vehicles || []).filter((v) => {
+    return vehiclesLive.filter((v) => {
       const matchesSearch =
         !q ||
         [v.id, v.name, v.plate, v.category, v.manufacturer].some((value) =>
@@ -232,21 +239,21 @@ export default function AdminWarehouse() {
         );
       const matchesStatus =
         vehicleFilter === "all" ||
-        (vehicleFilter === "inspection" && Number(v.inspectionDaysRemaining || 999) <= 30) ||
+        (vehicleFilter === "inspection" && Number(v.inspectionDaysRemaining ?? 999) <= 30) ||
         v.status === vehicleFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [vehicles, vehicleSearch, vehicleFilter]);
+  }, [vehiclesLive, vehicleSearch, vehicleFilter]);
 
   const stats = useMemo(() => {
     const totalSupply = supplyRows.reduce((sum, r) => sum + r.total, 0);
     const rentedSupply = supplyRows.reduce((sum, r) => sum + r.rented, 0);
     const availableSupply = supplyRows.reduce((sum, r) => sum + r.available, 0);
     const lowStock = supplyRows.filter((r) => r.status === "要補充" || r.status === "在庫なし");
-    const vehicleInUse = vehicles.filter((v) => v.status === "使用中").length;
-    const vehicleIdle = vehicles.filter((v) => v.status === "空車").length;
-    const vehicleMaint = vehicles.filter((v) => v.status === "整備中").length;
-    const vehicleAlerts = vehicles.filter((v) => v.status === "整備中" || Number(v.inspectionDaysRemaining || 999) <= 30 || (v.alerts || []).length > 0);
+    const vehicleInUse = vehiclesLive.filter((v) => v.status === "使用中").length;
+    const vehicleIdle = vehiclesLive.filter((v) => v.status === "空車").length;
+    const vehicleMaint = vehiclesLive.filter((v) => v.status === "整備中").length;
+    const vehicleAlerts = vehiclesLive.filter((v) => v.status === "整備中" || Number(v.inspectionDaysRemaining ?? 999) <= 30 || (v.alerts || []).length > 0);
     return {
       totalSupply,
       rentedSupply,
@@ -258,7 +265,7 @@ export default function AdminWarehouse() {
       vehicleAlerts,
       alertCount: lowStock.length + vehicleAlerts.length
     };
-  }, [supplyRows, vehicles]);
+  }, [supplyRows, vehiclesLive]);
 
   const categorySummary = useMemo(() => {
     const map = new Map<string, { category: string; total: number; rented: number; available: number; count: number }>();
@@ -566,7 +573,7 @@ export default function AdminWarehouse() {
     {
       h: "車検",
       cell: (v: VehicleDetail) => {
-        const warn = Number(v.inspectionDaysRemaining || 999) <= 30;
+        const warn = Number(v.inspectionDaysRemaining ?? 999) <= 30;
         return (
           <div>
             <div className={`font-mono font-bold ${warn ? "text-[#d45233]" : "text-slate-700"}`}>
@@ -869,7 +876,7 @@ export default function AdminWarehouse() {
             </Panel>
             <Panel title="注意事項" icon="warning">
               <div className="space-y-2">
-                {Number(selectedVehicle.inspectionDaysRemaining || 999) <= 30 && (
+                {Number(selectedVehicle.inspectionDaysRemaining ?? 999) <= 30 && (
                   <div className="rounded-lg border border-[rgba(239,108,74,0.22)] bg-[rgba(239,108,74,0.10)] px-3 py-2 text-sm font-bold text-[#d45233]">
                     車検期限まで残り{selectedVehicle.inspectionDaysRemaining}日
                   </div>
@@ -880,7 +887,7 @@ export default function AdminWarehouse() {
                     {alert.subtitle && <div className="mt-0.5 text-[11px] font-semibold text-[#8a6a00]">{alert.subtitle}</div>}
                   </div>
                 ))}
-                {Number(selectedVehicle.inspectionDaysRemaining || 999) > 30 && !(selectedVehicle.alerts || []).length && (
+                {Number(selectedVehicle.inspectionDaysRemaining ?? 999) > 30 && !(selectedVehicle.alerts || []).length && (
                   <div className="py-6 text-center text-sm font-semibold text-slate-400">注意事項はありません</div>
                 )}
               </div>

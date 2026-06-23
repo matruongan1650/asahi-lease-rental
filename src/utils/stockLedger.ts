@@ -193,6 +193,11 @@ export function restoreOrderStock(order: any, issuesList?: any[], opts?: { inclu
 export function settleReturnStock(order: any, nextStatus?: string): { stockRestored?: boolean } {
   if (!order) return {};
   if (!isClosedOrder(nextStatus)) return {};
+  // closed→closed の遷移では在庫を動かさない。既にクローズ済みの注文を別のクローズ状態へ編集しても
+  // 再入庫しない（現場報告で返却済にした未検品注文を後から完了へ変える等での幽霊在庫を防止）。
+  // 未クローズ→クローズの初回遷移(admin 救済入庫)だけ在庫を動かす。
+  const liveCur = resolveLiveOrder(order) || order;
+  if (isClosedOrder(liveCur?.status)) return {};
   // 納品済み(現物が客先)の注文をキャンセルしても自動で在庫を戻さない。
   // 戻すと倉庫に無い在庫を水増ししてしまう（納品前キャンセル＝出庫取消は従来どおり戻す）。
   // 返却済/完了 など正規の返却クローズは現物が戻っているので従来どおり restoreOrderStock に委譲。
