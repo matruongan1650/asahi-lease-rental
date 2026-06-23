@@ -16,6 +16,7 @@ import {
   triggerToast
 } from "../../components/AdminUI";
 import { useVehicles, VehicleDetail, type VehicleFile } from "../../context/VehicleContext";
+import { VEHICLE_CATEGORIES } from "../../utils/productUtils";
 import OrderBus from "../../lib/orderBus";
 
 type VehicleStatusFilter = "all" | "空車" | "使用中" | "整備中" | "inspection";
@@ -215,9 +216,9 @@ export default function AdminVehicles() {
     return Array.from(new Set(vehicles.map((v) => v.category).filter(Boolean))).sort();
   }, [vehicles]);
 
-  // カテゴリ候補: 既定プリセット＋実データのカテゴリ。編集時は現在値も必ず含める
+  // カテゴリ候補: 正規一覧(VEHICLE_CATEGORIES)＋実データのカテゴリ。編集時は現在値も必ず含める
   // （商品管理側で付けた "2tノーマル" 等が候補に無く、表示と保存値がズレるのを防ぐ）。
-  const VEHICLE_CATEGORY_PRESETS = ["軽トラック", "軽バン", "2tトラック", "3tダンプ", "高所作業車"];
+  const VEHICLE_CATEGORY_PRESETS = VEHICLE_CATEGORIES;
   const addCategoryOptions = Array.from(new Set([...VEHICLE_CATEGORY_PRESETS, ...vehicleCategories]));
   const editCategoryOptions = Array.from(new Set([...(editForm.category ? [editForm.category] : []), ...vehicleCategories, ...VEHICLE_CATEGORY_PRESETS]));
 

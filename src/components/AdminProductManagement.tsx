@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import { useProducts } from "../context/ProductContext";
 import { useVehicles, type VehicleDetail, type VehicleFile } from "../context/VehicleContext";
 import { Product } from "../types";
-import { isVehicleCategory, SUPPLY_CATEGORY_ICONS, UNIT_OPTIONS } from "../utils/productUtils";
+import { isVehicleCategory, SUPPLY_CATEGORY_ICONS, UNIT_OPTIONS, VEHICLE_CATEGORIES } from "../utils/productUtils";
 import { getProductQrCode, getProductQrPayload, makeProductQrFields } from "../utils/productQr";
 import { SALES_ENABLED } from "../config/features";
 import { usePagedList } from "../hooks/usePagedList";
@@ -146,6 +146,8 @@ export default function AdminProductManagement() {
 
   // Bulk add & Spreadsheet states
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  // 一括追加の対象（保安用品 / 保安車両）。モーダルを開いた時点のサブタブで固定する。
+  const [bulkMode, setBulkMode] = useState<"security" | "vehicles">("security");
   const [bulkText, setBulkText] = useState("");
   const [bulkItems, setBulkItems] = useState<any[]>([]);
 
@@ -156,14 +158,20 @@ export default function AdminProductManagement() {
   const [vehicleFilesDraft, setVehicleFilesDraft] = useState<VehicleFile[]>([]);
   const [vehicleDocsDraft, setVehicleDocsDraft] = useState<string[]>([]);
 
+  // 車両カテゴリー候補（正規一覧 + 編集中車両の既存カテゴリーを保持）。
+  const vehicleCategoryOptions = Array.from(new Set([
+    ...VEHICLE_CATEGORIES,
+    ...(editingVehicle?.category ? [editingVehicle.category] : []),
+  ]));
+
   // Re-parse when text changes to initialize spreadsheet rows
   useEffect(() => {
     if (bulkText) {
-      setBulkItems(parseBulkText(bulkText));
+      setBulkItems(bulkMode === "vehicles" ? parseBulkVehicleText(bulkText) : parseBulkText(bulkText));
     } else {
       setBulkItems([]);
     }
-  }, [bulkText]);
+  }, [bulkText, bulkMode]);
 
   useEffect(() => {
     let active = true;
@@ -311,10 +319,74 @@ export default function AdminProductManagement() {
       let error = "";
       if (!name) error = "商品名は必須です";
       else if (!category) error = "カテゴリは必須です";
+      // 車両カテゴリーは保安車両タブで登録する。ここで作ると vehicleId 無しの孤立商品になり
+      // 在庫集計が二重計上される（productUtils.ts の不変条件）。
+      else if (isVehicleCategory(category)) error = "車両カテゴリーは保安車両タブから登録してください";
 
       parsed.push({
         name,
         category,
+        rentPrice,
+        rentPriceLongTerm,
+        buyPrice,
+        stock,
+        error: error || undefined,
+      });
+    });
+
+    return parsed;
+  };
+
+  // 保安車両の一括テキストを解析する。
+  // 列構成: 車両名,カテゴリ,ナンバー,レンタル単価,長期単価,[販売価格,]台数
+  // カテゴリは正規一覧(VEHICLE_CATEGORIES)に含まれる必要がある（連動商品の在庫二重計上を防ぐ）。
+  const parseBulkVehicleText = (text: string) => {
+    const lines = text.split("\n");
+    const parsed: Array<{
+      name: string;
+      category: string;
+      plate: string;
+      rentPrice: number;
+      rentPriceLongTerm: number;
+      buyPrice: number;
+      stock: number;
+      error?: string;
+    }> = [];
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      const delimiter = trimmed.includes("\t") ? "\t" : ",";
+      const parts = trimmed.split(delimiter).map((p) => p.trim());
+
+      const name = parts[0] || "";
+      const category = parts[1] || "";
+      const plate = parts[2] || "";
+
+      // ヘッダー行はスキップ
+      if (
+        name === "車両名" || name === "商品名" || name.toLowerCase() === "name" ||
+        category === "カテゴリ" || category.toLowerCase() === "category"
+      ) {
+        return;
+      }
+
+      const rentPrice = Number(parts[3]) || 0;
+      const rentPriceLongTerm = Number(parts[4]) || 0;
+      // 販売無効時は販売価格列を持たない（列構成: 車両名,カテゴリ,ナンバー,レンタル単価,長期単価,台数）。
+      const buyPrice = SALES_ENABLED ? (Number(parts[5]) || 0) : 0;
+      const stock = Number(parts[SALES_ENABLED ? 6 : 5]) || 0;
+
+      let error = "";
+      if (!name) error = "車両名は必須です";
+      else if (!category) error = "カテゴリは必須です";
+      else if (!VEHICLE_CATEGORIES.includes(category)) error = "車両カテゴリーから選択してください";
+
+      parsed.push({
+        name,
+        category,
+        plate,
         rentPrice,
         rentPriceLongTerm,
         buyPrice,
@@ -332,12 +404,20 @@ export default function AdminProductManagement() {
       prev.map((item, idx) => {
         if (idx !== index) return item;
         const updated = { ...item, [field]: field.includes("Price") || field === "stock" ? Number(value) || 0 : value };
-        
-        // Inline validation checks
-        if (!updated.name) updated.error = "商品名は必須です";
-        else if (!updated.category) updated.error = "カテゴリは必須です";
-        else delete updated.error;
-        
+
+        // Inline validation checks（モード別）
+        if (bulkMode === "vehicles") {
+          if (!updated.name) updated.error = "車両名は必須です";
+          else if (!updated.category) updated.error = "カテゴリは必須です";
+          else if (!VEHICLE_CATEGORIES.includes(updated.category)) updated.error = "車両カテゴリーから選択してください";
+          else delete updated.error;
+        } else {
+          if (!updated.name) updated.error = "商品名は必須です";
+          else if (!updated.category) updated.error = "カテゴリは必須です";
+          else if (isVehicleCategory(updated.category)) updated.error = "車両カテゴリーは保安車両タブから登録してください";
+          else delete updated.error;
+        }
+
         return updated;
       })
     );
@@ -372,6 +452,72 @@ export default function AdminProductManagement() {
     setBulkText("");
     setBulkItems([]);
     void alertDialog(`${validItems.length}件の保安用品を一括追加しました。`);
+  };
+
+  // 保安車両を一括追加する。単体追加(saveVehicle)と同じく車両＋連動商品(P)を生成する。
+  const handleBulkVehicleSubmit = () => {
+    const validItems = bulkItems.filter((item) => !item.error);
+
+    if (validItems.length === 0) {
+      void alertDialog("登録可能な有効なデータがありません。");
+      return;
+    }
+
+    validItems.forEach((item, i) => {
+      // 同一ミリ秒でも衝突しないよう index と乱数を付与する。
+      const stamp = `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+      const vid = "veh_" + stamp;
+      const pid = "vprod_" + stamp;
+
+      addVehicle({
+        id: vid,
+        productId: pid,
+        name: item.name,
+        plate: item.plate || "",
+        status: "空車",
+        statusColor: statusColor("空車"),
+        inspectionDate: "",
+        year: "",
+        color: "",
+        category: item.category,
+        stock: item.stock,
+        photos: [],
+        vehicleFiles: [],
+        documents: [],
+        inspectionDaysRemaining: 999,
+        insuranceDate: "",
+        manufacturer: "",
+        vin: "",
+        engineModel: "",
+        purchaseDate: "",
+        purchasePrice: "",
+        mileage: "",
+        maintenanceDesc: "",
+        maintenanceDate: "",
+        alerts: [],
+        maintenanceHistory: [],
+        repairHistory: [],
+      } as VehicleDetail);
+
+      addProduct({
+        id: pid,
+        name: item.name,
+        category: item.category,
+        stock: item.stock,
+        rentPrice: item.rentPrice,
+        rentPriceLongTerm: item.rentPriceLongTerm,
+        buyPrice: SALES_ENABLED ? item.buyPrice : undefined,
+        image: VEHICLE_IMAGE_FALLBACK,
+        description: "一括登録された保安車両",
+        vehicleId: vid,
+        ...makeProductQrFields({ id: pid } as Product),
+      } as Product & { vehicleId: string });
+    });
+
+    setIsBulkModalOpen(false);
+    setBulkText("");
+    setBulkItems([]);
+    void alertDialog(`${validItems.length}件の保安車両を一括追加しました。`);
   };
 
   const resetVehicleDrafts = () => {
@@ -532,15 +678,13 @@ export default function AdminProductManagement() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {activeSubTab === "security" && (
-            <button
-              onClick={() => setIsBulkModalOpen(true)}
-              className="inline-flex h-[38px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              <span className="material-symbols-outlined text-[17px]">upload_file</span>
-              一括追加
-            </button>
-          )}
+          <button
+            onClick={() => { setBulkMode(activeSubTab); setBulkText(""); setBulkItems([]); setIsBulkModalOpen(true); }}
+            className="inline-flex h-[38px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <span className="material-symbols-outlined text-[17px]">upload_file</span>
+            一括追加
+          </button>
           <button
             onClick={activeSubTab === "security" ? handleAddProduct : handleAddVehicle}
             className="inline-flex h-[38px] items-center gap-2 rounded-lg bg-[#1a1c9a] px-4 text-xs font-black text-white shadow-[0_6px_18px_rgba(26,28,154,0.20)] hover:bg-[#2537c4]"
@@ -1172,13 +1316,11 @@ export default function AdminProductManagement() {
                   </div>
                   <div className="space-y-5">
                     <div>
-                      <label className="block text-xs font-bold text-slate-505 mb-2">カテゴリ</label>
-                      <select name="category" defaultValue={editingVehicle?.category || "軽トラック"} className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none">
-                        <option value="軽トラック">軽トラック</option>
-                        <option value="軽バン">軽バン</option>
-                        <option value="2tノーマル">2tノーマル</option>
-                        <option value="2tロング">2tロング</option>
-                        <option value="2t Wキャブノーマル">2t Wキャブノーマル</option>
+                      <label className="block text-xs font-bold text-slate-500 mb-2">カテゴリ</label>
+                      <select name="category" defaultValue={editingVehicle?.category || VEHICLE_CATEGORIES[0]} className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none">
+                        {vehicleCategoryOptions.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
                       </select>
                     </div>
                     <div className="flex gap-5">
@@ -1382,7 +1524,7 @@ export default function AdminProductManagement() {
               <div>
                 <h2 className="text-[20px] font-bold text-slate-800 flex items-center gap-2.5">
                   <span className="material-symbols-outlined text-blue-600 bg-blue-50 w-8 h-8 rounded-lg flex items-center justify-center">grid_on</span>
-                  保安用品一括追加
+                  {bulkMode === "vehicles" ? "保安車両一括追加" : "保安用品一括追加"}
                 </h2>
               </div>
               <button type="button" onClick={() => { setIsBulkModalOpen(false); setBulkText(""); setBulkItems([]); }} className="w-8 h-8 border border-slate-200 rounded-lg bg-white text-slate-400 hover:bg-slate-50">
@@ -1398,12 +1540,19 @@ export default function AdminProductManagement() {
                   <div className="flex justify-between items-center">
                     <label className="text-xs font-bold text-slate-700">CSV/TSV テキストデータ入力</label>
                   </div>
-                  <textarea 
+                  <textarea
                     value={bulkText}
                     onChange={(e) => setBulkText(e.target.value)}
                     className="w-full flex-1 min-h-[350px] font-mono text-xs p-3.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none resize-none bg-white shadow-inner"
-                    placeholder={SALES_ENABLED ? "商品名,カテゴリ,レンタル単価,長期単価,販売価格,在庫数" : "商品名,カテゴリ,レンタル単価,長期単価,在庫数"}
+                    placeholder={bulkMode === "vehicles"
+                      ? (SALES_ENABLED ? "車両名,カテゴリ,ナンバー,レンタル単価,長期単価,販売価格,台数" : "車両名,カテゴリ,ナンバー,レンタル単価,長期単価,台数")
+                      : (SALES_ENABLED ? "商品名,カテゴリ,レンタル単価,長期単価,販売価格,在庫数" : "商品名,カテゴリ,レンタル単価,長期単価,在庫数")}
                   />
+                  {bulkMode === "vehicles" && (
+                    <p className="text-[11px] font-bold text-slate-400 leading-relaxed">
+                      カテゴリは {VEHICLE_CATEGORIES.join(" / ")} のいずれか。台数は在庫として連動商品に反映されます。
+                    </p>
+                  )}
                 </div>
 
                 {/* Right Side: Interactive Live Inline Spreadsheet */}
@@ -1416,16 +1565,18 @@ export default function AdminProductManagement() {
                   <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col min-h-[350px]">
                     {bulkItems.length > 0 ? (
                       <div className="overflow-auto max-h-[500px]">
+                        {bulkMode === "vehicles" ? (
                         <table className="w-full text-left border-collapse text-xs table-fixed">
                           <thead>
                             <tr className="bg-slate-100/90 border-b border-slate-200 sticky top-0 z-10">
                               <th className="p-2.5 font-bold text-slate-600 w-[50px] text-center">状態</th>
-                              <th className="p-2.5 font-bold text-slate-600 w-[200px]">商品名 *</th>
-                              <th className="p-2.5 font-bold text-slate-600 w-[120px]">カテゴリ *</th>
-                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">日単価</th>
-                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">長期</th>
-                              {SALES_ENABLED && <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">販売</th>}
-                              <th className="p-2.5 font-bold text-slate-600 w-[70px] text-right">在庫</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[180px]">車両名 *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[130px]">カテゴリ *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[120px]">ナンバー</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[80px] text-right">日単価</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[80px] text-right">長期</th>
+                              {SALES_ENABLED && <th className="p-2.5 font-bold text-slate-600 w-[80px] text-right">販売</th>}
+                              <th className="p-2.5 font-bold text-slate-600 w-[70px] text-right">台数</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-150">
@@ -1439,33 +1590,48 @@ export default function AdminProductManagement() {
                                   )}
                                 </td>
                                 <td className="p-1">
-                                  <input 
-                                    type="text" 
-                                    value={row.name} 
+                                  <input
+                                    type="text"
+                                    value={row.name}
                                     onChange={(e) => updateBulkItemCell(idx, "name", e.target.value)}
                                     className={`w-full p-1.5 font-bold rounded outline-none border transition-colors ${row.error && !row.name ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
                                   />
                                 </td>
                                 <td className="p-1">
-                                  <input 
-                                    type="text" 
-                                    value={row.category} 
+                                  <select
+                                    value={row.category}
                                     onChange={(e) => updateBulkItemCell(idx, "category", e.target.value)}
-                                    className={`w-full p-1.5 rounded outline-none border text-slate-700 transition-colors ${row.error && !row.category ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
+                                    className={`w-full p-1.5 rounded outline-none border text-slate-700 bg-white transition-colors ${row.error && (!row.category || !VEHICLE_CATEGORIES.includes(row.category)) ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400"}`}
+                                  >
+                                    {!row.category && <option value="">（未選択）</option>}
+                                    {row.category && !VEHICLE_CATEGORIES.includes(row.category) && (
+                                      <option value={row.category}>{row.category}（無効）</option>
+                                    )}
+                                    {VEHICLE_CATEGORIES.map((c) => (
+                                      <option key={c} value={c}>{c}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td className="p-1">
+                                  <input
+                                    type="text"
+                                    value={row.plate || ""}
+                                    onChange={(e) => updateBulkItemCell(idx, "plate", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-slate-600"
                                   />
                                 </td>
                                 <td className="p-1">
-                                  <input 
-                                    type="number" 
-                                    value={row.rentPrice || ""} 
+                                  <input
+                                    type="number"
+                                    value={row.rentPrice || ""}
                                     onChange={(e) => updateBulkItemCell(idx, "rentPrice", e.target.value)}
                                     className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-700"
                                   />
                                 </td>
                                 <td className="p-1">
-                                  <input 
-                                    type="number" 
-                                    value={row.rentPriceLongTerm || ""} 
+                                  <input
+                                    type="number"
+                                    value={row.rentPriceLongTerm || ""}
                                     onChange={(e) => updateBulkItemCell(idx, "rentPriceLongTerm", e.target.value)}
                                     className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
                                   />
@@ -1492,6 +1658,84 @@ export default function AdminProductManagement() {
                             ))}
                           </tbody>
                         </table>
+                        ) : (
+                        <table className="w-full text-left border-collapse text-xs table-fixed">
+                          <thead>
+                            <tr className="bg-slate-100/90 border-b border-slate-200 sticky top-0 z-10">
+                              <th className="p-2.5 font-bold text-slate-600 w-[50px] text-center">状態</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[200px]">商品名 *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[120px]">カテゴリ *</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">日単価</th>
+                              <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">長期</th>
+                              {SALES_ENABLED && <th className="p-2.5 font-bold text-slate-600 w-[85px] text-right">販売</th>}
+                              <th className="p-2.5 font-bold text-slate-600 w-[70px] text-right">在庫</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-150">
+                            {bulkItems.map((row, idx) => (
+                              <tr key={idx} className={row.error ? "bg-red-50/70" : "hover:bg-slate-50/50"}>
+                                <td className="p-2 text-center">
+                                  {row.error ? (
+                                    <span className="material-symbols-outlined text-red-500 font-bold text-[18px]" title={row.error}>error</span>
+                                  ) : (
+                                    <span className="material-symbols-outlined text-emerald-500 font-bold text-[18px]">check_circle</span>
+                                  )}
+                                </td>
+                                <td className="p-1">
+                                  <input
+                                    type="text"
+                                    value={row.name}
+                                    onChange={(e) => updateBulkItemCell(idx, "name", e.target.value)}
+                                    className={`w-full p-1.5 font-bold rounded outline-none border transition-colors ${row.error && !row.name ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input
+                                    type="text"
+                                    value={row.category}
+                                    onChange={(e) => updateBulkItemCell(idx, "category", e.target.value)}
+                                    className={`w-full p-1.5 rounded outline-none border text-slate-700 transition-colors ${row.error && !row.category ? "border-red-400 bg-red-50" : "border-transparent focus:border-blue-400 focus:bg-white"}`}
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input
+                                    type="number"
+                                    value={row.rentPrice || ""}
+                                    onChange={(e) => updateBulkItemCell(idx, "rentPrice", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-700"
+                                  />
+                                </td>
+                                <td className="p-1">
+                                  <input
+                                    type="number"
+                                    value={row.rentPriceLongTerm || ""}
+                                    onChange={(e) => updateBulkItemCell(idx, "rentPriceLongTerm", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
+                                  />
+                                </td>
+                                {SALES_ENABLED && (
+                                <td className="p-1">
+                                  <input
+                                    type="number"
+                                    value={row.buyPrice || ""}
+                                    onChange={(e) => updateBulkItemCell(idx, "buyPrice", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono text-slate-600"
+                                  />
+                                </td>
+                                )}
+                                <td className="p-1">
+                                  <input
+                                    type="number"
+                                    value={row.stock || 0}
+                                    onChange={(e) => updateBulkItemCell(idx, "stock", e.target.value)}
+                                    className="w-full p-1.5 rounded border border-transparent focus:border-blue-400 focus:bg-white outline-none text-right font-mono font-bold text-slate-800"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        )}
                       </div>
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center">
@@ -1515,9 +1759,9 @@ export default function AdminProductManagement() {
               </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => { setIsBulkModalOpen(false); setBulkText(""); setBulkItems([]); }} className="px-5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer">キャンセル</button>
-                <button 
-                  type="button" 
-                  onClick={handleBulkSubmit}
+                <button
+                  type="button"
+                  onClick={(e) => bulkMode === "vehicles" ? handleBulkVehicleSubmit() : handleBulkSubmit(e)}
                   disabled={bulkItems.filter(r => !r.error).length === 0}
                   className="px-6 py-2 text-xs font-bold text-white bg-[#1a1c9a] rounded-lg shadow-sm disabled:bg-slate-200 disabled:text-slate-400 cursor-pointer disabled:cursor-not-allowed"
                 >

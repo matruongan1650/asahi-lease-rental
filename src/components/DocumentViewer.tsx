@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from "react";
 import { alertDialog } from "./AppDialog";
 import { elementToPdf } from "../utils/pdfMultiPage"; // 複数ページ分割 + モバイル共有フォールバック
 import { isVehicleCategory } from "../utils/productUtils";
-import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks, getTaxRate } from "../utils/billing";
+import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks, ensureMonthlyBreakdowns, getTaxRate } from "../utils/billing";
 
 interface DocumentViewerProps {
   order: any;
@@ -139,7 +139,9 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       });
     }
   } else {
-    itemsToRender = (order.items || []).map((item: any) => {
+    // 全体合計請求書の明細は、合計(blocksTotal)と同じ ensureMonthlyBreakdowns 由来の値を使う。
+    // raw order.items の古い calculatedPrice を使うと、期限超過の自動延長で 金額列が小計と食い違う。
+    itemsToRender = ensureMonthlyBreakdowns(order).map((item: any) => {
       const qty = Number(item.quantity) || 1;
       // calculatedPrice は全注文ソースで「単価」（Checkout/AdminOrderDrawer 共通の規約）。
       // items 欠落で map クラッシュ→ErrorBoundary 落ちを防ぐ。単価未設定でも NaN にしない。

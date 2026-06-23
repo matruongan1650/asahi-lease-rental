@@ -888,8 +888,9 @@ export function deriveAdminData(rawOrders: BusRecord[]): AdminDerivedData {
   let productSales = 0;
 
   orders.forEach((o) => {
-    // キャンセル注文は売上(KPI)に計上しない（実現売上のみを集計する）。
-    if (String(o.status) === "キャンセル") return;
+    // キャンセル・未確定(処理中=受注確定前)は実現売上(KPI)に計上しない（受注確定以降のみ集計）。
+    const st = String(o.status);
+    if (st === "キャンセル" || st === "処理中") return;
     let orderRentSub = 0;
     let orderBuySub = 0;
     o.items?.forEach((item) => {
