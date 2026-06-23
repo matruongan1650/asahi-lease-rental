@@ -122,7 +122,9 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       type: item.type,
       quantity: item.quantity,
       rentalDays: item.days,
-      price: item.type === 'rent' ? item.price : item.buyPrice,
+      // calculateMonthlyInvoice は rent/buy とも単価を item.price で返す（buy は calculatedPrice ?? buyPrice）。
+      // 以前は buy で存在しない item.buyPrice を読み単価列が ¥0 になっていた。
+      price: item.price,
       calculatedPrice: item.type === 'rent' ? item.rentalFee : item.total,
       guaranteeFeeFlat: item.guaranteeFee
     }));
