@@ -158,8 +158,12 @@ export default function AdminRental() {
     const isCollected = st === "検品待ち";                          // 回収済み・倉庫検品待ち（在庫はまだ出庫中）
     const delivered = st !== "確認済み";                            // 確認済み のみ未納品
     const orderNumber = `RN-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // 安定・一意な注文ID。これが無いと getOrGenerateInvoiceBlocks がブロックIDを
+    // `block-undefined-YYYY-MM` で発番し、同月に登録した別注文と衝突して一括消込が混線する。
+    const orderId = `RN-${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     // 在庫を出庫（フラグ未設定のオブジェクトに対して減算 → 確実に1回だけ引く）。
     const seed: any = {
+      id: orderId,
       orderNumber,
       companyName: draft.companyName,
       personName: draft.personName,
@@ -199,7 +203,11 @@ export default function AdminRental() {
         : { staffStatus: "配送予定" };
     }
     const finalOrder: any = { ...seed, ...flags, ...lifecycle };
-    const blocks = getOrGenerateInvoiceBlocks(finalOrder);
+    // 確認済み（未納品）は通常フローと同じく「まだ請求しない」。請求ブロックは納品確定時に
+    // 実際の納品日基準で生成される（completeDelivery）。ここで全期間を先に請求すると未納品なのに
+    // 課金され、AR一覧に過大計上される。納品済み／履歴(返却済・完了)のみ請求ブロックを確定する。
+    const shouldBill = delivered || isClosedReg;
+    const blocks = shouldBill ? getOrGenerateInvoiceBlocks(finalOrder) : [];
     const t = (blocks || []).reduce(
       (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
       { subtotal: 0, tax: 0, total: 0 },

@@ -839,6 +839,28 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
 
   const staff = staffInfoFromUser(currentUser);
 
+  // ── ジョブの自己割当(claim) ─────────────────────────────────────
+  // スタッフが配送/回収を「開始」した瞬間に、その注文を自分のものとして claim する。
+  // 所有者IDは MobileLiveContext の claim フィルタが比較する currentUser.id と必ず一致させる
+  // （staff.id は employeeCode 優先で別物なので使わない）。他スタッフの端末では isClaimedByOther で隠れる。
+  const myStaffId = currentUser?.id || "";
+  const resolveOrderId = (mapped: any) => mapped?.rawOrder?.id || mapped?.rawOrder?.firestoreId || mapped?.firestoreId || mapped?.id;
+  const claimJob = (mapped: any) => {
+    const oid = resolveOrderId(mapped);
+    if (!oid || !myStaffId) return; // 識別子が無ければロックしない（全員に表示のまま）
+    try { OrderBus.patch("orders", oid, { claimedBy: myStaffId, claimedByName: staff.name, claimedAt: new Date().toISOString() }); } catch { /* ignore */ }
+  };
+  const releaseJob = (mapped: any) => {
+    const oid = resolveOrderId(mapped);
+    if (!oid) return;
+    try { OrderBus.patch("orders", oid, { claimedBy: "", claimedByName: "", claimedAt: "" }); } catch { /* ignore */ }
+  };
+  // 配送/回収フローを開く共通関数。開いた瞬間に claim する（walkin 等 order の無いフローは claim しない）。
+  const startFlow = (payload: any) => {
+    if (payload && (payload.type === "dlv" || payload.type === "rtn") && payload.order) claimJob(payload.order);
+    setFlow(payload);
+  };
+
   const completeReturn = async (productsList: any[], walkinOrder?: any, signature?: string | null, extra?: any) => {
     const valid = productsList.filter(p => p.counted > 0);
 
@@ -1145,13 +1167,14 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
         <DeliveryFlow
           o={flow.order}
           staffName={staff.name}
-          onExit={() => setFlow(null)}
+          onExit={() => { if (flow?.order) releaseJob(flow.order); setFlow(null); }}
           onComplete={async (id, signature, photos, extra) => {
             // 完了集合は表示 id（live list の o.id = orderNumber）で記録する。
             // 受け取る id は firestoreId のことがあり、消費側 (o.id) と一致しないため。
             setDoneDlv(d => d.includes(flow.order.id) ? d : [...d, flow.order.id]);
             // お客様の受領サインと写真、保安車両の貸出記録 + 配送担当者(ログイン中スタッフ)を注文に保存。
             if (ml.completeDelivery) ml.completeDelivery(flow.order.firestoreId || id, signature, photos, { ...(extra || {}), deliveredBy: staff.name });
+            releaseJob(flow.order); // 配送完了したら claim を解除（次工程の回収は別担当が取れるように）
             setFlow(null);
             setTab("delivery_recovery");
             // サーバー反映を確認。電波不良なら送信待ち（自動再送）を明示してデータ消失の誤解を防ぐ。
@@ -1164,11 +1187,12 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
       return (
         <RecoveryFlow
           o={flow.order}
-          onExit={() => setFlow(null)}
+          onExit={() => { if (flow?.order) releaseJob(flow.order); setFlow(null); }}
           onComplete={async (id, signature, photos, inspected, extra) => {
             setDoneRtn(d => d.includes(flow.order.id) ? d : [...d, flow.order.id]);
             // お客様の回収サインと写真 + 現場検品結果（counted/report）を最終検品へ引き継ぐ + 回収担当者・不在記録を保存。
             if (ml.completeRecovery) ml.completeRecovery(flow.order.firestoreId || id, signature, photos, inspected, staff.name, extra);
+            releaseJob(flow.order); // 回収完了したら claim を解除
             setFlow(null);
             setTab("delivery_recovery");
             const ok = await OrderBus.flush(8000);
@@ -1187,7 +1211,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
   }
 
   if (subView === "stocktake") return <WhStocktake onBack={() => setSubView(null)} staffName={staff.name} />;
-  if (subView === "route") return <RouteOverview deliveries={deliveries} recoveries={recoveries} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} onBack={() => setSubView(null)} onOpenDlv={(o: any) => { setSubView(null); setFlow({ type: "dlv", order: o }); }} onOpenRcv={(o: any) => { setSubView(null); setFlow({ type: "rtn", order: o }); }} />;
+  if (subView === "route") return <RouteOverview deliveries={deliveries} recoveries={recoveries} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} onBack={() => setSubView(null)} onOpenDlv={(o: any) => { setSubView(null); startFlow({ type: "dlv", order: o }); }} onOpenRcv={(o: any) => { setSubView(null); startFlow({ type: "rtn", order: o }); }} />;
 
   // 通知ベルはホームにしか無いため、他タブ作業中でも未読が分かるよう
   // ボトムナビの「ホーム」に未読件数バッジを出す（タップでホーム→ベル）。
@@ -1266,9 +1290,9 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
           const nextRcv = nextRecoveries[0];
           const routeCount = deliveries.filter((o: any) => !doneDlv.includes(o.id)).length + recoveries.filter((o: any) => !doneRtn.includes(o.id)).length;
           const hero = nextDlv
-            ? { label: "次の配送", color: "var(--brand-accent)", site: nextDlv.site, addr: nextDlv.addr, eta: nextDlv.eta, icon: "truck", action: () => setFlow({ type: "dlv", order: nextDlv }) }
+            ? { label: "次の配送", color: "var(--brand-accent)", site: nextDlv.site, addr: nextDlv.addr, eta: nextDlv.eta, icon: "truck", action: () => startFlow({ type: "dlv", order: nextDlv }) }
             : nextRcv
-              ? { label: "次の回収", color: "var(--success-bright)", site: nextRcv.site, addr: nextRcv.addr, eta: nextRcv.eta, icon: "package", action: () => setFlow({ type: "rtn", order: nextRcv }) }
+              ? { label: "次の回収", color: "var(--success-bright)", site: nextRcv.site, addr: nextRcv.addr, eta: nextRcv.eta, icon: "package", action: () => startFlow({ type: "rtn", order: nextRcv }) }
               : walkinCount > 0
                 ? { label: "対応待ち", color: "var(--warning-bright)", site: `持込返却 ${walkinCount}件の検品待ち`, addr: "", eta: "", icon: "clipboardCheck", action: () => setFlow({ type: "walkin" }) }
                 : null;
@@ -1318,8 +1342,8 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
               {overdueMnt > 0 && <AlertRow title="定期メンテナンス超過" sub={`対象 ${overdueMnt}件 ・ 点検記録が必要です`} outdoorMode={outdoorMode} onClick={() => setTab("inspect")} />}
             </>
           ) : null}
-          {nextDeliveries.map((o: any) => <DeliveryCard key={`home-${o.id}`} o={o} done={false} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "dlv", order: o })} />)}
-          {nextRecoveries.map((o: any) => <RecoveryCard key={`home-${o.id}`} o={o} done={false} outdoorMode={outdoorMode} onClick={() => setFlow({ type: "rtn", order: o })} />)}
+          {nextDeliveries.map((o: any) => <DeliveryCard key={`home-${o.id}`} o={o} done={false} outdoorMode={outdoorMode} onClick={() => startFlow({ type: "dlv", order: o })} />)}
+          {nextRecoveries.map((o: any) => <RecoveryCard key={`home-${o.id}`} o={o} done={false} outdoorMode={outdoorMode} onClick={() => startFlow({ type: "rtn", order: o })} />)}
           {!hasAlerts && nextDeliveries.length === 0 && nextRecoveries.length === 0 && (
             <Empty icon="checkCircle" title="すぐ対応する業務はありません" sub="配送・回収・点検の予定が入るとここに表示されます" />
           )}
@@ -1327,7 +1351,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
       </Screen>
     );
   } else if (tab === "delivery_recovery") {
-    content = <DeliveryRecoveryTab setFlow={setFlow} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} />;
+    content = <DeliveryRecoveryTab setFlow={startFlow} doneDlv={doneDlv} doneRtn={doneRtn} outdoorMode={outdoorMode} />;
   } else if (tab === "stock") {
     content = <WhStock moves={ml.stockMoves} addMove={ml.addStockMove} onReturn={() => setFlow({ type: "walkin" })} staffName={staff.name} />;
   } else if (tab === "inspect") {

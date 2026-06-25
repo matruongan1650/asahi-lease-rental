@@ -2,6 +2,20 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useMe
 import OrderBus from "../lib/orderBus";
 import { getProductQrCode } from "../utils/productQr";
 import { deductOrderStock } from "../utils/stockLedger";
+import { useUser } from "./UserContext";
+
+// スタッフ自己割当(claim)の有効期限。これを超えた claim は無視して全員へ再表示する
+// （担当者がアプリを閉じたまま/クラッシュした場合に注文が永久にロックされ誰も対応できなくなるのを防ぐ）。
+const CLAIM_TTL_MS = 10 * 60 * 60 * 1000; // 10時間（1シフト相当）
+// その注文を「他のスタッフが対応開始済み」かどうか。true ならスタッフ一覧から隠す。
+// admin は MobileLive を使わない（この context はスタッフ専用）ため管理画面は全件表示のまま。
+function isClaimedByOther(o: any, myId: string): boolean {
+  const by = o?.claimedBy;
+  if (!by || by === myId) return false; // 未claim または 自分のclaim → 表示する
+  const at = Date.parse(o?.claimedAt || "");
+  if (!Number.isNaN(at) && Date.now() - at > CLAIM_TTL_MS) return false; // 期限切れ → 全員へ再表示
+  return true; // 他スタッフが対応中 → 隠す
+}
 
 // ---------------------------------------------------------------------------
 // Mock Data (matching project reference)
@@ -145,6 +159,9 @@ interface MobileLiveContextProps {
 const MobileLiveContext = createContext<MobileLiveContextProps | null>(null);
 
 export function MobileLiveProvider({ children }: { children: React.ReactNode }) {
+  // ログイン中スタッフのID。配送/回収ジョブの claim（自己割当）所有者として使う。
+  const { currentUser } = useUser();
+  const myId = currentUser?.id || "";
   const [rawOrders, setRawOrders] = useState<any[]>([]);
   const [connected, setConnected] = useState(false);
   const [vehicles, setVehicles] = useState<any[]>([]);
@@ -224,6 +241,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const liveDeliveries = useMemo(() => [
     ...rawOrders
       .filter(o => {
+        if (isClaimedByOther(o, myId)) return false; // 他スタッフが対応開始済み → この端末の一覧から隠す
         if (!o.status || DELIVERY_EXCLUDED_STATUS.includes(o.status)) return false;
         const ss = String((o as any).staffStatus || "");
         // 受注確定済みのみ: status が確定系、または staffStatus が配送系/割当済み。
@@ -251,7 +269,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const ta = a.rawOrder?.deliveryDate ? Date.parse(a.rawOrder.deliveryDate) : NaN;
     const tb = b.rawOrder?.deliveryDate ? Date.parse(b.rawOrder.deliveryDate) : NaN;
     return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
-  }), [rawOrders]);
+  }), [rawOrders, myId]);
 
   // Derive Recoveries
   // 回収タスクは実データ（実際の注文）のみから生成する。モックは使用しない。
@@ -262,9 +280,16 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   const liveRecoveries = useMemo(() => [
     ...rawOrders
       .filter(o => {
+        if (isClaimedByOther(o, myId)) return false; // 他スタッフが対応開始済み → この端末の一覧から隠す
         if (!o.rentalEndDate) return false;
         if (o.status && RECOVERY_EXCLUDED_STATUS.includes(o.status)) return false;
         if (o.staffStatus === "回収完了") return false;
+        // 【回収可否】未納品（まだ配送タスク段階）の注文は回収できない。納品が完了して初めて回収対象になる。
+        // deliveryConfirmedAt が立つ、または staffStatus/status が納品後の段階のものだけを回収候補にする。
+        const isDelivered = Boolean(o.deliveryConfirmedAt)
+          || ["配送完了", "回収予定", "回収中", "回収完了"].includes(String(o.staffStatus || ""))
+          || ["レンタル中", "回収中", "一部返却"].includes(String(o.status || ""));
+        if (!isDelivered) return false;
         const requestedReturn = o.requestedReturn || {};
         const hasRequestedReturn = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
         // 未返却のレンタル品が 1 つも無ければ回収するものが無い
@@ -332,7 +357,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const ta = a.rawOrder?.rentalEndDate ? Date.parse(a.rawOrder.rentalEndDate) : NaN;
     const tb = b.rawOrder?.rentalEndDate ? Date.parse(b.rawOrder.rentalEndDate) : NaN;
     return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
-  }), [rawOrders, products]);
+  }), [rawOrders, products, myId]);
 
   const isVehicle = (p: any) => {
     if (!p) return false;

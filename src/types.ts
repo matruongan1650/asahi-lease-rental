@@ -145,6 +145,11 @@ export interface Order {
   staffStatus?: StaffStatus | string;
   staffNote?: string;
   assignedStaff?: string;
+  /** スタッフが配送/回収ジョブを「開始」した時に立つ自己割当。他スタッフの一覧から隠すために使う
+   *  （admin には影響しない＝管理画面は claim 無視で全件表示）。claimedAt が古い(TTL超過)場合は無視し全員へ再表示。 */
+  claimedBy?: string;
+  claimedByName?: string;
+  claimedAt?: string;
   deliverySignature?: string;
   collectionSignature?: string;
   warehouseSignature?: string;

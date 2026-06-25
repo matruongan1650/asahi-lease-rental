@@ -381,15 +381,20 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
     };
     // 課金項目が変わった時のみブロックを破棄して納品日基準で再生成させる。
     if (billingChanged) {
-      updates.invoiceBlocks = undefined;
+      updates.invoiceBlocks = undefined; // 納品日基準で再生成させる
       // 「金額を再計算」ボタンの押し忘れで明細と合計が乖離したまま保存されるのを防ぐため、
-      // 保存時に明細＋配送料から subtotal/tax/total を確定的に再計算する。
-      // 配送料は admin が削除済み(deliveryDismissed)なら合計へ再加算しない（請求ブロック側も注入しないため整合させる）。
-      const recomputedSubtotal = normalizedItems.reduce((sum: number, item: any) => sum + editableItemAmount(item), 0) + ((editDraft as any).deliveryDismissed ? 0 : Number(editDraft.delivery || 0));
-      const recomputedTax = Math.floor(recomputedSubtotal * getTaxRate());
-      updates.subtotal = recomputedSubtotal;
-      updates.tax = recomputedTax;
-      updates.total = recomputedSubtotal + recomputedTax;
+      // 保存時に subtotal/tax/total を確定的に再計算する。税は「明細＋配送料の総額に一括 floor」ではなく、
+      // 請求書PDFと同じく getOrGenerateInvoiceBlocks の月ブロック合計（ブロック毎に切り捨て）から取る。
+      // 一括 floor だとブロック数-1円まで PDF とズレるため、ブロック合計を唯一の真実とする。
+      const tempOrder = { ...order, ...updates, invoiceBlocks: undefined };
+      const blocks = getOrGenerateInvoiceBlocks(tempOrder);
+      const sums = (blocks || []).reduce(
+        (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+        { subtotal: 0, tax: 0, total: 0 },
+      );
+      updates.subtotal = sums.subtotal;
+      updates.tax = sums.tax;
+      updates.total = sums.total;
     }
 
     onUpdateOrder(order.firestoreId || order.id, updates);
