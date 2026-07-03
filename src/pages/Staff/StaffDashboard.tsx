@@ -43,7 +43,7 @@ import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { buildStaffNotifications, AppNotification } from "../../utils/notifications";
 import { useNotificationReads } from "../../lib/notificationReads";
-import { useStaffNotificationAlerts, initStaffNotify } from "../../lib/staffNotify";
+import { useStaffNotificationAlerts, initStaffNotify, initStaffPush } from "../../lib/staffNotify";
 import { alertDialog } from "../../components/AppDialog";
 import { loadDraft, saveDraft } from "./flowDraft";
 
@@ -832,7 +832,14 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
   }, [doneDlv, doneRtn, doneKey]);
 
   // 端末通知の権限 + チャンネルを起動時に確立しておく（初回アラートを取りこぼさない）。
-  useEffect(() => { void initStaffNotify(); }, []);
+  // 通知権限は直列に要求する（LocalNotifications と PushNotifications は同じ POST_NOTIFICATIONS 権限。
+  // 並行で2枚のダイアログを出すと Android の「2回目で恒久拒否」を1起動で焼き尽くしうる）。
+  // FCM 登録はログイン後（アプリ完全終了時も新ジョブ通知が届く。トークンをサーバーへ保存）。
+  useEffect(() => {
+    void initStaffNotify().then(() => {
+      if (currentUser?.id) return initStaffPush(currentUser.id);
+    });
+  }, [currentUser?.id]);
 
   // 最終検品の確定が二重送信されるのを防ぐ（連打で -R 注文が複数作られ在庫が二重計上されるのを防止）。
   const finalizingRef = useRef(false);

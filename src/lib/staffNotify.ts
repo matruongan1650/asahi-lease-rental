@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { PushNotifications } from "@capacitor/push-notifications";
+import OrderBus from "./orderBus";
 import type { AppNotification } from "../utils/notifications";
 
 const CHANNEL_ID = "staff-alerts";
@@ -34,6 +36,73 @@ export async function initStaffNotify(): Promise<void> {
     _inited = true;
   } catch {
     /* 権限拒否・非対応端末は無視 */
+  }
+}
+
+// ── FCM プッシュ（アプリ完全終了時も届く）────────────────────────────────
+// google-services.json 未組込のビルドでは register() が失敗するだけで害はない（従来のローカル通知は継続）。
+let _pushInited = false;
+let _fcmToken = "";   // 受領済みの FCM トークン（非空 = FCM 配信が有効な印）
+let _pushUserId = ""; // 現在の所有者（同一端末での再ログインで更新される）
+
+/** 文字列の短いハッシュ（トークンごとに決定的なレコードIDを作る。同一端末の再登録は upsert になる）。 */
+function tokenHash(s: string): string {
+  let x = 5381;
+  for (let i = 0; i < s.length; i++) x = (((x << 5) + x) + s.charCodeAt(i)) >>> 0;
+  return x.toString(36) + s.length.toString(36);
+}
+
+/** トークンレコードをサーバーへ upsert（決定的ID = 同一トークンは1行に集約）。 */
+function _upsertTokenRecord(): void {
+  if (!_fcmToken || !_pushUserId) return;
+  OrderBus.push("pushTokens", {
+    id: "pt-" + tokenHash(_fcmToken),
+    userId: _pushUserId,
+    token: _fcmToken,
+    platform: "android",
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * FCM 登録: 端末トークンを取得し、サーバーの pushTokens ストアへ保存する。
+ * サーバー(store.php)は新しい配送/回収/持込ジョブ発生時に全登録トークンへ送信する。
+ * ログイン済みスタッフでのみ呼ぶこと。再ログイン（別ユーザー）では所有者だけ更新する。
+ */
+export async function initStaffPush(userId: string): Promise<void> {
+  if (!Capacitor.isNativePlatform() || !userId) return;
+  _pushUserId = userId;
+  if (_pushInited) {
+    _upsertTokenRecord(); // 再ログイン: リスナーは再登録せず、行の所有者(userId)だけ更新
+    return;
+  }
+  _pushInited = true;
+  try {
+    // 既に許可済みなら再プロンプトしない。LocalNotifications と同じ POST_NOTIFICATIONS 権限のため、
+    // 二重リクエストで Android の「2回目で恒久拒否」を無駄に消費しない。
+    let state = (await PushNotifications.checkPermissions()).receive;
+    if (state === "prompt" || state === "prompt-with-rationale") {
+      state = (await PushNotifications.requestPermissions()).receive;
+    }
+    if (state !== "granted") {
+      _pushInited = false; // 後から設定で許可された場合に再試行できるよう戻す
+      return;
+    }
+    await PushNotifications.addListener("registration", (t) => {
+      const token = t?.value || "";
+      if (!token) return;
+      // 端末側でトークンがローテーションした場合、旧行は FCM 送信時の UNREGISTERED 掃除で消える。
+      _fcmToken = token;
+      _upsertTokenRecord();
+    });
+    await PushNotifications.addListener("registrationError", (e) => {
+      console.warn("[push] registration error", e);
+    });
+    await PushNotifications.register();
+    // フォアグラウンド受信は何もしない: アプリ起動中は既存のローカル通知(useStaffNotificationAlerts)が
+    // 同内容を鳴らすため、二重通知を避ける。FCM はバックグラウンド/終了時に OS が通知欄へ表示する。
+  } catch (e) {
+    console.warn("[push] init failed (google-services 未組込ビルドでは正常)", e);
   }
 }
 
@@ -73,6 +142,11 @@ export function useStaffNotificationAlerts(notifications: AppNotification[]): vo
     try { localStorage.setItem(SEEN_KEY, JSON.stringify(current)); } catch { /* ignore */ }
 
     if (isFirst || fresh.length === 0) return;
+
+    // FCM 有効かつ画面非表示（バックグラウンド）の間は、サーバーの FCM が通知欄に出すため
+    // ローカル通知を重ねない（同一ジョブで2回鳴るのを防止）。フォアグラウンドでは FCM は
+    // 表示されない（リスナー未登録）ので、従来どおりローカル通知が担当する。
+    if (_fcmToken && typeof document !== "undefined" && document.visibilityState === "hidden") return;
 
     // チャンネル作成完了後にスケジュール（既定チャンネルへの無音配信を防ぐ）。
     void initStaffNotify().then(() => {

@@ -163,18 +163,20 @@ function ReturnConfirmationMobile() {
       }));
 
       // 同じ注文の未処理伝票があれば削除してから登録（二重確定による幽霊伝票の防止）
+      // 新チケットの決定的ID。同IDの既存行は下の push(upsert) がその場で上書きするため削除しない。
+      // 削除→push だと DELETE と POST が並行 HTTP になり、POST が先に着くと直後の DELETE が
+      // 新チケットを消してしまう（注文が検品待ちのまま倉庫キューから消える）。
+      const walkinId = "WIN-" + (order.id || order.orderNumber || "").toString().replace(/[^0-9A-Za-z]/g, "");
       try {
         OrderBus.getAll<any>("walkinReturns")
-          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          .filter((w: any) => w && w.id !== walkinId && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
           .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
       } catch { /* ignore */ }
 
       OrderBus.push("walkinReturns", {
         // 決定的ID: 同一注文の同時／二重送信でも同じIDになり、OrderBus.push が upsert して
         // 1件に集約される（多端末同時提出での幽霊伝票・二重 -R 注文を防止）。注文ID（一意・安定）を優先。
-        id:
-          "WIN-" +
-          (order.id || order.orderNumber || "").toString().replace(/[^0-9A-Za-z]/g, ""),
+        id: walkinId,
         orderId: order.id,
         orderNumber: order.orderNumber,
         firestoreId: order.firestoreId,

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/order_mail.php';
+require_once __DIR__ . '/fcm.php'; // スタッフ APK への FCM プッシュ（サービスアカウント未設定なら no-op）
 
 require_api_token();
 
@@ -35,6 +36,17 @@ try {
         // orders は発注者(userId)一致、users は自分のレコードのみ。トークン未提示(旧クライアント/移行中)は
         // 後方互換で従来どおり全件返す（強制は全クライアント更新後の別フェーズ）。
         $cu = current_user();
+        // pushTokens は新設ストアで旧クライアント互換が不要 → フラグに関係なく常に fail-closed。
+        // 特権ロール(admin/staff)のみ読める（共有 api_token だけでスタッフ端末のFCMトークン一覧を取得させない）。
+        if ($name === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
+            $out = [];
+        }
+        // enforce_user_token=true 時は sync.php と同じ fail-closed を GET にも適用（トークン未提示は
+        // 社内系ストアの内容を返さない）。既定(false)では従来どおり＝挙動不変。
+        if (enforce_user_token_enabled() && $cu === null
+            && in_array($name, ['staffMessages', 'mailLogs', 'walkinReturns', 'returnInspections'], true)) {
+            $out = [];
+        }
         if ($cu && !is_privileged_role($cu['role'])) {
             if ($name === 'orders' || $name === 'users') {
                 $scoped = [];
@@ -49,8 +61,8 @@ try {
                     }
                 }
                 $out = $scoped;
-            } elseif ($name === 'mailLogs' || $name === 'staffMessages') {
-                $out = []; // 顧客には配信しない（送信メールログ・社内連絡）
+            } elseif ($name === 'mailLogs' || $name === 'staffMessages' || $name === 'pushTokens') {
+                $out = []; // 顧客には配信しない（送信メールログ・社内連絡・スタッフ端末のプッシュトークン）
             } elseif ($name === 'returnInspections' || $name === 'walkinReturns') {
                 // 自分の注文に紐づく検品/持込返却のみ返す（他顧客の検品結果・PII の漏洩防止）。
                 $owned = [];
@@ -105,6 +117,11 @@ try {
         // トークン未提示(旧クライアント/移行中)・特権ロール(admin/staff)は従来どおり全件書き込み可（後方互換）。
         // orders/users 以外のストアは現状クライアントから顧客が書き込まないため従来どおり許可する。
         $cu = current_user();
+        // pushTokens は新設ストア（旧クライアント互換が不要）→ フラグに関係なく特権ロールのみ書き込み可。
+        // 共有 api_token だけの呼び出しで任意端末を通知先に登録される（業務プッシュの窃視）のを防ぐ。
+        if ($name === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
+            json_out(['error' => 'forbidden'], 403);
+        }
         if ($cu && !is_privileged_role($cu['role'])) {
             if ($name === 'orders') {
                 // デフォルト拒否: 既存注文の更新は所有者本人のみ。userId が空/未設定の既存注文も
@@ -163,6 +180,21 @@ try {
         // レコードを恒久的に飛ばし得る（データ欠落）。トランザクションで採番→書き込みを直列化する。
         // メール送信はコミット後（ロールバック時に誤送信しない / ロックを長く保持しない）。
         $pdo->beginTransaction();
+        // プッシュ通知の「新ジョブか」判定は txn 内で FOR UPDATE 読みする（同一レコードへ2端末が
+        // ほぼ同時に POST しても後続がロック待ち→更新後の状態を見るため、二重通知にならない）。
+        $pushPrevSS = null;   // orders: 直前の staffStatus（行なし/削除済みは ''）
+        $walkinIsNew = false; // walkinReturns: 新規受付か（stage 更新=スタッフ操作では通知しない）
+        if (fcm_enabled() && ($name === 'orders' || $name === 'walkinReturns')) {
+            $lk = $pdo->prepare("SELECT data, deleted FROM records WHERE store = ? AND id = ? FOR UPDATE");
+            $lk->execute([$name, $id]);
+            $lockRow = $lk->fetch(PDO::FETCH_ASSOC) ?: null;
+            if ($name === 'orders') {
+                $ld = ($lockRow && (int)$lockRow['deleted'] === 0) ? json_decode((string)$lockRow['data'], true) : null;
+                $pushPrevSS = is_array($ld) ? (string)($ld['staffStatus'] ?? '') : '';
+            } else {
+                $walkinIsNew = ($lockRow === null || (int)$lockRow['deleted'] !== 0);
+            }
+        }
         $rev = next_rev($pdo);
         $stmt = $pdo->prepare(
             "INSERT INTO records (store, id, data, deleted, rev) VALUES (?, ?, ?, 0, ?)
@@ -188,6 +220,49 @@ try {
                 $mail = ['sent' => false, 'error' => 'mail send failed']; // 内部例外メッセージはログのみ（クライアントへ漏らさない）
             }
         }
+
+        // ── スタッフ APK への FCM プッシュ判定（新ジョブになった遷移のみ。編集のたびに鳴らさない）──
+        $push = null; // [title, body]
+        if (fcm_enabled()) {
+            if ($name === 'orders') {
+                $prevSS = (string)($pushPrevSS ?? ''); // txn 内 FOR UPDATE 読みの直前値（二重通知防止）
+                $newSS  = (string)($body['staffStatus'] ?? '');
+                $who    = (string)($body['companyName'] ?? '') ?: (string)($body['personName'] ?? '');
+                $site   = (string)($body['siteName'] ?? '');
+                $label  = trim($who . ($site !== '' ? ' / ' . $site : ''));
+                if ($newSS === '配送予定' && $prevSS !== '配送予定') {
+                    $push = ['新しい配送ジョブ', $label !== '' ? $label : '新しい配送があります'];
+                } elseif ($newSS === '回収予定' && $prevSS !== '回収予定') {
+                    $push = ['新しい回収ジョブ', $label !== '' ? $label : '新しい回収があります'];
+                }
+            } elseif ($name === 'walkinReturns' && $walkinIsNew) {
+                $who = (string)($body['companyName'] ?? '') ?: (string)($body['contact'] ?? '');
+                $push = ['持込返却の受付', $who !== '' ? $who . ' 様の持込返却' : '新しい持込返却があります'];
+            }
+        }
+        if ($push !== null) {
+            // 応答を先に返してから送信する（FCM の往復で保存操作のレスポンスを遅らせない）。
+            $json = json_encode(['ok' => true, 'mail' => $mail], JSON_UNESCAPED_UNICODE);
+            http_response_code(200);
+            header('Content-Type: application/json; charset=utf-8');
+            if (function_exists('fastcgi_finish_request')) {
+                echo $json;
+                fastcgi_finish_request();
+            } else {
+                // 非 FPM 環境（mod_php / 開発サーバ）: Content-Length + close で先にフラッシュする
+                header('Content-Length: ' . strlen($json));
+                header('Connection: close');
+                echo $json;
+                @ob_end_flush();
+                @flush();
+            }
+            try {
+                fcm_notify_staff($pdo, $push[0], $push[1], ['kind' => $name, 'id' => (string)$id]);
+            } catch (Throwable $e) {
+                error_log('[fcm] ' . $e->getMessage());
+            }
+            exit;
+        }
         json_out(['ok' => true, 'mail' => $mail]);
     }
 
@@ -205,6 +280,11 @@ try {
         }
         // 削除も所有権チェック（POST と同様）。非特権顧客は自分の orders / 自分の users のみ削除可。
         $cu = current_user();
+        // pushTokens の削除も特権ロールのみ（POST と同じ fail-closed。スタッフ端末の通知登録を
+        // 共有トークンだけで剥がされないように）。
+        if ($name === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
+            json_out(['error' => 'forbidden'], 403);
+        }
         if ($cu && !is_privileged_role($cu['role'])) {
             // デフォルト拒否: 非特権顧客が削除できるのは自分の orders / users のみ。
             // （以前は $own=true 既定のため products 等のマスターデータも削除できてしまった）。

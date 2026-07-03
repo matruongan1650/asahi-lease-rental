@@ -57,6 +57,13 @@ return [
     //     'public_base' => '',
     // ],
 
+    // ── Firebase Cloud Messaging（スタッフ APK へのプッシュ通知）───────────────────
+    // サービスアカウント JSON は Web ルート外に置くこと（nginx で配信されない場所）。
+    // 未設定/ファイル無しなら送信は no-op（従来のローカル通知のみ）。
+    // 'fcm' => [
+    //     'service_account' => '/var/www/shuyei-secrets/fcm-service-account.json',
+    // ],
+
     // ── パスワードの遅延ハッシュ化（Phase 3）──────────────────────────────────────
     // true にすると、auth.php が平文で認証成功したユーザーを bcrypt へ再ハッシュして保存する
     //（一斉リセット不要・段階移行）。
