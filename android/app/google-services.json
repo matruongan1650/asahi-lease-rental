@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "916712928112",
+    "project_id": "asahi-staff",
+    "storage_bucket": "asahi-staff.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:916712928112:android:b40d57fb99748692d9d5b5",
+        "android_client_info": {
+          "package_name": "online.shuyei.asahi.staff"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBp9SjsQDqsXUdmXl5nmq2GV04nLjjTods"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
