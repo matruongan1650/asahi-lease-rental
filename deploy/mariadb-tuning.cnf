@@ -1,0 +1,17 @@
+# /etc/mysql/mariadb.conf.d/60-asahi.cnf
+# 2GB RAM 共有CPU向けチューニング（9同時ユーザーの軽量DB）。
+# 反映: systemctl restart mariadb
+[mysqld]
+character-set-server        = utf8mb4
+collation-server            = utf8mb4_unicode_ci
+default-time-zone           = '+09:00'      # JST（アプリも Asia/Tokyo 前提）
+
+innodb_buffer_pool_size     = 256M          # 2GB box の目安（DBが小さいので十分）
+innodb_log_file_size        = 64M
+innodb_flush_log_at_trx_commit = 1          # 耐障害性優先（この規模で性能問題なし）
+max_connections             = 40
+thread_cache_size           = 8
+tmp_table_size              = 32M
+max_heap_table_size         = 32M
+# 低メモリで無効化推奨（不要なメモリ確保を避ける）
+performance_schema          = OFF

@@ -12,6 +12,7 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/db.php'; // CORS/OPTIONS 処理と require_api_token() を共有
+require_once __DIR__ . '/r2.php'; // Cloudflare R2 dual-write（config 未設定なら no-op）
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
@@ -88,12 +89,22 @@ if (!is_dir($dir) || !is_writable($dir)) {
 // 内容ハッシュ名（重複アップロードは同じファイルに集約され、キャッシュも効く）
 $fname = sha1($bytes) . '.' . $ext;
 $path = $dir . '/' . $fname;
-if (!file_exists($path)) {
+$isNew = !file_exists($path);
+if ($isNew) {
     if (file_put_contents($path, $bytes) === false) {
         http_response_code(500);
         echo json_encode(['error' => 'write failed']);
         exit;
     }
+}
+
+// ── Cloudflare R2 へも保存（dual-write）。R2 障害でもアップロード自体は成功扱い（ローカル保存済み）。
+// 重複アップロードでも毎回 PUT する（冪等・内容アドレスなので安全）。「ローカルに有る＝R2にも有る」
+// という推定はしない — R2 設定前の旧ファイルや過去の PUT 失敗があると、public_base 切替後に
+// 存在しない R2 URL を配ってしまうため（verify指摘 MED）。
+$r2ok = false;
+if (r2_config() !== null) {
+    $r2ok = r2_put($fname, $bytes, r2_content_type($ext));
 }
 
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
@@ -106,4 +117,11 @@ $reqHost = $_SERVER['HTTP_HOST'] ?? '';
 $host = in_array($reqHost, $allowedHosts, true) ? $reqHost : 'shuyei.online';
 $url = $scheme . '://' . $host . '/api/uploads/' . $fname;
 
-echo json_encode(['ok' => true, 'url' => $url], JSON_UNESCAPED_SLASHES);
+// Phase 2（DNS→Cloudflare 後）: config の r2.public_base 設定で R2/CDN URL を返すよう切替。
+// R2 PUT が成功した場合のみ公開URLへ（失敗時はローカルURLでフォールバック＝画像は必ず見える）。
+$publicUrl = $r2ok ? r2_public_url($fname) : null;
+if ($publicUrl !== null) {
+    $url = $publicUrl;
+}
+
+echo json_encode(['ok' => true, 'url' => $url, 'r2' => $r2ok], JSON_UNESCAPED_SLASHES);

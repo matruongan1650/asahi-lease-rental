@@ -45,6 +45,18 @@ return [
     // ★全クライアント(web リロード済み + 新 APK)がトークンを送る状態にしてから有効化すること。
     //   先に有効化すると未更新クライアントが壊れる。auth_secret 変更後は全員の再ログインが前提。
     'enforce_user_token' => false,
+    // ── Cloudflare R2（画像・サインの外部保存 / dual-write）────────────────────────
+    // 設定すると upload.php がローカル保存に加えて R2 へも PUT する（未設定なら従来通り）。
+    // public_base を設定すると返す URL が R2/CDN 側に切り替わる（DNS を Cloudflare へ移した後に
+    // カスタムドメインを設定してから入れること。空の間はローカル URL のまま＝安全）。
+    // 'r2' => [
+    //     'account_id'  => '<Cloudflare Account ID>',
+    //     'access_key'  => '<R2 API Token Access Key ID>',
+    //     'secret_key'  => '<R2 API Token Secret Access Key>',
+    //     'bucket'      => 'asahi-uploads',
+    //     'public_base' => '',
+    // ],
+
     // ── パスワードの遅延ハッシュ化（Phase 3）──────────────────────────────────────
     // true にすると、auth.php が平文で認証成功したユーザーを bcrypt へ再ハッシュして保存する
     //（一斉リセット不要・段階移行）。
