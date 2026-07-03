@@ -132,6 +132,9 @@ export default function AdminCalendar() {
   };
 
   (rawOrders || []).forEach(o => {
+    // キャンセル注文の納品/レンタル開始/返却予定はカレンダーに出さない（存在しない配送・回収の
+    // 予定でトラックが手配される・今後の予定が水増しされるのを防ぐ。返却済/完了は履歴として残す。C26）。
+    if (String(o.status || "") === "キャンセル") return;
     const cust = o.companyName || o.personName || "ゲスト";
     const site = o.siteName || o.deliveryLocation || "—";
     const orderNo = o.orderNumber || o.id || "注文";

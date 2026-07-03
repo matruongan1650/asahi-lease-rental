@@ -1,0 +1,194 @@
+########## CONFIRMED: 31 ##########
+
+--- [C1] [HIGH] (orders) Closing/cancelling an order via the drawer's edit modal never restores stock — save patches the new status before settleReturnStock runs, so the close
+    file: src/components/AdminOrderDrawer.tsx:400
+    repro: Order with status 確認済み or レンタル中 and stockDeducted=true (stock deducted at 受注確定). Admin opens the order in AdminRental (or any of the 7 drawer hosts) → 注文情報を編集 → change 注文ステータス to キャンセル (pre-delivery cancel), 返却済, or 完了 → 保存する. handleSaveEdit calls onUpdateOrder first (line 400), whose host wiring does OrderBus.patch synchronously (orderBus.ts:655-6
+    impact: Permanent physical-stock loss in the ledger every time an admin closes or cancels an out-on-loan order through the edit modal — which is the ONLY UI path to cancel an already-accepted order in AdminRental (却下 exists only in the 受注待ち queue). The comme
+    fix: In src/components/AdminOrderDrawer.tsx handleSaveEdit: run the ledger transition BEFORE the status is persisted for closing transitions. Concretely, before line 400 add: `const statusChanged = (updates.status || order.status) !== order.status; const closing = statusChanged && isClosedOrder(updates.status); if (closing && onUpdateStatus) onUpdateStatus(order.firestoreId || order.id, updates.status,
+
+--- [C2] [MED] (orders) Registered rental contracts get a 4-digit random orderNumber (RN-YYYY-1000..9999) with no uniqueness check; on collision, stockLedger's resolveLiveOrd
+    file: src/pages/Admin/AdminRental.tsx:160
+    repro: Register rental contracts via レンタル契約を登録 over time: orderNumber = `RN-${year}-${Math.floor(1000+Math.random()*9000)}` has only 9,000 values per year (birthday paradox: ~10% chance of a duplicate at 43 registrations, ~50% at 112). Once two orders share e.g. RN-2026-1234: resolveLiveOrder (src/utils/stockLedger.ts:66) uses `list.find(o => o.id===id ||
+    impact: Probabilistic but destructive: permanent stock shortfall (skipped restore) or skipped deduction, and cross-order item-list corruption via the wrong-target patch. Also duplicate invoice numbers (INV-R-<digits of orderNumber> in AdminDataContext.tsx:19
+    fix: Two changes: (1) src/pages/Admin/AdminRental.tsx:160 — make orderNumber collision-free like the checkout path (OrderContext.tsx:113 uses Date.now()): e.g. `const orderNumber = \`RN-${now.getFullYear()}-${String(now.getTime()).slice(-6)}\`;` or re-roll while `OrderBus.getAll('orders').some(o => o.orderNumber === orderNumber)`. (2) Harden src/utils/stockLedger.ts resolveLiveOrder (line 61-67) to pre
+
+--- [C3] [MED] (orders) Editing any billing field in the drawer discards cached invoiceBlocks wholesale, silently deleting manually-added 追加費用 and 入金済み (paid/paidAt) marks
+    file: src/components/AdminOrderDrawer.tsx:384
+    repro: Order with cached invoiceBlocks: admin adds 追加費用 ¥5,000 via 追加費用入力 (handleAddCost persists it into invoiceBlocks and totals), and/or AdminInvoices marks a month block 入金済 (AdminInvoices.tsx:282/334 writes status:'paid', paidAt into invoiceBlocks). Later the admin opens 注文情報を編集 and extends レンタル終了予定日 (or changes qty/単価/配送費) → billingChanged=true → `u
+    impact: Silent loss of billed money (manual extra costs vanish from invoices and totals) and loss of payment-tracking state — a paid month reappears as outstanding in the AR list, risking double collection attempts and unauditable paidAt history. Triggered b
+    fix: In handleSaveEdit's billingChanged branch (src/components/AdminOrderDrawer.tsx:383-398): instead of dropping blocks, carry state over by month. Sketch: `const regenerated = getOrGenerateInvoiceBlocks(tempOrder); const AUTO = new Set(['fuel-refill','compensation-charge','delivery-fee']); const old = order.invoiceBlocks || []; const merged = regenerated.map(b => { const prev = old.find(o => o.monthP
+
+--- [C4] [LOW] (orders) Contract registered as 確認済み keeps subtotal/tax/total = 0 for the entire rental — neither 稼働開始 nor staff completeDelivery ever writes totals
+    file: src/pages/Admin/AdminRental.tsx:141
+    repro: レンタル契約を登録 with 登録ステータス 確認済み → shouldBill=false so the order is pushed with subtotal:0, tax:0, total:0 (AdminRental.tsx:209-215, intentional at that stage). Then either the admin clicks 稼働開始 (handleMoveToActive, line 136-144: patches only status/staffStatus/deliveryConfirmedAt) or staff completes delivery (MobileLiveContext.tsx:369-420: sets invoice
+    impact: Wrong money display in the main orders table and understated レンタル売上 KPI for every contract registered as 確認済み, lasting from delivery until return close. The registration comment says blocks are generated 納品確定時 (completeDelivery), but that step only c
+    fix: In completeDelivery (src/context/MobileLiveContext.tsx after line 418, once updates.items is built): compute `const blocks = getOrGenerateInvoiceBlocks({ ...target0, ...updates });` and set updates.subtotal/tax/total from the block sums (same reduce as AdminRental.tsx:211-214). Optionally mirror the same recompute in AdminRental.handleMoveToActive (line 141) for orders whose live record has total=
+
+--- [C5] [LOW] (orders) Edit modal auto-recalc (recalcEditDraftTotals) ignores invoice-block extra costs — touching any item field and saving without a billing change persist
+    file: src/components/AdminOrderDrawer.tsx:308
+    repro: Order with a cached 追加費用 (e.g. 追加配送費 ¥5,000 inside invoiceBlocks, included in stored order.total). Admin opens 注文情報を編集 and touches any item field — e.g. changes 数量 2→3 and back to 2 (setDraftItemValue at line 275-283 auto-calls recalcEditDraftTotals on every keystroke), or presses 金額を再計算. recalcEditDraftTotals (lines 308-314) computes subtotal = Σ(
+    impact: order.total in the AdminRental table, drawer 合計 section, and rentalSales KPI diverge from the invoice blocks (which remain the billing source of truth), understating the order by the extra-cost amount and confusing reconciliation. Also, even without 
+    fix: Make recalcEditDraftTotals block-consistent: inside it, derive totals from getOrGenerateInvoiceBlocks({ ...editDraft, items: draft items, invoiceBlocks: undefined-when-billing-inputs-differ-else order.invoiceBlocks }) and sum block subtotal/tax/total, instead of the flat Σitems+delivery formula. Simpler surgical alternative: in handleSaveEdit, when !billingChanged, recompute updates.subtotal/tax/t
+
+--- [C6] [HIGH] (billing) invoiceBlocks regeneration (customer extension / return finalization) silently discards admin-added extraCosts and reverts paid blocks to pending
+    file: src/utils/returnProcessing.ts:255
+    repro: 3-month rental 4/1–6/30. Admin marks the April block 入金済 in 請求管理 (this caches invoiceBlocks with status=paid), and/or adds a manual 追加費用 (id "cost-...") via AdminOrderDrawer handleAddCost. Then EITHER (a) customer extends the rental in OrderDetail.tsx handleConfirmExtension (line 293: tempOrder built with invoiceBlocks: undefined, line 312 saves fr
+    impact: Money loss and AR corruption: manually billed extra charges vanish (under-billing), and already-collected months reappear as 未入金/延滞 in AdminInvoices → double invoicing risk. Triggerable by a CUSTOMER action (extension) with no admin involvement. Admi
+    fix: Add a helper in billing.ts, e.g. regenerateBlocksPreservingState(prevBlocks, newBlocks): for each new block, if a prev block with the same monthPeriod exists, carry over status/paidAt (except when the whole order closes as 返却済) and re-append prev extraCosts whose id is not one of the auto-injected ids (fuel-refill/compensation-charge/delivery-fee), then recalculateInvoiceBlock. Use it in returnPro
+
+--- [C7] [MED] (billing) Admin price override (priceOverride/calculatedPrice) is discarded when a return is finalized or rental extended — invoice reverts to full standard pri
+    file: src/utils/returnProcessing.ts:80
+    repro: Admin edits an order in AdminOrderDrawer and lowers 単価: normalizedItems get priceOverride:true and the discounted calculatedPrice (AdminOrderDrawer.tsx:321-331); billing.ts:277 + the scaling block (288-301) intentionally preserve this across recomputes. Customer keeps the item; warehouse completes the return → finalizePartialReturn → computeReturnS
+    impact: Over-billing: a negotiated discount silently disappears from the final (or extended) invoice; the customer is charged the standard rentPrice-based amount. Contradicts the documented design that priceOverride survives automatic recalculation.
+    fix: In computeReturnSplit (returnProcessing.ts:65-81 and 95-111) and both extension handlers: when item.priceOverride is true, do not overwrite calculatedPrice with the recomputed totalPrice — keep item.calculatedPrice (or scale it proportionally: old override × newTotalPrice/oldNaturalPrice when the billing period changed) and let ensureMonthlyBreakdowns' existing scaling reconcile the breakdown, mir
+
+--- [C8] [MED] (billing) Cancelled orders (status キャンセル) appear as unpaid receivables in 請求管理 list, AR stats and 延滞 aging
+    file: src/pages/Admin/AdminInvoices.tsx:96
+    repro: Create/confirm a rental order with rental dates, then cancel it (AdminRental.tsx:131 patches { status: "キャンセル" } keeping items and dates). In 請求管理: makeRows (AdminInvoices.tsx:96-110) generates blocks for every order with items — no キャンセル filter — and getOrGenerateInvoiceBlocks gives past months status "pending" (billing.ts:565 only special-cases 完
+    impact: AR aging and receivable totals are inflated by amounts that will never be collected; admin can issue/mark-paid an invoice for a cancelled order. Direct money-reporting error in the primary AR screen.
+    fix: In AdminInvoices.tsx, filter cancelled orders out of the billing rows the same way rentalInvoiceGrouping does: in the invoiceOrders memo (line 163-166) or at the top of makeRows' flatMap (line 96-98), skip orders with String(order.status) === "キャンセル".
+
+--- [C9] [MED] (billing) Partial-return (-R) orders save invoiceBlocks with id "block-undefined-<YYYY-MM>" — cross-order block-id collisions break per-block selection and bulk
+    file: src/utils/returnProcessing.ts:282
+    repro: tempCustomOrder (returnProcessing.ts:282-307) has no id field, and getOrGenerateInvoiceBlocks derives block.id = `block-${order.id}-${monthStr}` (billing.ts:553), so customInvoiceBlocks get id "block-undefined-2026-07"; addCustomOrder (OrderContext.tsx:147-152) assigns the order id afterwards without touching the blocks. Any two partial returns who
+    impact: Payment records set on invoices the admin never selected (silent AR corruption across different customers' orders); selection UI shows phantom checkmarks.
+    fix: Generate the -R order id before building blocks: in finalizePartialReturn create the id up front (same scheme as OrderContext, e.g. `id-${Date.now()}-...`), put it on tempCustomOrder before calling getOrGenerateInvoiceBlocks (returnProcessing.ts:309), and pass it through addCustomOrder. Defensively, also key AdminInvoices selection by a composite `${order.firestoreId || order.id}::${block.id}`.
+
+--- [C10] [LOW] (billing) Deleting the auto-injected fuel-refill charge has no dismissal flag, so any block regeneration silently re-bills the waived fuel fee
+    file: src/components/AdminOrderDrawer.tsx:259
+    repro: Security-vehicle rental returned without full tank → finalize stores order.fuelCharge and the invoice block gets ExtraCost id "fuel-refill" (billing.ts:575-587). Admin waives it by deleting the row in AdminOrderDrawer handleDeleteCost — but lines 259-260 only set compensationDismissed / deliveryDismissed for those two ids; there is no fuelDismissed
+    impact: Over-billing: a fee the admin explicitly waived resurrects on the next regeneration and flows into block totals and the PDF.
+    fix: In handleDeleteCost add `...(costId === "fuel-refill" ? { fuelDismissed: true } : {})` (AdminOrderDrawer.tsx:259-260), and guard the injection in billing.ts:575 with `if (fuel && Number(fuel.amount) > 0 && !(order as any).fuelDismissed && blocks.length > 0)`.
+
+--- [C11] [HIGH] (warehouse) New-product registration uses random 4-digit P-id and OrderBus.push never dedupes ids — collision silently destroys an existing product (server data f
+    file: src/pages/Admin/AdminWarehouse.tsx:320
+    repro: Products already occupy the P-1000..P-9999 space (e.g. seeded P-1001 レボリューションコーン赤白, P-2001 ガードフェンス — src/context/MobileLiveContext.tsx:81-97; every product created from this modal uses the same space). In 倉庫管理 > 品目を追加, register a new item; `const newId = "P-" + Math.floor(1000 + Math.random() * 9000)` rolls an id that already exists (probability ≈ 
+    impact: Silent, permanent destruction of a product master record including its live stock count; duplicate-id rows corrupt every stock-math path (deduct/restore/manual in-out/stocktake) and React list keys. No error or warning is shown.
+    fix: In handleSaveItem (AdminWarehouse.tsx:320) generate a collision-free id, e.g. `"P-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6)`, or loop `while (products.some(p => p.id === newId)) regenerate`. Defense in depth: make OrderBus.push (orderBus.ts:634) replace-in-place (upsert) or reject when a record with the same id already exists in the store, instead of prepending a du
+
+--- [C12] [MED] (warehouse) Stocktake CSV import accepts negative/fractional 実数 values and finalize writes them straight into products.stock
+    file: src/pages/Admin/AdminStocktake.tsx:401
+    repro: Export the stocktake CSV (supported round-trip workflow), edit 実数 for カラーコーン to "-3" (typo / Excel formula spill) or "3.5", then use CSV取込. importCsv does `const counted = Number(String(cols[6] ?? "").trim()); if (row && !isNaN(counted)) { draft[row.id] = counted; }` — no >=0 clamp and no integer check (the manual input path setCount at line 240-24
+    impact: Canonical physical stock goes negative/fractional: 倉庫在庫/総数 KPIs and the supplies table show negative onHand, total = onHand + rented is understated, stockStatus mis-classifies, and the corrupted value persists until someone manually re-adjusts (deduc
+    fix: In importCsv (AdminStocktake.tsx:401-403) sanitize: `const n = Number(...); if (row && Number.isFinite(n)) draft[row.id] = Math.max(0, Math.trunc(n));`. Optionally also clamp defensively in finalizeStocktake before patching (`stock: Math.max(0, Math.trunc(row.counted))`).
+
+--- [C13] [MED] (warehouse) Stocktake file attachments embed arbitrary base64 (non-image data: URLs) directly in one stocktake record — never externalized, stripped from localSto
+    file: src/pages/Admin/AdminStocktake.tsx:280
+    repro: In 棚卸 > 証跡・メモ, attach evidence files (handleFileUpload allows any type up to 8MB EACH, unlimited count; makeStocktakeFile stores the raw dataUrl). finalizeStocktake (lines 306-318) pushes one `stocktake` record containing all file base64 inline. Unlike photos (data:image), these are NOT uploaded to /api/upload: externalizeImages only matches `data:
+    impact: Stocktake session fails to sync (invisible to other admins), continuous multi-MB upload loop degrades the client and server, and audit-evidence files are irrecoverably lost after reload when the initial upsert failed. Photos are safe (image externali
+    fix: Do not embed non-image files in the record. Either (1) extend the upload pipeline: broaden upload.php + isUploadableDataUrl to a safe allowlist (pdf, csv, xlsx…) and store only URLs in StocktakeFile, uploading at attach time in handleFileUpload (AdminStocktake.tsx:271-284); or (2) as a stopgap, enforce a total-attachment budget before finalize (e.g. reject when combined dataUrl length > ~2MB) and 
+
+--- [C14] [HIGH] (returns) AdminOrderDrawer edit-save writes the new status before onUpdateStatus, so settleReturnStock's closed-guard always trips and admin close/cancel via th
+    file: src/components/AdminOrderDrawer.tsx:400
+    repro: Order with stockDeducted=true (e.g. 確認済み not yet delivered, or a return-requested rental shown in AdminRecovery 一括返却 tab). Admin opens 詳細 → 注文情報を編集 → changes ステータス to キャンセル (pre-delivery) or 返却済 → 保存. save() first calls onUpdateOrder(order.id, updates) whose payload includes status (line 371), and OrderBus.patch updates _mem synchronously. Then onU
+    impact: Pre-delivery cancel via the edit modal permanently loses the deducted stock (the exact case the code comment at lines 401-404 says must restock), and the admin rescue-close restock path wired in AdminRecovery/other pages is dead code. Silent, unrecov
+    fix: In AdminOrderDrawer.save() (src/components/AdminOrderDrawer.tsx:400-408): when statusChanged && onUpdateStatus, omit status from the onUpdateOrder payload (e.g. const { status, ...rest } = updates; onUpdateOrder(id, rest)) and let the onUpdateStatus wiring patch the status together with the ledger flags, as AdminRecovery.tsx:258-259 already does. Alternatively capture prevStatus before patching an
+
+--- [C15] [HIGH] (returns) finalizePartialReturn copies the cycle's itemIssues onto the continuing order, causing double compensation billing via the admin field-report screen a
+    file: src/utils/returnProcessing.ts:268
+    repro: Order with item A qty 5. Customer returns 2, warehouse final inspection finds 1 broken → StaffDashboard.completeReturn puts compensationCharge (e.g. ¥8,000) into extraFields, which goes only to the -R order (billed there). finalizePartialReturn ALSO writes itemIssues [{A, broken, 1}] onto the continuing order (line 268). Later the continuing order 
+    impact: The same broken/missing units are billed as compensation on both the -R order and the continuing order (double-billing, pre-filled so one click reproduces it). Secondary: the stale issues also reduce restoreOrderStock's `back` when the continuing ord
+    fix: In finalizePartialReturn's partial path (src/utils/returnProcessing.ts:260-273), do not write `itemIssues` onto the remaining-order update — the issues belong to the returned split and are already saved on the -R order (line 308). If AdminRecovery's 不足・破損 column needs them for display, store them under a non-billing key such as `lastReturnItemIssues` instead.
+
+--- [C16] [MED] (returns) handleUpdateIssue auto-balance zeroes the other issue counter — entering broken after missing (or vice versa) silently wipes the first value
+    file: src/components/AdminFieldReportManagement.tsx:326
+    repro: Item qty 10 in the field-report detail. Admin types 紛失=3 → state auto-fills to {missing:3, broken:0, ok:7} (sum==10). Admin then types 破損=1 → sum 3+1+7=11 > 10 → the overflow branch for field==='broken' executes `missing = 0; ok = maxQty - broken` (lines 326-329) → state becomes {missing:0, broken:1, ok:9}. Because ok always auto-fills to the resid
+    impact: Mixed missing+broken reports cannot be entered in the natural order; the earlier count is silently discarded, so submitReport computes compensation without it (e.g. 3 lost units never billed) and the itemIssues record is wrong.
+    fix: In the overflow branch (src/components/AdminFieldReportManagement.tsx:323-333), reduce `ok` first instead of zeroing the sibling field: for field==='broken' do `broken = Math.min(broken, maxQty - missing); ok = maxQty - missing - broken;` and symmetrically for 'missing'; for 'ok' clamp `ok = Math.min(ok, maxQty - missing - broken)`.
+
+--- [C17] [LOW] (returns) getMatchingWalkinReturn matches unrelated tickets via undefined === undefined, mislabeling 回収形態 for every order while any walk-in ticket is pending
+    file: src/components/AdminFieldReportManagement.tsx:57
+    repro: Any field recovery in progress creates a walkinReturns record whose firestoreId is targetOrder.firestoreId = undefined (MobileLiveContext.tsx:505; JSON drops the key). In the verification list, for every order that also lacks firestoreId (all orders created via OrderContext), `w.firestoreId === order.firestoreId` evaluates undefined===undefined → t
+    impact: Wrong recovery-mode badge shown for unrelated orders in the admin verification list and detail header whenever any walk-in/recovery ticket is in the queue — misleads admins about how an order is being returned. Display-only.
+    fix: In getMatchingWalkinReturn (src/components/AdminFieldReportManagement.tsx:51-61), require truthiness on each key before comparing: `(!!w.orderId && (w.orderId === order.id || w.orderId === order.firestoreId)) || (!!w.firestoreId && w.firestoreId === order.firestoreId) || (!!w.orderNumber && w.orderNumber === order.orderNumber)`.
+
+--- [C18] [LOW] (returns) firstPhotoUrl does not handle the {dataUrl} photo shape, so collection photos recorded via the staff collection flow are invisible in the admin field-
+    file: src/components/AdminFieldReportManagement.tsx:43
+    repro: Staff completes a collection job in StaffJobDetail: updates.collectionPhotos = photos where each entry is an object {dataUrl: "data:..."} (StaffJobDetail.tsx:112,152). Admin opens the order in 返却検品・紛失破損照合 detail: firstPhotoUrl(collectionPhotos) checks only string entries and objects with a `url` key (lines 39-49) → returns "" → the 現場写真 block is no
+    impact: Admin cannot see the field-collection evidence photos for orders collected through the staff job flow; the 回収形態 badge still claims photos exist, so it looks like the data was lost.
+    fix: In firstPhotoUrl (src/components/AdminFieldReportManagement.tsx:39-49), also accept the dataUrl key: `if (first && typeof first === "object") return String((first as any).url || (first as any).dataUrl || "");`.
+
+--- [C19] [HIGH] (vehicles) AdminVehicles vehicle edit resets linked product stock to the stale vehicle.stock, creating phantom inventory
+    file: src/pages/Admin/AdminVehicles.tsx:141
+    repro: 1) 商品管理→保安車両→追加 (AdminProductManagement.saveVehicle) registers a vehicle with 保有台数 3 — the vehicle record persists stock:3 and the linked product vprod_* gets stock:3. 2) An order for 2 units is 受注確定 → deductOrderStock sets product stock=1 (vehicle.stock stays 3). 3) Admin opens 車両管理 (AdminVehicles), opens that vehicle's drawer, edits any metadata 
+    impact: Silent inventory corruption from a routine metadata edit: phantom stock double-counts the units currently out, inflates customer-facing availability (oversell), and permanently corrupts the stock ledger after return. Also reverts any 入出庫/棚卸 adjustmen
+    fix: In syncLinkedProduct (src/pages/Admin/AdminVehicles.tsx:141), never overwrite stock for an existing product: `stock: existing ? Number(existing.stock ?? 0) : (merged.stock != null ? Number(merged.stock) : 1)`. (Longer term, stop persisting `stock` on vehicle records entirely — treat the linked product as the single source of truth.)
+
+--- [C20] [HIGH] (vehicles) 商品管理 保安車両 edit silently wipes 車検満了日 (and 年式/車体色) because saveVehicle reads form fields that don't exist
+    file: src/components/AdminProductManagement.tsx:605
+    repro: 1) Register a vehicle in 車両管理 (AdminVehicles) with 車検満了日 e.g. 2026/07/20 (17 days away → red alert + KPI count). 2) Later, edit that same vehicle's rental price in 商品管理→保安車両→編集→保存. The vehicle modal (lines 1295-1400) has NO input named inspectionDate/year/color, so formData.get() returns null → line 605 sets inspectionDate="" (lines 606-607 same fo
+    impact: Data loss of legally critical 車検 expiry dates via an unrelated price/stock edit. Expired-inspection vehicles vanish from every alert surface (compliance risk: driving without valid 車検). 年式/車体色 entered in AdminVehicles are also destroyed.
+    fix: In saveVehicle (src/components/AdminProductManagement.tsx:605-627), do not include keys that have no form input: build vehicleData without inspectionDate/year/color, or preserve existing values: `inspectionDate: editingVehicle?.inspectionDate ?? ""`, `year: editingVehicle?.year ?? ""`, `color: editingVehicle?.color ?? ""`. Alternatively add the missing inputs to the modal with defaultValue from ed
+
+--- [C21] [MED] (vehicles) 商品管理 vehicle edit prefills 保有台数 from the stale vehicle.stock and writes it absolutely to product.stock, resetting the ledger while units are rented
+    file: src/components/AdminProductManagement.tsx:1333
+    repro: 1) Vehicle registered with 保有台数 3 (product stock 3, vehicle.stock 3). 2) 2 units go out on rent → product stock=1, vehicle.stock still 3. 3) Admin edits the vehicle in 商品管理 (e.g. to change レンタル単価): the 保有台数 field prefills 3 from editingVehicle.stock (line 1333) — the admin sees a plausible number and saves without touching it → line 634 updateProdu
+    impact: Same phantom-stock corruption as the AdminVehicles path but triggered from 商品管理, and it also clobbers any 入出庫/棚卸 adjustments made since the last vehicle edit (the prefill never reads the live product stock). The admin has no way to notice: the displa
+    fix: Prefill from the live linked product instead of the vehicle mirror: `defaultValue={products.find(p => p && p.id === (editingVehicle.productId || editingVehicle.id))?.stock ?? 1}` at line 1333, and on save (line 634) only write stock if the value actually changed from that live prefill. Drop the stock mirror on the vehicle record (lines 623, 483) so it cannot go stale.
+
+--- [C22] [LOW] (vehicles) Admin 整備中 status buttons create duplicate maintenance 予定 entries on every toggle (no dedupe, unlike the staff path)
+    file: src/pages/Admin/AdminVehicles.tsx:351
+    repro: In the AdminVehicles drawer (handleSetStatus, lines 350-361) or AdminWarehouse vehicle drawer (handleVehicleStatusChange, lines 483-494), click 整備中 → 空車 → 整備中 for the same vehicle. Each 整備中 click unconditionally pushes a new MN-* record with status:"予定" into the maintenance store. MobileLiveContext.setVehicleStatus (lines 561-577) guards against th
+    impact: Duplicate open maintenance tasks accumulate in AdminMaintenance / dashboard pending-maintenance counts for the same vehicle, inflating the メンテナンス予定 KPI and cluttering the queue with entries nobody closes.
+    fix: Before OrderBus.push("maintenance", ...) in AdminVehicles.tsx handleSetStatus (line 351) and AdminWarehouse.tsx handleVehicleStatusChange (line 484), replicate the staff-path guard: skip the push if OrderBus.getAll("maintenance").some(m => m && (m.plate === vehicle.plate || m.name === vehicle.name) && m.status === "予定"). Also include `plate` in the pushed record so the dedupe key is reliable.
+
+--- [C23] [LOW] (vehicles) setVehicleStatus patches status without statusColor, so admin vehicle badges show the wrong tone after a staff-side status change
+    file: src/context/MobileLiveContext.tsx:559
+    repro: Vehicle is 空車 (statusColor "blue"). Staff app changes it to 使用中 via setVehicleStatus, which patches only { status } (line 559). In AdminVehicles the table badge (line 553-557) and drawer badge (line 746) derive tone from statusColor, so the vehicle shows 「使用中」 rendered with the blue/default tone instead of emerald "ok" — the color-coding admins sca
+    impact: Misleading status color in the admin 車両管理 table/drawer after any staff-side status change; admins relying on the color scan can misread fleet state.
+    fix: In setVehicleStatus (src/context/MobileLiveContext.tsx:559), patch both fields: OrderBus.patch("vehicles", v.id || v.plate, { status, statusColor: status === "使用中" ? "emerald" : status === "整備中" ? "orange" : "blue" }). (Or stop persisting statusColor and always derive it from status at render time in AdminVehicles.)
+
+--- [C24] [HIGH] (dashboard) Partial return and admin historical registration send customers a false 'ご注文を受け付けました' (order received) email
+    file: public/api/order_mail.php:31
+    repro: Order with userEmail set, status レンタル中. Admin performs 一部返却 (AdminRecovery → returnProcessing.processReturn). deps.addCustomOrder creates the returned-split order with a NEW id, status '返却済', carrying userEmail (src/utils/returnProcessing.ts:297,306,312) → OrderBus.push → POST /api/store.php?name=orders → $previous === null → order_mail_event() hit
+    impact: On every partial return (a core, live flow) the customer gets two emails: the correct 一部返却 status mail for the remaining order, plus a bogus 'we received your order' mail quoting a yen amount for an order they never placed — customers may believe the
+    fix: In order_mail_event (public/api/order_mail.php:31), do not send the 'created' mail when the record is born already closed: `if ($old === null) { if (in_array((string)$newStatus, ['返却済','返却済み','完了','キャンセル'], true)) return null; return [...created event...]; }`. Optionally, for born-返却済 records send the 返却済 status message instead of suppressing entirely.
+
+--- [C25] [MED] (dashboard) Admin sidebar 車庫 badge and bell notification use stale saved inspectionDaysRemaining instead of recomputing from inspectionDate
+    file: src/pages/Admin/AdminDashboard.tsx:132
+    repro: On 2026-06-01 admin saves a vehicle with inspectionDate 2026-06-20 → inspectionDaysRemaining=19 is persisted (AdminVehicles.tsx:276). Vehicle is never edited again. Today (2026-07-03) the 車検 is 13 days expired: AdminVehicles/AdminWarehouse and the dashboard alert card (AdminDashboardHome.tsx:383-384, recomputed) all show it as expired/due, but Admi
+    impact: Expired/soon-due 車検 vehicles are silently missing from the sidebar badge and the admin notification bell whenever the vehicle record hasn't been re-saved recently; badge/bell contradict the alert card on the very same dashboard. This is the exact sta
+    fix: Recompute from inspectionDate at both sites, same as AdminDashboardHome.tsx:383: in AdminDashboard.tsx badgeCounts use `const days = v.inspectionDate ? Math.round((new Date(String(v.inspectionDate).replace(/\//g,'-')+'T00:00:00').getTime()-t0)/86400000) : Number(v.inspectionDaysRemaining ?? 999); days < 0`. In utils/notifications.ts buildAdminNotifications, add the same dateOnly()-based recompute 
+
+--- [C26] [MED] (dashboard) Calendar shows 納品/レンタル開始/返却予定 events for cancelled orders
+    file: src/pages/Admin/AdminCalendar.tsx:134
+    repro: Create an order with deliveryDate 2026-07-10 and rentalEndDate 2026-07-31, then cancel it (status キャンセル). Open 管理カレンダー for July: 7/10 shows '{orderNo} 納品' and 7/31 shows '{orderNo} 返却予定'; both also appear in the 今後の予定 side panel. The rawOrders forEach at AdminCalendar.tsx:134-168 never checks o.status.
+    impact: Dispatch staff see delivery/collection schedule entries for orders that no longer exist operationally — trucks can be scheduled for cancelled orders, and the 今後の予定 list is padded with dead events. The dashboard's own 本日の予定 (AdminDashboardHome) alread
+    fix: At the top of the orders loop (AdminCalendar.tsx:134) add `if (String(o.status || "") === "キャンセル") return;`. Keep 返却済/完了 orders so historical 納品/返却済 events remain visible.
+
+--- [C27] [LOW] (dashboard) 稼働率 KPI and メンテナンス状況 donut double-count 処理中 orders whose stock was never deducted
+    file: src/components/AdminDashboardHome.tsx:180
+    repro: Product stock = 10, one new customer order in status 処理中 with a rent item qty 5 (stock is deducted only at 受注確定/確認済み per stockLedger). KPI: activeRentQty = 5 (lines 180-185 count every non-closed rent order), inventoryBase = 10 + 5 = 15 → 在庫数 card shows 稼働率 33% although zero units have left the warehouse. Donut (lines 252-257): 稼働中 = 5 AND 空き在庫 = 1
+    impact: Utilization and the 稼働中 donut slice are overstated whenever unconfirmed 処理中 orders exist; the same physical units are counted as both in-stock and on-rent, so the KPI can show high utilization on a quiet day with only unprocessed orders.
+    fix: Exclude not-yet-deducted orders from activeRentQty in both memos: add `if (String(o.status) === "処理中") return false;` (or require `o.stockDeducted === true`) to the filters at AdminDashboardHome.tsx:181 (kpis) and :253 (donutData).
+
+--- [C28] [LOW] (dashboard) 総売上高 card sparkline labeled 直近7日の売上 silently becomes last-7-weeks/months when the trend chart range is changed
+    file: src/components/AdminDashboardHome.tsx:537
+    repro: On the dashboard, switch the 売上推移 chart selector to 月別 (or 週別). miniBarData = trendData.slice(-7) (line 537) now contains the last 6 monthly buckets, but the 総売上高 KPI card still renders them under the static caption 「直近7日の売上」 (line 615), and bar tooltips show month labels with month totals.
+    impact: The headline revenue card shows month-scale (or week-scale) bars presented as daily sales — a user comparing 'the last 7 days' reads values inflated ~30x after touching an unrelated chart control.
+    fix: Decouple the sparkline from trendRange: build the 7-day series independently, e.g. compute a dedicated daily map inside miniBarData's useMemo from `orders` (reuse the daily-bucket logic of trendData with trendRange fixed to "daily"), instead of slicing the range-dependent trendData.
+
+--- [C29] [MED] (datalayer) OrderBus.patch upserts the full record built from a ≤3s-stale local copy — concurrent staff writes are silently erased (lost update, LWW)
+    file: src/lib/orderBus.ts:655
+    repro: 1) Staff APK completes a delivery: patch adds deliveryConfirmedAt, deliveryPhotos/signature URLs, staffStatus="配送完了", status="レンタル中" to order X; server row updated. 2) Admin's OrderBus last polled /api/sync before that write (poll interval SYNC_POLL_MS=3000, window widened further because _applyRemoteChanges skips records in _pendingUpserts while a
+    impact: Silent, permanent loss of concurrently-written order fields — most damaging for staff delivery/collection records (photos, signatures, timestamps that drive billing start) and for two-admin concurrent edits. No error is surfaced anywhere; the server 
+    fix: Add optimistic concurrency: include the record's last-seen rev in apiUpsert (orderBus.ts _upsertExternalized, src/lib/backendSync.ts apiUpsert) and have store.php POST reject with 409 when the stored rev differs; on 409 the client re-fetches the row, re-applies only the patch's `updates` keys on top, and retries. Lighter alternative confined to patch(): before apiUpsert, GET the single record from
+
+--- [C30] [MED] (datalayer) 却下 (reject) in AdminRental/AdminSales never checks the live order status and never restores stock — cancelling a just-accepted order permanently leaks
+    file: src/pages/Admin/AdminRental.tsx:131
+    repro: Order in 受注待ち queue. Admin clicks 受注確定 → deductOrderStock decrements products.stock, patchOrder sets status=確認済み (local bus is correct immediately, but the server upsert is async). The `setTimeout(refresh, 300)` at AdminRental.tsx:118 refetches /api/query BEFORE the upsert lands (any RTT >300ms, e.g. slow connection), so the row is still rendered i
+    impact: Permanent physical-stock undercount (deducted but order cancelled), plus a confirmed order being flipped to キャンセル which also cancels the staff delivery job. Undetectable later because the closed→closed guard (correctly) refuses to move stock again.
+    fix: In handleReject (AdminRental.tsx:122-134 and AdminSales.tsx:91-103), resolve the live order first — `const raw = OrderBus.getAll("orders").find(o => o.id===id || o.firestoreId===id) || row._raw;` — then (a) if raw.status is no longer in the queue's pending set, abort with a toast ("既に処理済みです") and call refresh(); and (b) otherwise merge restore flags into the patch: `liveOrders.patchOrder(id, { sta
+
+--- [C31] [LOW] (datalayer) useServerQuery.loadMore appends without dedupe while the server pages by ORDER BY rev DESC — any concurrent write shifts the window, producing duplica
+    file: src/lib/ordersQuery.ts:84
+    repro: AdminRental 完了・取消 queue with >50 matching orders. Load page 1 (offset 0, rev DESC per public/api/query.php:103). Any client then updates ANY order in the filtered set (staff completion, partial return, admin edit — every write bumps rev and moves that row to position 0). Click さらに表示 → loadMore fetches offset=50 of the now-shifted ordering and `setR
+    impact: Admin sees duplicated orders and can miss an order entirely in paged views for up to 8s per occurrence; with active field staff constantly bumping revs this happens routinely while paging. (Distinct from the known-deferred 500-row cap #9 — this is or
+    fix: In loadMore (src/lib/ordersQuery.ts:84), dedupe on append: `setRows(prev => { const seen = new Set(prev.map(r => String(r.firestoreId || r.id))); return [...prev, ...r.rows.filter(nr => !seen.has(String(nr.firestoreId || nr.id)))]; })`. For the skipped-row half, page with a rev cursor instead of offset (client passes the smallest rev received; query.php adds `AND rev < ?` with the same ORDER BY), 
+########## PLAUSIBLE: 1 ##########
+
+--- [P1] [MED] (datalayer) deductOrderStock returns stockDeducted:true without recording stockDeductedQty=0 when the product lookup fails, so a later final-inspection restore ad
+    file: src/utils/stockLedger.ts:98
+    repro: Order contains a rent item whose product cannot be resolved at 受注確定 time — e.g. the product was deleted from the products master after the order was placed, or the products store hasn't synced yet in a fresh session. deductOrderStock: adjustProductStock returns null → `if (!prod) return;` (line 98) exits BEFORE `it.stockDeductedQty = actual` (line 
+    impact: Silent phantom-stock inflation (the exact failure class this codebase repeatedly hardened against: closed→closed ghost-stock guard, stockDeductedQty draw-down). Books show more physical inventory than exists; subsequent orders get accepted against no
+    fix: In deductOrderStock (src/utils/stockLedger.ts:97-98), set the ledger fact before skipping: `if (!prod) { it.stockDeductedQty = 0; return; }` — so the restore cap at line 166 correctly evaluates to 0 for items that never left the ledger. This does not affect legacy orders (they have no stockDeductedQty and intentionally keep the quantity fallback) nor vehicles (restore also skips them, but the expl

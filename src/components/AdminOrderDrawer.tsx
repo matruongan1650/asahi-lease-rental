@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Drawer, Badge, triggerToast } from "./AdminUI";
-import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock, getTaxRate } from "../utils/billing";
+import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock, getTaxRate, regenerateBlocksPreservingState } from "../utils/billing";
+import { isClosedOrder } from "../utils/orderStatus";
 import DocumentViewer from "./DocumentViewer";
 import ProductCombobox from "./ProductCombobox";
 import { useProducts } from "../context/ProductContext";
@@ -255,9 +256,11 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
         subtotal: overallSubtotal,
         tax: overallTax,
         total: overallTotal,
-        // 自動計上の弁償費/配送料を admin が削除した場合は再計上を抑止する。
+        // 自動計上の弁償費/配送料/給油費を admin が削除した場合は再計上を抑止する
+        //（フラグが無いとブロック再生成のたびに給油費が復活し過大請求になる）。
         ...(costId === "compensation-charge" ? { compensationDismissed: true } : {}),
         ...(costId === "delivery-fee" ? { deliveryDismissed: true } : {}),
+        ...(costId === "fuel-refill" ? { fuelDismissed: true } : {}),
       });
       triggerToast("追加費用を削除しました", "ok");
     }
@@ -379,15 +382,18 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       tax: Number(editDraft.tax || 0),
       total: Number(editDraft.total || 0),
     };
-    // 課金項目が変わった時のみブロックを破棄して納品日基準で再生成させる。
+    // 課金項目が変わった時はブロックを作り直す。合計は「明細＋配送料の一括 floor」ではなく請求書PDFと
+    // 同じく月ブロック合計（ブロック毎切り捨て）から取る（一括 floor はブロック数-1円ずれる）。
     if (billingChanged) {
-      updates.invoiceBlocks = undefined; // 納品日基準で再生成させる
-      // 「金額を再計算」ボタンの押し忘れで明細と合計が乖離したまま保存されるのを防ぐため、
-      // 保存時に subtotal/tax/total を確定的に再計算する。税は「明細＋配送料の総額に一括 floor」ではなく、
-      // 請求書PDFと同じく getOrGenerateInvoiceBlocks の月ブロック合計（ブロック毎に切り捨て）から取る。
-      // 一括 floor だとブロック数-1円まで PDF とズレるため、ブロック合計を唯一の真実とする。
-      const tempOrder = { ...order, ...updates, invoiceBlocks: undefined };
-      const blocks = getOrGenerateInvoiceBlocks(tempOrder);
+      const fresh = getOrGenerateInvoiceBlocks({ ...order, ...updates, invoiceBlocks: undefined });
+      const hadBlocks = Array.isArray(order.invoiceBlocks) && order.invoiceBlocks.length > 0;
+      // 既存ブロックがある(=納品済み/請求済み)なら、入金済み印と手動追加費用を月ごとに引き継いで保存する
+      //（課金編集でこれらが消えると入金済み月が未収に戻り二重請求・手動費用の消失＝過少請求になる）。
+      // ブロックが無い(=確認済み等の未納品)なら従来どおり invoiceBlocks は確定せず、合計だけ算出する。
+      const blocks = hadBlocks
+        ? regenerateBlocksPreservingState(order.invoiceBlocks, fresh, { closing: isClosedOrder(updates.status || order.status) })
+        : fresh;
+      updates.invoiceBlocks = hadBlocks ? blocks : undefined;
       const sums = (blocks || []).reduce(
         (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
         { subtotal: 0, tax: 0, total: 0 },
@@ -395,16 +401,37 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       updates.subtotal = sums.subtotal;
       updates.tax = sums.tax;
       updates.total = sums.total;
+    } else {
+      // 課金項目は不変。合計は既存ブロック（手動/自動 追加費用込み）から取り直す。
+      // recalcEditDraftTotals は明細＋配送料のみで extraCosts を無視するため、その値をそのまま
+      // 保存すると追加費用の分だけ order.total が過少になり KPI・請求と食い違う。
+      const existing = getOrGenerateInvoiceBlocks({ ...order, ...updates });
+      if (Array.isArray(existing) && existing.length > 0) {
+        const sums = existing.reduce(
+          (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+          { subtotal: 0, tax: 0, total: 0 },
+        );
+        updates.subtotal = sums.subtotal;
+        updates.tax = sums.tax;
+        updates.total = sums.total;
+      }
     }
 
-    onUpdateOrder(order.firestoreId || order.id, updates);
     // 編集モーダルでステータスを変更した場合は在庫台帳を必ず通す。
     // onUpdateOrder は在庫を動かさないため、別途 onUpdateStatus 経由で
-    // 確認済み→出庫 / キャンセル・返却済・完了→入庫 を各画面の配線に委譲する
-    // （これをしないと、出庫済み注文をモーダルでキャンセルしても在庫が戻らない）。
+    // 確認済み→出庫 / キャンセル・返却済・完了→入庫 を各画面の配線に委譲する。
+    // ★重要: status はここ(onUpdateOrder)では patch せず onUpdateStatus に委ねる。
+    //   先に status をクローズ値へ patch すると settleReturnStock の resolveLiveOrder が
+    //   「既にクローズ済み」を見て、未クローズ→クローズ初回の救済入庫(在庫戻し)を取りこぼす
+    //   （出庫済み注文をモーダルでキャンセル/返却済にしても在庫が戻らない regression の根治）。
     const statusChanged = (updates.status || order.status) !== order.status;
-    if (statusChanged && onUpdateStatus) {
-      onUpdateStatus(order.firestoreId || order.id, updates.status, updates.staffStatus || undefined);
+    const delegateStatus = statusChanged && !!onUpdateStatus;
+    if (delegateStatus) {
+      const { status: _s, ...restUpdates } = updates;
+      onUpdateOrder(order.firestoreId || order.id, restUpdates);
+      onUpdateStatus!(order.firestoreId || order.id, updates.status, updates.staffStatus || undefined);
+    } else {
+      onUpdateOrder(order.firestoreId || order.id, updates);
     }
     triggerToast("注文情報を更新しました", "ok");
     setEditOpen(false);

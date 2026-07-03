@@ -39,29 +39,37 @@ if (!is_string($dataUrl) || $dataUrl === '') {
     exit;
 }
 
-// data:image/<type>;base64,<payload>
-if (!preg_match('#^data:image/([a-zA-Z0-9.+-]+);base64,(.+)$#s', $dataUrl, $m)) {
+// data:<mime>;base64,<payload>（写真・サインに加え、棚卸の証跡文書 PDF/CSV/Excel も許可）
+if (!preg_match('#^data:([a-zA-Z0-9.+/-]+);base64,(.+)$#s', $dataUrl, $m)) {
     http_response_code(400);
-    echo json_encode(['error' => 'invalid image data URL']);
+    echo json_encode(['error' => 'invalid data URL']);
     exit;
 }
-$subtype = strtolower($m[1]);
-// svg+xml は意図的に除外: 同一オリジンで配信される SVG は JavaScript を実行でき、
-// 保管型 XSS の原因になる。写真・サインは png/jpg/webp 等のラスタ画像のみを許可する。
+$mime = strtolower($m[1]);
+// image/svg+xml と HTML 系は意図的に除外: 同一オリジンで配信されると JavaScript を実行でき保管型
+// XSS の原因になる。ラスタ画像＋ブラウザがスクリプト実行しない安全な文書形式のみを許可する
+// （拡張子でホワイトリスト管理し、許可 MIME 以外は 415 で拒否）。
 $extMap = [
-    'png' => 'png',
-    'jpeg' => 'jpg',
-    'jpg' => 'jpg',
-    'webp' => 'webp',
-    'gif' => 'gif',
-    'bmp' => 'bmp',
+    'image/png' => 'png',
+    'image/jpeg' => 'jpg',
+    'image/jpg' => 'jpg',
+    'image/webp' => 'webp',
+    'image/gif' => 'gif',
+    'image/bmp' => 'bmp',
+    'application/pdf' => 'pdf',
+    'text/csv' => 'csv',
+    'application/csv' => 'csv',
+    'application/vnd.ms-excel' => 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+    'application/msword' => 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
 ];
-if (!isset($extMap[$subtype])) {
+if (!isset($extMap[$mime])) {
     http_response_code(415);
-    echo json_encode(['error' => 'unsupported image type: ' . $subtype]);
+    echo json_encode(['error' => 'unsupported type: ' . $mime]);
     exit;
 }
-$ext = $extMap[$subtype];
+$ext = $extMap[$mime];
 
 $bytes = base64_decode($m[2], true);
 if ($bytes === false || strlen($bytes) === 0) {

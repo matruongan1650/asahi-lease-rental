@@ -79,7 +79,14 @@ export function buildAdminNotifications({
     list.push({ id: "admin-low-stock", title: `低在庫 ${lowStock.length}品目`, body: "入庫・補充計画を確認してください", tone: "warning" });
   }
 
-  const vehicleAlerts = vehicles.filter((v: any) => Number(v.inspectionDaysRemaining ?? 999) <= 30 || String(v.status || "") === "整備中" || (v.alerts || []).length > 0);
+  // 車検残日数は保存値ではなく inspectionDate から毎回再計算する（保存後に日が経って車検切れに
+  // なった車両を、レコード未更新のせいでベル通知が取りこぼすのを防ぐ。C25）。
+  const _t0 = (() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); })();
+  const vehInspDays = (v: any): number => {
+    const d = dateOnly(v.inspectionDate);
+    return d ? Math.round((d.getTime() - _t0) / 86400000) : Number(v.inspectionDaysRemaining ?? 999);
+  };
+  const vehicleAlerts = vehicles.filter((v: any) => vehInspDays(v) <= 30 || String(v.status || "") === "整備中" || (v.alerts || []).length > 0);
   const maintAlerts = maintenance.filter((m: any) => Number(m.days ?? 999) <= 7 || ["期限切れ", "超過"].includes(String(m.status || "")));
   if (vehicleAlerts.length + maintAlerts.length) {
     list.push({ id: "admin-maintenance", title: `車両・点検 要対応 ${vehicleAlerts.length + maintAlerts.length}件`, body: "車検・整備・メンテナンスを確認してください", tone: "warning" });

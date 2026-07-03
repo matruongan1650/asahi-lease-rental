@@ -63,7 +63,12 @@ function resolveLiveOrder(order: any): any | null {
   const num = String(order?.orderNumber || "");
   if (!id && !num) return null;
   const list = OrderBus.getAll<any>("orders");
-  return list.find((o: any) => o && (o.id === id || o.firestoreId === id || (num && o.orderNumber === num))) || null;
+  // ID(一意)一致を最優先し、orderNumber は ID で見つからない時のフォールバックにする。
+  // find() は最初にどれかの述語を満たした行を返すため、orderNumber を同列に並べると
+  // 番号が偶然重複した別注文が先に一致して誤解決するリスクがある。
+  return (id ? list.find((o: any) => o && (o.id === id || o.firestoreId === id)) : null)
+    || (num ? list.find((o: any) => o && o.orderNumber === num) : null)
+    || null;
 }
 
 /**
@@ -93,9 +98,11 @@ export function deductOrderStock(order: any): { stockDeducted?: boolean; stockDe
     if (qty <= 0) return;
     const pid = String(it.id || "");
     const pname = String(it.name || "");
-    // products に無い品目（車両等）は現物在庫対象外。伝票も作らない。
+    // products に無い品目（車両等・削除済み商品・未同期）は現物在庫対象外。伝票も作らない。
+    // 台帳事実として「0 出庫」を記録する。これが無いと後の最終検品 restore が旧データ扱いで
+    // quantity フォールバックして戻し、実在庫を水増しする（幽霊在庫）。
     const prod = adjustProductStock(pid, pname, -qty);
-    if (!prod) return;
+    if (!prod) { it.stockDeductedQty = 0; return; }
     const key = pid || pname;
     const before = productList.find((x: any) => x && (x.id === pid || x.name === pname));
     const avail = remaining[key] != null ? remaining[key] : (before ? Math.max(0, Number(before.stock || 0)) : qty);

@@ -405,6 +405,47 @@ export function recalculateInvoiceBlock(block: InvoiceBlock): InvoiceBlock {
   return block;
 }
 
+/** 自動注入される ExtraCost の id（再生成のたびに下流で再注入されるため引き継がない）。 */
+const AUTO_EXTRA_COST_IDS = new Set(["fuel-refill", "compensation-charge", "delivery-fee"]);
+
+/**
+ * 請求ブロックを再生成する際、旧ブロックの「入金状態(status/paidAt)」と「手動追加費用」を月ごとに
+ * 引き継ぐ。課金項目の編集・期限延長・返却確定でブロックを作り直しても、admin が付けた入金済み印や
+ * 手動 追加費用 が消えないようにする（過少請求・入金済み月の未収復活＝二重請求リスクの防止）。
+ * - status/paidAt: 同一 monthPeriod の旧ブロックから継承。opts.closing=true（注文が返却済/完了へ
+ *   クローズ）の場合は継承しない（別サイクルとして未入金から開始）。
+ * - extraCosts: 自動注入(fuel-refill/compensation-charge/delivery-fee)は引き継がず、手動追加分だけ
+ *   新ブロックへ再付与して recalculateInvoiceBlock で合計に反映（自動分は下流の inject* が再注入）。
+ */
+export function regenerateBlocksPreservingState(
+  prevBlocks: InvoiceBlock[] | undefined,
+  newBlocks: InvoiceBlock[],
+  opts: { closing?: boolean } = {},
+): InvoiceBlock[] {
+  const prevByMonth = new Map<string, InvoiceBlock>();
+  (prevBlocks || []).forEach((b) => { if (b && b.monthPeriod) prevByMonth.set(b.monthPeriod, b); });
+  return (newBlocks || []).map((nb) => {
+    const pb = prevByMonth.get(nb.monthPeriod);
+    if (!pb) return nb;
+    // 手動追加費用の引き継ぎ（同一idが新ブロックに既にあれば二重付与しない）
+    const manual = (pb.extraCosts || []).filter((c: any) => c && !AUTO_EXTRA_COST_IDS.has(String(c.id || "")));
+    if (manual.length > 0) {
+      const existing = new Set((nb.extraCosts || []).map((c: any) => String(c.id || "")));
+      const add = manual.filter((c: any) => !existing.has(String(c.id || "")));
+      if (add.length > 0) {
+        nb.extraCosts = [...(nb.extraCosts || []), ...add];
+        recalculateInvoiceBlock(nb);
+      }
+    }
+    // 入金状態の引き継ぎ（クローズ時は持ち越さない）
+    if (!opts.closing) {
+      if ((pb as any).status) (nb as any).status = (pb as any).status;
+      if ((pb as any).paidAt) (nb as any).paidAt = (pb as any).paidAt;
+    }
+    return nb;
+  });
+}
+
 /**
  * Generates monthly invoice blocks dynamically from order items and dates if not already present.
  */
@@ -572,7 +613,8 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
   // 保安車両の燃料補給費（満タン返却に満たなかった場合）を最終ブロックに計上する。
   // 給油レシートは order.fuelCharge.receiptPhoto に保存され、請求書 PDF に添付される。
   const fuel = (order as any).fuelCharge;
-  if (fuel && Number(fuel.amount) > 0 && blocks.length > 0) {
+  // admin が給油費行を削除した(fuelDismissed)場合は再注入しない（弁償費/配送料の dismiss と同じ扱い）。
+  if (fuel && Number(fuel.amount) > 0 && blocks.length > 0 && !(order as any).fuelDismissed) {
     const last = blocks[blocks.length - 1];
     last.extraCosts = last.extraCosts || [];
     if (!last.extraCosts.some((e: any) => e.id === "fuel-refill")) {

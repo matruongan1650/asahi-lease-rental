@@ -129,7 +129,11 @@ export default function AdminDashboard() {
     const overdue = ords.filter((o: any) => !isClosedOrder(o.status) && o.rentalEndDate && new Date(String(o.rentalEndDate).replace(/\//g, "-") + "T00:00:00").getTime() < t0 && o.items?.some((i: any) => i.type === "rent")).length;
     const reports = (fieldReports || []).filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length
       + ords.filter((o: any) => (o.itemIssues?.length || 0) > 0 && !isClosedOrder(o.status)).length;
-    const vehOverdue = (vehicles || []).filter((v: any) => Number(v.inspectionDaysRemaining ?? 999) < 0).length;
+    // 車検残日数は inspectionDate から再計算（保存値は古くなり、車検切れ車両をバッジが取りこぼす。C25）。
+    const vehOverdue = (vehicles || []).filter((v: any) => {
+      const d = v.inspectionDate ? Math.round((new Date(String(v.inspectionDate).replace(/\//g, "-") + "T00:00:00").getTime() - t0) / 86400000) : Number(v.inspectionDaysRemaining ?? 999);
+      return d < 0;
+    }).length;
     return { collection: overdue, field_report: reports, vehicles: vehOverdue } as Partial<Record<AdminTab, number>>;
   }, [liveOrders.orders, fieldReports, vehicles]);
   // 通知 → 該当タブへ遷移できるようにする（クリックで業務画面に直行）。

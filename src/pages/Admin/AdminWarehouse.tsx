@@ -317,7 +317,11 @@ export default function AdminWarehouse() {
       return;
     }
 
-    const newId = "P-" + Math.floor(1000 + Math.random() * 9000);
+    // 一意な商品ID。4桁ランダムは既存の P-1000..9999 と衝突し、OrderBus.push が重複IDを追加して
+    // 既存商品（在庫込み）を静かに破壊する。既存と重ならない高エントロピーIDにする。
+    const existingIds = new Set((products || []).map((p: any) => String(p?.id || "")));
+    let newId = "";
+    do { newId = "P-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6); } while (existingIds.has(newId));
     OrderBus.push("products", {
       id: newId,
       name: newName.trim(),
@@ -481,16 +485,23 @@ export default function AdminWarehouse() {
     updateVehicle(selectedVehicle.id, updates);
     setSelectedVehicle((prev) => prev ? { ...prev, ...updates } : prev);
     if (status === "整備中") {
-      OrderBus.push("maintenance", {
-        id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
-        name: selectedVehicle.name,
-        cat: selectedVehicle.category,
-        cycle: "臨時",
-        last: formatDateSlash(),
-        next: formatDateSlash(),
-        days: 0,
-        status: "予定"
-      });
+      // 未消化の「予定」が既にあれば重複作成しない（整備中⇄空車トグルで予定が増殖するのを防ぐ。C22）。
+      const dupe = OrderBus.getAll<any>("maintenance").some(
+        (m: any) => m && m.status === "予定" && (m.plate === selectedVehicle.plate || m.name === selectedVehicle.name),
+      );
+      if (!dupe) {
+        OrderBus.push("maintenance", {
+          id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+          name: selectedVehicle.name,
+          plate: selectedVehicle.plate,
+          cat: selectedVehicle.category,
+          cycle: "臨時",
+          last: formatDateSlash(),
+          next: formatDateSlash(),
+          days: 0,
+          status: "予定"
+        });
+      }
     }
     triggerToast(`${selectedVehicle.plate} を ${status} に更新しました`, "ok");
   };

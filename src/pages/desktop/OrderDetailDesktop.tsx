@@ -5,7 +5,7 @@ import { useOrders } from "../../context/OrderContext";
 import { useUser } from "../../context/UserContext";
 import { isVehicleCategory, getItemUnit } from "../../utils/productUtils";
 import DocumentViewer from "../../components/DocumentViewer";
-import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../../utils/billing";
+import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState } from "../../utils/billing";
 import OrderBus from "../../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { isFullyReturned } from "../../utils/orderStatus";
@@ -179,7 +179,8 @@ export default function OrderDetailDesktop() {
       const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
       const { tax, total } = calculateTotalPayment(subtotal);
       const tempOrder = { ...order, rentalEndDate: newEndDate, items: updatedItems, subtotal, tax, total, invoiceBlocks: undefined };
-      const newInvoiceBlocks = getOrGenerateInvoiceBlocks(tempOrder);
+      // 延長で作り直すブロックにも元の入金済み印・手動追加費用を引き継ぐ（C6）。
+      const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
       // 燃料補給費・破損紛失弁償費はブロックの extraCosts に計上されるため、合計は生成済みブロックの合算を正本とする（過少請求防止）。
       const bt = (newInvoiceBlocks || []).reduce(
         (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),

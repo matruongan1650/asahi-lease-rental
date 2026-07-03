@@ -95,6 +95,25 @@ function orderType(order: any) {
 function makeRows(orders: any[]): InvoiceRow[] {
   return orders.flatMap((order) => {
     if (!Array.isArray(order.items) || order.items.length === 0) return [];
+    // キャンセル注文の「未入金」ブロックは請求対象外（回収不能額を AR・延滞集計に混ぜない。
+    // 決して入金されない）。ただし既に入金済みのブロックは表示を残す — 納品後に入金まで進んだ
+    // 注文を後からキャンセルした場合、回収済み売上の記録が請求管理から消えないようにする。
+    const isCancelled = String(order.status || "") === "キャンセル";
+    if (isCancelled) {
+      const paidOnly = getOrGenerateInvoiceBlocks(order).filter(
+        (block) => statusKey(String(block?.status || "")) === "paid" && Number(block.total || 0) !== 0,
+      );
+      return paidOnly.map((block) => ({
+        order,
+        block,
+        company: companyOf(order),
+        person: personOf(order),
+        orderNumber: order.orderNumber || order.id || "-",
+        siteName: order.siteName || order.site || "-",
+        itemCount: order.items.length,
+        invoiceType: orderType(order),
+      }));
+    }
     const blocks = getOrGenerateInvoiceBlocks(order).filter((block) => Number(block.total || 0) !== 0);
     return blocks.map((block) => ({
       order,

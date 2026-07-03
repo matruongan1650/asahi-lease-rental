@@ -147,9 +147,11 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const addCustomOrder = useCallback(async (orderData: Omit<Order, "id">) => {
     const newOrder: Order = {
       ...orderData,
-      // 衝突しにくい一意ID（時刻+乱数）。短い乱数のみだとソフト削除済みレコードのIDと衝突して
-      // ON DUPLICATE KEY で「復活」させてしまう恐れがあるため。
-      id: `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      // 呼び出し側が安定IDを与えていればそれを使う（返却分 -R 注文は請求ブロックIDを id 基準で
+      // 発番するため、ここで作り直すと block-<id> と order.id が食い違い選択・消込が混線する）。
+      // 無ければ生成。衝突しにくい一意ID（時刻+乱数）。短い乱数のみだとソフト削除済みレコードのIDと
+      // 衝突して ON DUPLICATE KEY で「復活」させてしまう恐れがあるため。
+      id: (orderData as any).id || `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
     
     setOrders(prev => [newOrder, ...prev]);

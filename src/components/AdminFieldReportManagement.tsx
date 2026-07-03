@@ -40,8 +40,10 @@ function firstPhotoUrl(value: unknown): string {
   if (Array.isArray(value)) {
     const first = value.find(Boolean);
     if (typeof first === "string") return first;
-    if (first && typeof first === "object" && "url" in first) {
-      return String((first as { url?: unknown }).url || "");
+    // スタッフ回収フローの写真は {dataUrl} 形状（StaffJobDetail）。url / dataUrl の両方を受ける
+    // （dataUrl を見落とすと現場写真が admin 検品画面で表示されない）。
+    if (first && typeof first === "object") {
+      return String((first as any).url || (first as any).dataUrl || "");
     }
     return "";
   }
@@ -51,10 +53,11 @@ function firstPhotoUrl(value: unknown): string {
 function getMatchingWalkinReturn(order: Order, walkinReturns: WalkinReturnRecord[]) {
   return walkinReturns.find((w) => {
     if (!w) return false;
+    // 各キーは値が存在する時だけ突合する。undefined === undefined が真になり、firestoreId 未設定の
+    // 注文どうし（OrderContext 由来は全て未設定）が無関係なチケットに誤マッチするのを防ぐ（C17）。
     return (
-      w.orderId === order.id ||
-      w.orderId === order.firestoreId ||
-      w.firestoreId === order.firestoreId ||
+      (!!w.orderId && (w.orderId === order.id || w.orderId === order.firestoreId)) ||
+      (!!w.firestoreId && !!order.firestoreId && w.firestoreId === order.firestoreId) ||
       (!!w.orderNumber && w.orderNumber === order.orderNumber)
     );
   });
@@ -319,17 +322,19 @@ export default function AdminFieldReportManagement() {
       if (field === "broken") broken = val;
       if (field === "ok") ok = val;
 
-      // Auto-balance if it exceeds max
+      // 超過時は「もう一方の不良数」を消さず ok を先に削って収める（紛失→破損 の順で入れても
+      // 先に入れた値が 0 に潰れないようにする。混在レポートを自然な順で入力できる。C16）。
       if (missing + broken + ok > maxQty) {
         if (field === "missing") {
-          broken = 0;
-          ok = maxQty - missing;
+          missing = Math.min(missing, maxQty);
+          broken = Math.min(broken, maxQty - missing);
+          ok = maxQty - missing - broken;
         } else if (field === "broken") {
-          missing = 0;
-          ok = maxQty - broken;
+          broken = Math.min(broken, maxQty);
+          missing = Math.min(missing, maxQty - broken);
+          ok = maxQty - missing - broken;
         } else {
-          missing = 0;
-          broken = maxQty - ok;
+          ok = Math.min(ok, maxQty - missing - broken);
         }
       } else if (missing + broken + ok < maxQty) {
         // Auto-fill the rest into OK if we edited missing/broken

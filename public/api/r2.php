@@ -158,6 +158,12 @@ function r2_content_type(string $ext): string
         'webp' => 'image/webp',
         'gif'  => 'image/gif',
         'bmp'  => 'image/bmp',
+        'pdf'  => 'application/pdf',
+        'csv'  => 'text/csv',
+        'xls'  => 'application/vnd.ms-excel',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'doc'  => 'application/msword',
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ];
     return $map[strtolower($ext)] ?? 'application/octet-stream';
 }

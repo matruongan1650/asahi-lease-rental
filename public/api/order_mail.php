@@ -29,6 +29,13 @@ function order_mail_event(?array $old, array $new): ?array
     $newReturnType = $new['returnRequestType'] ?? null;
 
     if ($old === null) {
+        // 生成時点で既にクローズ済みのレコードには「ご注文を受け付けました」を送らない。
+        // 一部返却の -R 注文(返却済で新規作成)や、admin の過去契約登録(返却済/完了)で顧客が
+        // 実際には出していない注文の受付メールを受け取る誤送信を防ぐ（C24）。
+        $bornClosed = in_array((string) $newStatus, ['返却済', '返却済み', '完了', 'キャンセル'], true);
+        if ($bornClosed) {
+            return null;
+        }
         return [
             'type' => 'created',
             'subject' => "【アサヒリース】ご注文を受け付けました {$orderNo}",

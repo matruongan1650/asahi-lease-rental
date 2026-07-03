@@ -81,7 +81,12 @@ export function useServerQuery(
     const myGen = ++applyGenRef.current; // 追記中に古いポーリング応答が上書きしないよう世代を進める
     setLoading(true);
     queryStore(name, { hasType: opts.hasType, statusIn: opts.statusIn, q: opts.q, limit: pageSize, offset: rows.length })
-      .then((r) => { if (myGen === applyGenRef.current) setRows((prev) => [...prev, ...r.rows]); })
+      .then((r) => { if (myGen === applyGenRef.current) setRows((prev) => {
+        // 追記時に重複を除外する。サーバは rev DESC でページングするため、ページング中に
+        // どれかの注文が更新(rev 繰上げ)されると窓がずれ、同じ行が2ページに現れうる（C31）。
+        const seen = new Set(prev.map((x: any) => String(x.firestoreId || x.id)));
+        return [...prev, ...r.rows.filter((nr: any) => !seen.has(String(nr.firestoreId || nr.id)))];
+      }); })
       .catch(() => { /* ページング失敗は黙殺（未処理 rejection を防ぐ）。次のポーリングで復帰する。 */ })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps

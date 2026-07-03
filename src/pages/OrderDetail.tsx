@@ -5,7 +5,7 @@ import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { isVehicleCategory, getItemUnit } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
-import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks } from "../utils/billing";
+import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState } from "../utils/billing";
 import OrderBus from "../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned } from "../utils/orderStatus";
@@ -292,7 +292,9 @@ function OrderDetailMobile() {
         total,
         invoiceBlocks: undefined
       };
-      const newInvoiceBlocks = getOrGenerateInvoiceBlocks(tempOrder);
+      // 延長で作り直すブロックにも、元の入金済み印・手動追加費用を月ごとに引き継ぐ
+      //（延長で既入金月が未収に戻る／admin 手動追加費用が消えるのを防ぐ。C6）。
+      const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
 
       // 燃料補給費(order.fuelCharge)・破損紛失弁償費(order.compensationCharge)は
       // getOrGenerateInvoiceBlocks がブロックの extraCosts に計上する。合計は items 再計算ではなく

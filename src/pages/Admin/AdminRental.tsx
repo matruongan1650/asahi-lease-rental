@@ -128,7 +128,11 @@ export default function AdminRental() {
       danger: true,
     });
     if (!ok) return;
-    liveOrders.patchOrder(id, { status: "キャンセル", staffStatus: "" });
+    // ライブの注文で判定（stale 行対策）。既に出庫済みの注文を却下する場合は在庫を戻す
+    //（受注確定で減算済みのまま却下すると在庫が永久に目減りする）。未出庫なら在庫は動かさない。
+    const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || row._raw;
+    const flags = raw?.stockDeducted ? settleReturnStock(raw, "キャンセル") : {};
+    liveOrders.patchOrder(id, { status: "キャンセル", staffStatus: "", ...flags });
     triggerToast(`${row.id} を却下しました`, "ok");
     setTimeout(refresh, 300);
   };
@@ -138,7 +142,19 @@ export default function AdminRental() {
     if (!id) { triggerToast("注文データが見つかりません", "err"); return; }
     // staffStatus:"完了" は倉庫の貸出中カウントから除外されてしまう（在庫が水増し）。
     // 配送完了として稼働中にし、現物は貸出中のまま正しくカウントさせる。
-    liveOrders.patchOrder(id, { status: "レンタル中", staffStatus: "配送完了", deliveryConfirmedAt: new Date().toISOString() });
+    const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || row._raw;
+    const patch: any = { status: "レンタル中", staffStatus: "配送完了", deliveryConfirmedAt: new Date().toISOString() };
+    // 確認済みで登録した契約は請求ブロック未生成(total=0)。稼働開始＝納品確定なので、ここで
+    // 実際の請求ブロックと合計を確定する（テーブルの金額と売上KPIが 0 のままになるのを防ぐ）。
+    if (!Number(raw?.total) && Array.isArray(raw?.items) && raw.items.length > 0) {
+      const blocks = getOrGenerateInvoiceBlocks({ ...raw, ...patch });
+      const t = (blocks || []).reduce(
+        (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+        { subtotal: 0, tax: 0, total: 0 },
+      );
+      patch.invoiceBlocks = blocks; patch.subtotal = t.subtotal; patch.tax = t.tax; patch.total = t.total;
+    }
+    liveOrders.patchOrder(id, patch);
     triggerToast(`${row.id} をレンタル中に更新しました`, "ok");
     setTimeout(refresh, 300);
   };
@@ -157,7 +173,11 @@ export default function AdminRental() {
     const isClosedReg = ["返却済", "返却済み", "完了"].includes(st); // 過去契約の記録（在庫を動かさない）
     const isCollected = st === "検品待ち";                          // 回収済み・倉庫検品待ち（在庫はまだ出庫中）
     const delivered = st !== "確認済み";                            // 確認済み のみ未納品
-    const orderNumber = `RN-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // 表示用の注文番号も一意にする（4桁ランダムは登録が増えると衝突し、resolveLiveOrder の
+    // orderNumber フォールバックが別注文を誤解決して在庫フラグ・明細を破壊しうる）。既存と重複しない値を採る。
+    const existingNums = new Set(OrderBus.getAll<any>("orders").map((o: any) => String(o.orderNumber || "")));
+    let orderNumber = "";
+    do { orderNumber = `RN-${now.getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`; } while (existingNums.has(orderNumber));
     // 安定・一意な注文ID。これが無いと getOrGenerateInvoiceBlocks がブロックIDを
     // `block-undefined-YYYY-MM` で発番し、同月に登録した別注文と衝突して一括消込が混線する。
     const orderId = `RN-${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;

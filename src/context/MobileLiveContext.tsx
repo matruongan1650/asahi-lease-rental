@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useMe
 import OrderBus from "../lib/orderBus";
 import { getProductQrCode } from "../utils/productQr";
 import { deductOrderStock } from "../utils/stockLedger";
+import { getOrGenerateInvoiceBlocks } from "../utils/billing";
 import { useUser } from "./UserContext";
 
 // スタッフ自己割当(claim)の有効期限。これを超えた claim は無視して全員へ再表示する
@@ -416,6 +417,18 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         it && it.type === "rent" ? { ...it, monthlyBreakdown: [], calculatedPrice: undefined } : it,
       );
     }
+    // 納品確定＝課金開始。ここで請求ブロックと合計を確定する。確認済みで登録した契約は total=0 の
+    // まま登録され、稼働開始やこの納品完了で確定されないと注文一覧・売上KPIが 0 のままになる（C4）。
+    const finalOrder = { ...target0, ...updates, invoiceBlocks: undefined };
+    const blocks = getOrGenerateInvoiceBlocks(finalOrder);
+    const t = (blocks || []).reduce(
+      (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+      { subtotal: 0, tax: 0, total: 0 },
+    );
+    updates.invoiceBlocks = blocks;
+    updates.subtotal = t.subtotal;
+    updates.tax = t.tax;
+    updates.total = t.total;
     OrderBus.patch("orders", deliveryKey, updates);
   };
 
@@ -556,7 +569,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     const vehs = OrderBus.getAll<any>("vehicles");
     const v = vehs.find(x => x.plate === plate || x.id === plate);
     if (!v) return;
-    OrderBus.patch("vehicles", v.id || v.plate, { status });
+    // statusColor も一緒に更新する（admin の車両バッジは statusColor で色分けするため、status だけ
+    // 変えると「使用中」なのに空車色のまま等、色と状態が食い違う。C23）。
+    const statusColor = status === "使用中" ? "emerald" : status === "整備中" ? "orange" : "blue";
+    OrderBus.patch("vehicles", v.id || v.plate, { status, statusColor });
     // 整備中に変更したら admin の整備キューにも登録（重複「予定」は作らない）。
     if (status === "整備中") {
       const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);

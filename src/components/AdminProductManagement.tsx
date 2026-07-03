@@ -602,9 +602,12 @@ export default function AdminProductManagement() {
     const status = (formData.get("status") as VehicleDetail["status"]) || "空車";
     const name = String(formData.get("name") || "");
     const plate = String(formData.get("plate") || "");
-    const inspectionDate = String(formData.get("inspectionDate") || "");
-    const year = String(formData.get("year") || "");
-    const color = String(formData.get("color") || "");
+    // このモーダルには 車検満了日/年式/車体色 の入力が無く formData.get は null を返す。
+    // String(null)="" で保存すると編集の度にこれらを消してしまう（車検アラート消失＝法令リスク）。
+    // フォームに項目が無い(null)場合は既存値を保持する。
+    const inspectionDate = String(formData.get("inspectionDate") ?? editingVehicle?.inspectionDate ?? "");
+    const year = String(formData.get("year") ?? editingVehicle?.year ?? "");
+    const color = String(formData.get("color") ?? editingVehicle?.color ?? "");
     const basePhotos = vehiclePhotosDraft.length > 0
       ? vehiclePhotosDraft
       : (vehicleImageDraft ? [vehicleImageDraft] : []);
@@ -631,7 +634,11 @@ export default function AdminProductManagement() {
       const vProdId = editingVehicle.productId || editingVehicle.id;
       const linkedProduct = products.find(p => p && p.id === vProdId);
       if (linkedProduct) {
-         updateProduct(vProdId, { name: vehicleData.name, category: vehicleData.category, rentPrice, rentPriceLongTerm, buyPrice, image, stock, ...makeProductQrFields({ ...linkedProduct, id: vProdId }) });
+         // 在庫は「フォーム値が live と異なる時だけ」書き込む。プリフィルのまま保存しても
+         // live 在庫（出庫/入庫/棚卸の結果）を巻き戻さないようにする。
+         const liveStock = Number((linkedProduct as any).stock ?? 0);
+         const stockPatch = stock !== liveStock ? { stock } : {};
+         updateProduct(vProdId, { name: vehicleData.name, category: vehicleData.category, rentPrice, rentPriceLongTerm, buyPrice, image, ...stockPatch, ...makeProductQrFields({ ...linkedProduct, id: vProdId }) });
       } else {
          addProduct({ id: vProdId, name: String(vehicleData.name || ""), category: category, stock, rentPrice, rentPriceLongTerm, buyPrice, image, vehicleId: editingVehicle.id, ...makeProductQrFields({ id: vProdId } as Product) } as Product & { vehicleId: string });
       }
@@ -1330,7 +1337,9 @@ export default function AdminProductManagement() {
                       </div>
                       <div className="flex-1">
                         <label className="block text-xs font-bold text-slate-500 mb-2">在庫数（台数） <span className="text-red-500">*</span></label>
-                        <input type="number" required defaultValue={editingVehicle?.stock || 1} name="stock" className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-bold text-slate-700" />
+                        {/* 在庫は商品マスタの live 値を初期表示（editingVehicle.stock は古いミラーで、
+                            出庫中でも登録時の値を出して保存時に live 在庫を巻き戻してしまう）。 */}
+                        <input type="number" required defaultValue={editingVehicle ? (products.find((p) => p && p.id === (editingVehicle.productId || editingVehicle.id))?.stock ?? editingVehicle?.stock ?? 1) : 1} name="stock" className="w-full border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-bold text-slate-700" />
                       </div>
                     </div>
                     <div className="flex gap-5">

@@ -17,6 +17,7 @@ import { usePagedList } from "../../hooks/usePagedList";
 import { useVehicles } from "../../context/VehicleContext";
 import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
+import { uploadDataUrl } from "../../lib/imageUpload";
 import { getCategoryIcon, isVehicleCategory } from "../../utils/productUtils";
 
 type StocktakeTab = "all" | "supplies" | "vehicles" | "diff" | "history";
@@ -277,7 +278,14 @@ export default function AdminStocktake() {
       }
       return true;
     });
-    const uploaded = await Promise.all(valid.map(async (file) => makeStocktakeFile(file, await readFileAsDataUrl(file))));
+    // 添付は base64 のまま棚卸レコードに埋め込むと肥大化して sync 不能になるため、添付時に
+    // /api/upload へアップロードして URL だけを保持する（PDF/CSV/Excel も upload.php で許可済み。C13）。
+    // アップロード失敗時のみ dataUrl フォールバック（証跡を失わない）。
+    const uploaded = await Promise.all(valid.map(async (file) => {
+      const dataUrl = await readFileAsDataUrl(file);
+      const ref = await uploadDataUrl(dataUrl);
+      return makeStocktakeFile(file, ref);
+    }));
     setFiles((prev) => [...prev, ...uploaded]);
     if (uploaded.length > 0) triggerToast(`${uploaded.length} 件の棚卸ファイルを追加しました`, "ok");
     e.target.value = "";
@@ -322,10 +330,10 @@ export default function AdminStocktake() {
         // 車両行は車両自身の在庫だけを調整する。共有商品マスタ(products.stock)は上書きしない。
         // （1台の点検カウントで商品全体の在庫が 1 等に潰れる／同一商品を指す複数車両行が
         //   互いの結果を上書きする＝在庫破壊、を防ぐ。）
-        updateVehicle(row.vehicleId, { stock: row.counted });
+        updateVehicle(row.vehicleId, { stock: Math.max(0, Math.trunc(Number(row.counted) || 0)) });
       } else {
-        // 消耗品/商品行のみ商品マスタの在庫を確定値に更新する。
-        OrderBus.patch("products", row.productId, { stock: row.counted });
+        // 消耗品/商品行のみ商品マスタの在庫を確定値に更新する（非負整数へ最終ガード）。
+        OrderBus.patch("products", row.productId, { stock: Math.max(0, Math.trunc(Number(row.counted) || 0)) });
       }
       OrderBus.push("stockMoves", {
         id: "ADJ-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
@@ -398,9 +406,11 @@ export default function AdminStocktake() {
         for (let i = 1; i < lines.length; i++) {
           const cols = parseCsvLine(lines[i]);
           const id = String(cols[1] ?? "").trim();
+          // 実数は非負整数にサニタイズ（CSV編集ミスの負数・小数がそのまま products.stock へ入り
+          // 在庫がマイナス/小数になるのを防ぐ。手入力 setCount と同じ扱い）。
           const counted = Number(String(cols[6] ?? "").trim());
           const row = byProductId.get(id);
-          if (row && !isNaN(counted)) { draft[row.id] = counted; applied++; }
+          if (row && Number.isFinite(counted)) { draft[row.id] = Math.max(0, Math.trunc(counted)); applied++; }
         }
         if (applied) { setCountDraft((prev) => ({ ...prev, ...draft })); triggerToast(`${applied}件の実数を取込みました`, "ok"); }
         else triggerToast("取込める行がありませんでした（ID列・実数列を確認してください）", "warn");

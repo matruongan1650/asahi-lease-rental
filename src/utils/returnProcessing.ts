@@ -5,8 +5,27 @@
  * 顧客の返却確定（ReturnConfirmation）と、倉庫検品完了時の確定（StaffDashboard）の
  * 双方から再利用できるように、計算（純粋関数）と適用（副作用）を分離している。
  */
-import { calculateRentalPrice, getOrGenerateInvoiceBlocks, getTaxRate } from "./billing";
+import { calculateRentalPrice, getOrGenerateInvoiceBlocks, getTaxRate, regenerateBlocksPreservingState } from "./billing";
 import { isVehicleCategory } from "./productUtils";
+
+/**
+ * 手動単価(priceOverride)の按分。返却で期間が短くなった returned 分に対し、
+ * 当初期間の標準価格に対する override 比率を、短縮期間の標準価格(newTotal)へ適用する。
+ * 例: 当初標準3万→override2.4万(=0.8)、半月返却で標準1.5万 → 1.5万×0.8=1.2万。
+ * 当初標準が0/未override は按分せず newTotal をそのまま返す。
+ */
+function prorateOverride(item: any, order: any, newTotal: number, hasVehicle: boolean): number {
+  if (!item?.priceOverride || !(Number(item.calculatedPrice) > 0)) return newTotal;
+  const naturalOld = calculateRentalPrice(
+    item.rentPrice || 0,
+    order.rentalStartDate,
+    order.rentalEndDate,
+    hasVehicle,
+    isVehicleCategory(item.category),
+    item.rentPriceLongTerm,
+  ).totalPrice;
+  return naturalOld > 0 ? Math.round(newTotal * (Number(item.calculatedPrice) / naturalOld)) : Number(item.calculatedPrice);
+}
 
 export interface ReturnSplit {
   returningEverything: boolean;
@@ -70,14 +89,17 @@ export function computeReturnSplit(
           isVehicleCategory(item.category),
           item.rentPriceLongTerm
         );
-        returnedTotalRentalPrice += totalPrice * returningQty;
+        // 手動単価(priceOverride)は返却で期間が短くなった分だけ実日数比で按分して維持する
+        //（ユーザー方針=早期返却は日数比で減額。値引きが標準価格に戻り過大請求になるのを防ぐ）。
+        const calc = prorateOverride(item, order, totalPrice, hasVehicle);
+        returnedTotalRentalPrice += calc * returningQty;
 
         returnedItemsList.push({
           ...item,
           quantity: returningQty,
           returnedQuantity: returningQty,
           actualReturnDate,
-          calculatedPrice: totalPrice,
+          calculatedPrice: calc,
           monthlyBreakdown: breakdown,
         });
       } else if (item.type === "buy") {
@@ -100,13 +122,15 @@ export function computeReturnSplit(
           isVehicleCategory(item.category),
           item.rentPriceLongTerm
         );
-        remainingTotalRentalPrice += totalPrice * remainingQtyToKeep;
+        // 残存側は期間(開始〜終了予定)が変わらないため、手動単価はそのまま維持する。
+        const calc = (item.priceOverride && Number(item.calculatedPrice) > 0) ? Number(item.calculatedPrice) : totalPrice;
+        remainingTotalRentalPrice += calc * remainingQtyToKeep;
 
         remainingItemsList.push({
           ...item,
           quantity: remainingQtyToKeep,
           returnedQuantity: 0,
-          calculatedPrice: totalPrice,
+          calculatedPrice: calc,
           monthlyBreakdown: breakdown,
         });
       } else if (item.type === "buy") {
@@ -207,7 +231,8 @@ export async function finalizePartialReturn(
       actualReturnDate,
       invoiceBlocks: undefined,
     };
-    const newInvoiceBlocks = getOrGenerateInvoiceBlocks(tempOrder);
+    // 元注文の入金済み印・手動追加費用を月ごとに引き継いでから確定（返却で作り直しても消さない）。
+    const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
     const ft = sumBlocks(newInvoiceBlocks);
 
     await deps.updateOrder(order.id, {
@@ -254,7 +279,8 @@ export async function finalizePartialReturn(
       status: remainingStatus,
       invoiceBlocks: undefined,
     };
-    const remainingInvoiceBlocks = getOrGenerateInvoiceBlocks(tempRemaining);
+    // 継続注文も元の入金済み印・手動追加費用を引き継ぐ（部分返却のたびに消さない）。
+    const remainingInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempRemaining));
     const rt = sumBlocks(remainingInvoiceBlocks);
 
     await deps.updateOrder(order.id, {
@@ -265,7 +291,8 @@ export async function finalizePartialReturn(
       status: remainingStatus,
       invoiceBlocks: remainingInvoiceBlocks,
       requestedReturn: {},
-      ...(itemIssues ? { itemIssues } : {}),
+      // ★itemIssues は継続注文に載せない（返却分=-R 注文に既に保存済み）。載せると同じ破損/紛失を
+      //   継続注文の現場報告からも弁償請求でき、二重請求になる（C15）。表示用途は -R 側で確認する。
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
       ...(collectionSignature ? { collectionSignature } : {}),
       ...restoredBackstop,
@@ -280,6 +307,10 @@ export async function finalizePartialReturn(
     }));
 
     const tempCustomOrder: any = {
+      // ブロック生成前に安定IDを与える。無いと block.id が `block-undefined-YYYY-MM` になり、
+      // 別顧客の -R 注文と衝突して 請求管理 の選択・一括消込が混線する（C9）。addCustomOrder は
+      // この id を尊重して同じ値で保存する。
+      id: `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       ...extraFields,
       items: returnedItemsNoGuarantee,
       total: split.returned.total,

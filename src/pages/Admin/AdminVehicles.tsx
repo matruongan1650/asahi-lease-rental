@@ -136,9 +136,10 @@ function syncLinkedProduct(vehicle: VehicleDetail, updates: Partial<VehicleDetai
   const payload = {
     name: merged.name,
     category: merged.category,
-    // 既存の在庫を保持する。車両メタ編集フォームには stock 欄が無く merged.stock が undefined のため、
-    // `|| 1` だと入出庫/棚卸で調整済みの商品在庫を毎回 1 に潰してしまう（価格と同じく existing を尊重）。
-    stock: merged.stock != null ? Number(merged.stock) : (existing?.stock ?? 1),
+    // 既存商品の在庫は絶対に上書きしない（商品マスタが唯一の真実）。vehicle.stock は登録時の値で
+    // 固定される古いミラーで、出庫/入庫/棚卸で調整された live 在庫を巻き戻してしまう（幽霊在庫）。
+    // 新規リンク商品を作る時だけ merged.stock（無ければ1）を初期値に使う。
+    stock: existing ? Number(existing.stock ?? 0) : (merged.stock != null ? Number(merged.stock) : 1),
     image,
     vehicleId: merged.id,
     plate: merged.plate,
@@ -348,16 +349,23 @@ export default function AdminVehicles() {
     };
     updateVehicle(selectedVehicle.id, updates);
     if (status === "整備中") {
-      OrderBus.push("maintenance", {
-        id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
-        name: selectedVehicle.name,
-        cat: selectedVehicle.category,
-        cycle: "臨時",
-        last: formatDateSlash(),
-        next: formatDateSlash(),
-        days: 0,
-        status: "予定"
-      });
+      // 未消化の「予定」が既にあれば新規作成しない（整備中⇄空車のトグルで予定が増殖するのを防ぐ。C22）。
+      const dupe = OrderBus.getAll<any>("maintenance").some(
+        (m: any) => m && m.status === "予定" && (m.plate === selectedVehicle.plate || m.name === selectedVehicle.name),
+      );
+      if (!dupe) {
+        OrderBus.push("maintenance", {
+          id: "MN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+          name: selectedVehicle.name,
+          plate: selectedVehicle.plate,
+          cat: selectedVehicle.category,
+          cycle: "臨時",
+          last: formatDateSlash(),
+          next: formatDateSlash(),
+          days: 0,
+          status: "予定"
+        });
+      }
     }
     setSelectedVehicle((prev) => prev ? { ...prev, ...updates } : null);
     triggerToast(`${selectedVehicle.plate} を ${status} に更新しました`, "ok");

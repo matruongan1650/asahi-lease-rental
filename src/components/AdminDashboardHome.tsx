@@ -178,7 +178,9 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
 
     const totalStock = products.reduce((s, p) => s + (p.stock || 0), 0);
     const activeRentQty = rentOrders
-      .filter((o) => !isClosedOrder(o.status))
+      // 出庫前（処理中/注文確認中＝受注未確定で在庫未減算）は稼働数に数えない。数えると同じ現物を
+      // 在庫と稼働中で二重計上し、稼働率・稼働中ドーナツが過大表示になる（C27）。
+      .filter((o) => !isClosedOrder(o.status) && String(o.status) !== "処理中" && String(o.status) !== "注文確認中")
       .reduce((sum, order) => sum + (order.items || []).reduce((itemSum: number, item: any) => {
         if (item.type !== "rent") return itemSum;
         return itemSum + Math.max(0, Number(item.quantity || 0) - Number(item.returnedQuantity || 0));
@@ -250,7 +252,9 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
   // ══════════════════════════════════════
   const donutData = useMemo(() => {
     const activeRentQty = orders
-      .filter((o) => o.items?.some((i: any) => i.type === "rent") && !isClosedOrder(o.status))
+      // 出庫前（処理中/注文確認中）は稼働数に数えない（在庫と二重計上して稼働中スライスが過大になる。C27）。
+      .filter((o) => o.items?.some((i: any) => i.type === "rent") && !isClosedOrder(o.status)
+        && String(o.status) !== "処理中" && String(o.status) !== "注文確認中")
       .reduce((sum, order) => sum + (order.items || []).reduce((itemSum: number, item: any) => {
         if (item.type !== "rent") return itemSum;
         return itemSum + Math.max(0, Number(item.quantity || 0) - Number(item.returnedQuantity || 0));
@@ -612,7 +616,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
               </div>
             ))}
           </div>
-          <p className="text-[10px] font-medium text-slate-400 mt-1.5 text-right">直近7日の売上</p>
+          <p className="text-[10px] font-medium text-slate-400 mt-1.5 text-right">{trendRange === "daily" ? "直近7日の売上" : trendRange === "weekly" ? "直近7週の売上" : "直近7ヶ月の売上"}</p>
         </div>
 
         {/* レンタル売上 */}
