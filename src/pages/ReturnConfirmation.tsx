@@ -173,6 +173,14 @@ function ReturnConfirmationMobile() {
       // 削除→push だと DELETE と POST が並行 HTTP になり、POST が先に着くと直後の DELETE が
       // 新チケットを消してしまう（注文が検品待ちのまま倉庫キューから消える）。
       const walkinId = "WIN-" + (order.id || order.orderNumber || "").toString().replace(/[^0-9A-Za-z]/g, "");
+      // 倉庫が既に一次受付(reception)を済ませたチケット(stage=recheck / receptionAt あり)を、
+      // お客様の再提出で reception へ巻き戻し・上書きしない（倉庫の検品結果を消さない）(C2)。
+      const existingWalkin = OrderBus.getAll<any>("walkinReturns").find((w: any) => w && w.id === walkinId);
+      if (existingWalkin && (existingWalkin.stage === "recheck" || existingWalkin.receptionAt)) {
+        void alertDialog("この返却は既に倉庫で受付・検品中のため、内容を変更できません。変更が必要な場合は倉庫までご連絡ください。");
+        navigate("/orders");
+        return;
+      }
       try {
         OrderBus.getAll<any>("walkinReturns")
           .filter((w: any) => w && w.id !== walkinId && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))

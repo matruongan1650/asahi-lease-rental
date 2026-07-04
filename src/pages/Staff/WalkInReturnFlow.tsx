@@ -191,7 +191,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
     });
     if (!ok) return;
     OrderBus.push("walkinReturns", {
-      id: "WIN-RE-" + String(rec.orderNumber || rec.orderId || rec.id || "").replace(/[^A-Za-z0-9]/g, "") + "-" + Math.floor(Math.random() * 900 + 100),
+      id: "WIN-RE-" + String(rec.orderNumber || rec.orderId || rec.id || "").replace(/[^A-Za-z0-9]/g, "") + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       orderId: rec.orderId,
       orderNumber: rec.orderNumber,
       company: rec.company || "",
@@ -203,7 +203,9 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
       stage: "recheck",
       returningEverything: !!rec.returningEverything,
       products: (rec.products || []).map((p: any) => ({
-        id: p.id, name: p.name, qr: p.qr || "", expected: p.expected || 0, counted: 0, report: [], icon: "package",
+        // 再確認で不足を「新規計上」しないよう counted は expected 初期値（再検品で実際に減れば不足になる）。
+        // counted:0 のままだと、担当者が数え直さずに完了 → 全数 phantom 不足で顧客に誤表示される(C3)。
+        id: p.id, name: p.name, qr: p.qr || "", expected: p.expected || 0, counted: p.expected || 0, report: [], icon: "package",
       })),
     } as any);
     setListTab("recheck");

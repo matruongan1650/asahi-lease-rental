@@ -1019,7 +1019,13 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
         // それ以外の report（破損あり・汚損・部品欠品 等）は破損(broken)として計上する。
         const itemIssues: any[] = [];
         productsList.forEach((p: any) => {
-          const shortage = (p.expected || 0) - (p.counted || 0);
+          // 不足は「注文の未返却残数」を上限にクランプする。受付(一次検品)で数え過ぎて expected が
+          // 膨張しても、recheck で phantom missing → 過大弁償(実際は返ってきているのに弁償請求)にならない。
+          // 正当な不足は常に残数以下なので、このクランプで正しい不足は一切変わらない(C1)。
+          const oi = (targetOrder.items || []).find((x: any) => x.id === p.id || x.name === p.name);
+          const outstanding = oi ? Math.max(0, Number(oi.quantity || 0) - Number(oi.returnedQuantity || 0)) : Number(p.expected || 0);
+          const effectiveExpected = Math.min(Number(p.expected || 0), outstanding);
+          const shortage = Math.max(0, effectiveExpected - (p.counted || 0));
           if (shortage > 0) {
             itemIssues.push({ itemId: p.id, type: "missing", quantity: shortage, notes: "倉庫検品で不足を確認" });
           }
@@ -1115,7 +1121,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
             .toString()
             .replace(/[^0-9A-Za-z]/g, "") +
           "-" +
-          Math.floor(Math.random() * 1000),
+          Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         orderId: walkinOrder?.orderId,
         orderNumber: walkinOrder?.orderNumber,
         company: walkinOrder?.company,
