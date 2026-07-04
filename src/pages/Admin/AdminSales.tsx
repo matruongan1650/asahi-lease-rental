@@ -4,6 +4,7 @@ import AdminDocDrawer from "../../components/AdminDocDrawer";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
+import { byOrderDateDesc } from "../../utils/orderSort";
 import OrderBus from "../../lib/orderBus";
 import { confirmDialog } from "../../components/AppDialog";
 import { deductOrderStock, settleReturnStock } from "../../utils/stockLedger";
@@ -68,7 +69,8 @@ export default function AdminSales() {
     { hasType: "buy", statusIn: view === "all" ? undefined : SALES_VIEW_STATUS[view], q: query, counts: true, pageSize: 50 },
     view,
   );
-  const displayRows = useMemo(() => rows.map(toSalesRow), [rows]);
+  // サーバー順(作成日時降順)に加えクライアントでも安定ソート（loadMore の追記や rev 由来の乱れを吸収）。
+  const displayRows = useMemo(() => [...rows].sort(byOrderDateDesc).map(toSalesRow), [rows]);
 
   const counts = useMemo(() => {
     const acc: Record<SalesView, number> = { all: 0, pending: 0, confirmed: 0, closed: 0 };

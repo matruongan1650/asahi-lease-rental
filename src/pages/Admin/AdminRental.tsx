@@ -4,6 +4,7 @@ import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import AdminRentalRegisterModal from "../../components/AdminRentalRegisterModal";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
+import { byOrderDateDesc } from "../../utils/orderSort";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
 import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
@@ -94,7 +95,8 @@ export default function AdminRental() {
     { hasType: "rent", statusIn: QUEUE_STATUS[queue], q: searchQuery, counts: true, pageSize: 50 },
     queue,
   );
-  const displayRows = useMemo(() => rows.map(toRentalRow), [rows]);
+  // サーバー順(作成日時降順)に加えクライアントでも安定ソート（loadMore の追記や rev 由来の乱れを吸収）。
+  const displayRows = useMemo(() => [...rows].sort(byOrderDateDesc).map(toRentalRow), [rows]);
 
   // キュー件数バッジ = サーバーの status 別件数をキューへ集約。
   const queueCounts = useMemo(() => {

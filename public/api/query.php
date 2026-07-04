@@ -99,8 +99,12 @@ try {
     $sumStmt->execute($allParams);
     $sumTotal = (float) $sumStmt->fetchColumn();
 
-    // ページ（新しい順）
-    $stmt = $pdo->prepare("SELECT data FROM records WHERE $whereSql ORDER BY rev DESC LIMIT $limit OFFSET $offset");
+    // ページ（新しい順 = 注文作成日時の降順）。
+    // 以前は rev DESC（=最終更新順）だったため、スタッフの配送完了・請求再生成・claim 等の
+    // あらゆる書き込みで注文が先頭へ飛び、一覧が毎回シャッフルされて見えた。
+    // createdAt は不変なので並びが安定し、ページング窓のズレ（C31）も起きにくくなる。
+    // createdAt 無しの旧レコードは最後尾（rev DESC でタイブレーク）。
+    $stmt = $pdo->prepare("SELECT data FROM records WHERE $whereSql ORDER BY COALESCE(JSON_UNQUOTE(JSON_EXTRACT(data, '$.createdAt')), '') DESC, rev DESC LIMIT $limit OFFSET $offset");
     $stmt->execute($allParams);
     $rows = [];
     foreach ($stmt as $row) {
