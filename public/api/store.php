@@ -180,6 +180,13 @@ try {
                 if (!$ownsOrderId((string) ($body['orderId'] ?? ''))) {
                     json_out(['error' => 'forbidden'], 403);
                 }
+                // 決定的ID(WIN-<注文ID>)を使う場合、その ID は「送ってきた orderId から導かれる値」に
+                // 限定する。他人の注文IDから作った WIN-<victim> を自分の注文に紐づけて先取り(squat)し、
+                // 被害者の返却提出を永久に潰す攻撃(P1)を防ぐ。既存の非決定的ID(旧データ)は素通し。
+                $sanitizedOrderId = preg_replace('/[^0-9A-Za-z]/', '', (string) ($body['orderId'] ?? ''));
+                if (strncmp($id, 'WIN-', 4) === 0 && $id !== 'WIN-' . $sanitizedOrderId) {
+                    json_out(['error' => 'forbidden'], 403);
+                }
                 // 既存レコードがある場合、その保存済み orderId も本人所有でなければ拒否
                 //（他人のチケット id を狙って本人 orderId を送る上書き乗っ取りを防ぐ）。
                 $wprev = $pdo->prepare("SELECT data FROM records WHERE store = 'walkinReturns' AND id = ?");

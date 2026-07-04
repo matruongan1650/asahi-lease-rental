@@ -385,13 +385,17 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
     // 課金項目が変わった時はブロックを作り直す。合計は「明細＋配送料の一括 floor」ではなく請求書PDFと
     // 同じく月ブロック合計（ブロック毎切り捨て）から取る（一括 floor はブロック数-1円ずれる）。
     if (billingChanged) {
-      const fresh = getOrGenerateInvoiceBlocks({ ...order, ...updates, invoiceBlocks: undefined });
+      // ブロック生成は「未クローズ」ステータスで行う。返却済/完了 の注文で生成すると getOrGenerateInvoiceBlocks が
+      // 全ブロックを status:"paid" で発番し、課金編集のたびに未収分が入金済みに化けて AR から消える(C8 回帰)。
+      // 実際の入金状態は下の regenerateBlocksPreservingState が旧ブロックから引き継ぐ。保存する status は変えない。
+      const genStatus = isClosedOrder(updates.status || order.status) ? "一部返却" : (updates.status || order.status);
+      const fresh = getOrGenerateInvoiceBlocks({ ...order, ...updates, status: genStatus, invoiceBlocks: undefined });
       const hadBlocks = Array.isArray(order.invoiceBlocks) && order.invoiceBlocks.length > 0;
       // 既存ブロックがある(=納品済み/請求済み)なら、入金済み印と手動追加費用を月ごとに引き継いで保存する
       //（課金編集でこれらが消えると入金済み月が未収に戻り二重請求・手動費用の消失＝過少請求になる）。
       // ブロックが無い(=確認済み等の未納品)なら従来どおり invoiceBlocks は確定せず、合計だけ算出する。
       const blocks = hadBlocks
-        ? regenerateBlocksPreservingState(order.invoiceBlocks, fresh, { closing: isClosedOrder(updates.status || order.status) })
+        ? regenerateBlocksPreservingState(order.invoiceBlocks, fresh)
         : fresh;
       updates.invoiceBlocks = hadBlocks ? blocks : undefined;
       const sums = (blocks || []).reduce(

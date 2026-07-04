@@ -32,7 +32,7 @@ export default function ReturnConfirmationDesktop() {
   const itemsToReturn = order.items.filter((item: any) => returnQuantities[item.id] > 0);
   const totalItemsCount = itemsToReturn.reduce((sum: number, item: any) => sum + returnQuantities[item.id], 0);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (submittingRef.current) return; // 連打で updateOrder/walkinReturns/alert が二重実行されるのを防ぐ
     submittingRef.current = true;
     // Determine actual return date (pickupDate or today)
@@ -137,6 +137,12 @@ export default function ReturnConfirmationDesktop() {
     const usePickupFlow = method === "pickup" && returningEverything;
 
     if (usePickupFlow) {
+      // walkin→pickup の切替時、以前の持込チケットが倉庫キューに残らないよう掃除する。
+      try {
+        OrderBus.getAll<any>("walkinReturns")
+          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
+      } catch { /* ignore */ }
       updateOrder(order.id, {
         status: "回収中",
         staffStatus: "回収予定",
@@ -199,13 +205,23 @@ export default function ReturnConfirmationDesktop() {
       } as any);
 
       // 元注文は「検品待ち」に。確定は倉庫検品完了時。
-      updateOrder(order.id, { status: "検品待ち", returnRequestType: returnReqType });
+      // pickup→walkin の切替時、以前の集荷タスク残渣(回収予定/requestedReturn)を消す。
+      updateOrder(order.id, {
+        status: "検品待ち",
+        returnRequestType: returnReqType,
+        ...(order.staffStatus === "回収予定" ? { staffStatus: "", requestedReturn: {} } : {}),
+      });
     }
 
+    // サーバー反映を確認してから成功表示（オフライン/瞬断で「受付済」と誤表示し、タブを閉じて
+    // 未送信のまま失われるのを防ぐ）。届いていなければ送信待ちである旨を明示する。
+    const ok = await OrderBus.flush(8000);
     void alertDialog(
-      usePickupFlow
-        ? "返却リクエストを送信しました。"
-        : "返却を受け付けました。倉庫での検品後に内容が確定します。"
+      !ok
+        ? "通信が不安定なため送信待ちです。電波の良い場所で自動的に再送信されます（内容は保持されています）。"
+        : usePickupFlow
+          ? "返却リクエストを送信しました。"
+          : "返却を受け付けました。倉庫での検品後に内容が確定します。"
     );
     navigate("/orders");
   };
@@ -310,7 +326,7 @@ export default function ReturnConfirmationDesktop() {
             <span className="material-symbols-outlined text-[20px]">send</span>
           </button>
           <button
-            onClick={() => navigate("/orders")}
+            onClick={() => (window.history.length > 2 ? navigate(-1) : navigate("/orders"))}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-white border border-slate-200 px-6 py-3.5 text-base font-bold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition-all"
           >
             修正する

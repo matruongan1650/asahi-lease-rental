@@ -29,7 +29,7 @@ function ReturnConfirmationMobile() {
   const itemsToReturn = order.items.filter((item: any) => returnQuantities[item.id] > 0);
   const totalItemsCount = itemsToReturn.reduce((sum: number, item: any) => sum + returnQuantities[item.id], 0);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (submittingRef.current) return; // 連打ガード
     submittingRef.current = true;
     // Determine actual return date (pickupDate or today)
@@ -134,6 +134,12 @@ function ReturnConfirmationMobile() {
     const usePickupFlow = method === "pickup" && returningEverything;
 
     if (usePickupFlow) {
+      // walkin→pickup の切替時、以前の持込チケットが倉庫キューに残らないよう掃除する。
+      try {
+        OrderBus.getAll<any>("walkinReturns")
+          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
+      } catch { /* ignore */ }
       updateOrder(order.id, {
         status: "回収中",
         staffStatus: "回収予定",
@@ -196,13 +202,23 @@ function ReturnConfirmationMobile() {
       } as any);
 
       // 元注文は「検品待ち」に。確定は倉庫検品完了時。
-      updateOrder(order.id, { status: "検品待ち", returnRequestType: returnReqType });
+      // pickup→walkin の切替時、以前の集荷タスク残渣(回収予定/requestedReturn)を消す。
+      updateOrder(order.id, {
+        status: "検品待ち",
+        returnRequestType: returnReqType,
+        ...(order.staffStatus === "回収予定" ? { staffStatus: "", requestedReturn: {} } : {}),
+      });
     }
 
+    // サーバー反映を確認してから成功表示（オフライン/瞬断で「受付済」と誤表示し、タブを閉じて
+    // 未送信のまま失われるのを防ぐ）。届いていなければ送信待ちである旨を明示する。
+    const ok = await OrderBus.flush(8000);
     void alertDialog(
-      usePickupFlow
-        ? "返却リクエストを送信しました。"
-        : "返却を受け付けました。倉庫での検品後に内容が確定します。"
+      !ok
+        ? "通信が不安定なため送信待ちです。電波の良い場所で自動的に再送信されます（内容は保持されています）。"
+        : usePickupFlow
+          ? "返却リクエストを送信しました。"
+          : "返却を受け付けました。倉庫での検品後に内容が確定します。"
     );
     navigate("/orders");
   };
@@ -297,7 +313,7 @@ function ReturnConfirmationMobile() {
             <span>返却依頼を送信</span>
             <span className="material-symbols-outlined text-xl">send</span>
           </button>
-          <button onClick={() => navigate(-1)} className="w-full bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 font-bold text-sm py-3 px-6 rounded-xl transition-colors">
+          <button onClick={() => (window.history.length > 2 ? navigate(-1) : navigate("/orders"))} className="w-full bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 font-bold text-sm py-3 px-6 rounded-xl transition-colors">
             修正する
           </button>
         </div>

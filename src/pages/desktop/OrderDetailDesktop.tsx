@@ -8,7 +8,7 @@ import DocumentViewer from "../../components/DocumentViewer";
 import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState } from "../../utils/billing";
 import OrderBus from "../../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
-import { isFullyReturned } from "../../utils/orderStatus";
+import { isFullyReturned, isReturnEligible } from "../../utils/orderStatus";
 
 // PC 用 注文詳細（お客様デスクトップサイト）。
 // 期間延長・帳票表示・請求内訳・検品記録などの処理はモバイル版と完全同一。レイアウトのみ2カラム化。
@@ -140,6 +140,7 @@ export default function OrderDetailDesktop() {
   }
 
   const isRentalActive = order.status !== "キャンセル" && !isFullyReturned(order.status) && order.status !== "完了";
+  const canStartReturn = isReturnEligible(order.status) || order.status === "検品待ち" || order.status === "回収中";
   const hasRentItems = order.items.some((i) => i.type === "rent");
 
   const handleOpenExtension = () => {
@@ -492,9 +493,11 @@ export default function OrderDetailDesktop() {
                 <button onClick={handleOpenExtension} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
                   <span className="material-symbols-outlined text-primary text-[24px]">more_time</span><span className="text-xs font-bold">期間延長</span>
                 </button>
-                <Link to={`/return/${order.id}`} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
-                  <span className="material-symbols-outlined text-primary text-[24px]">assignment_return</span><span className="text-xs font-bold">返却手続き</span>
-                </Link>
+                {canStartReturn && (
+                  <Link to={`/return/${order.id}`} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
+                    <span className="material-symbols-outlined text-primary text-[24px]">assignment_return</span><span className="text-xs font-bold">返却手続き</span>
+                  </Link>
+                )}
               </div>
             </section>
           )}

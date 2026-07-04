@@ -197,6 +197,11 @@ export async function finalizePartialReturn(
 ): Promise<ReturnSplit> {
   const split = computeReturnSplit(order, returnQuantities, actualReturnDate, options.itemIssues || []);
   const { itemIssues, remainingStatus = "一部返却", inspectedByWarehouse, collectionSignature, collectionPhotos, extraFields = {}, restockedByItem = {} } = options;
+  // 分割後の各注文にも「元注文の最低課金日数基準(車両有無)」を刻む。車両と非車両が別注文に
+  // 分かれても基準が 3日↔10日 でブレず、請求ブロックの明細と総額が一致する(C9)。
+  const minDaysHasVehicle = (order.items || []).some(
+    (i: any) => i && i.type === "rent" && isVehicleCategory(i.category),
+  );
   const photoUpdate = collectionPhotos && collectionPhotos.length > 0 ? { collectionPhotos } : {};
   // 請求ブロックには弁償費・燃料費などの ExtraCost が注入されるため、注文の subtotal/tax/total は
   // ブロック合計から取る（split.* のままだと弁償費が注文合計に反映されず、明細と総額が食い違う）。
@@ -227,7 +232,11 @@ export async function finalizePartialReturn(
       subtotal: split.returned.subtotal,
       tax: split.returned.tax,
       total: split.returned.total,
-      status: "返却済",
+      // ブロック生成は「未クローズ」ステータスで行う。返却済で生成すると全ブロックが status:"paid" で
+      // 生まれ、返却分の請求が最初から入金済み扱いになり AR/延滞に出ない(C8)。実際の入金状態は
+      // 下の regenerateBlocksPreservingState が旧ブロックから引き継ぐ。
+      status: "一部返却",
+      minDaysHasVehicle,
       actualReturnDate,
       invoiceBlocks: undefined,
     };
@@ -277,6 +286,7 @@ export async function finalizePartialReturn(
       tax: split.remaining.tax,
       total: split.remaining.total,
       status: remainingStatus,
+      minDaysHasVehicle,
       invoiceBlocks: undefined,
     };
     // 継続注文も元の入金済み印・手動追加費用を引き継ぐ（部分返却のたびに消さない）。
@@ -335,9 +345,12 @@ export async function finalizePartialReturn(
         " • " +
         new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }),
       status: "返却済",
+      minDaysHasVehicle,
     };
     if (itemIssues && itemIssues.length) tempCustomOrder.itemIssues = itemIssues;
-    const customInvoiceBlocks = getOrGenerateInvoiceBlocks(tempCustomOrder);
+    // ブロック生成は「未クローズ」ステータスで行う。返却済で生成すると返却分の請求(レンタル料+弁償費)が
+    // 最初から status:"paid" で生まれ、AR/延滞に一切出ない(C8)。保存自体は 返却済 のまま。
+    const customInvoiceBlocks = getOrGenerateInvoiceBlocks({ ...tempCustomOrder, status: "一部返却" });
     const ct = sumBlocks(customInvoiceBlocks);
 
     await deps.addCustomOrder({

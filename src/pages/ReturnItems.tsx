@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
+import { isReturnEligible } from "../utils/orderStatus";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import ReturnItemsDesktop from "./desktop/ReturnItemsDesktop";
 
@@ -23,8 +24,10 @@ function ReturnItemsMobile() {
   const foundOrder = orders.find(o => o.id === orderId);
   // deny-by-default: 特権、または「ログイン中 かつ 注文に userId があり 一致」のときだけ許可。
   // 未ログイン(undefined)や userId 未設定の注文で undefined===undefined となり素通りするのを防ぐ（OrderDetail と統一）。
+  // 返却可能なステータスのみ（未納品=処理中/確認済み/配送中 等は不可）。検品待ちは編集・再提出のため許可。
+  const returnAllowed = (o: any) => o && (isReturnEligible(o.status) || o.status === "検品待ち" || o.status === "回収中");
   const order =
-    foundOrder && (isPrivileged || (!!currentUser?.id && !!foundOrder.userId && foundOrder.userId === currentUser.id))
+    foundOrder && returnAllowed(foundOrder) && (isPrivileged || (!!currentUser?.id && !!foundOrder.userId && foundOrder.userId === currentUser.id))
       ? foundOrder
       : undefined;
 

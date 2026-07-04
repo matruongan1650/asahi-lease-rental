@@ -923,7 +923,10 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
           o.firestoreId === walkinOrder.orderId ||
           (walkinOrder.orderNumber && o.orderNumber === walkinOrder.orderNumber))
       : null;
-    const shouldRestock = !linkedOrder || (((!!(linkedOrder as any).stockDeducted) || (!!(linkedOrder as any).deliveryConfirmedAt)) && !(linkedOrder as any).stockRestored);
+    // 履歴からの差し戻し(再検品)は「記録のみ」: 在庫戻し・返却確定(finalizePartialReturn)は再実行しない
+    // （元の検品で既に実施済み。再実行すると二重入庫・継続注文のクローズ/明細消失を起こす=C6）。
+    const isReinspect = (walkinOrder as any)?.source === "reinspect";
+    const shouldRestock = !isReinspect && (!linkedOrder || (((!!(linkedOrder as any).stockDeducted) || (!!(linkedOrder as any).deliveryConfirmedAt)) && !(linkedOrder as any).stockRestored));
 
     // 入庫 + 在庫調整。良品数 = 検品実数(counted) − 「現物が戻っているが不良」な報告分。
     // 「数量不足」は現物が戻っていない（counted に含まれない）ため差し引かない（二重控除防止）。
@@ -939,7 +942,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
     // restock 直前にライブの注文を再取得し、既に stockRestored 済みならスキップする
     //（restoreOrderStock と同じライブガード。先に確定した端末のフラグが同期していれば二重加算しない）。
     const freshLinked = linkedOrder
-      ? OrderBus.getAll<any>("orders").find((o: any) => o.id === (linkedOrder as any).id || o.firestoreId === (linkedOrder as any).firestoreId)
+      ? OrderBus.getAll<any>("orders").find((o: any) => o.id === (linkedOrder as any).id || (!!(linkedOrder as any).firestoreId && o.firestoreId === (linkedOrder as any).firestoreId))
       : null;
     const liveAlreadyRestored = !!(freshLinked && (freshLinked as any).stockRestored);
     if (shouldRestock && !liveAlreadyRestored) {
@@ -994,8 +997,9 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
           o.firestoreId === walkinOrder.orderId ||
           (walkinOrder.orderNumber && o.orderNumber === walkinOrder.orderNumber)
       );
+      let finalizeFailed = false;
 
-      if (targetOrder) {
+      if (targetOrder && !isReinspect) {
         // 返却分(-R)注文は「顧客が持ち込んだ日（一次受付日）」までで課金する。
         // 一次受付で記録した receptionReturnDate を優先し、
         // それを経ない経路（現場回収など receptionReturnDate 無し）は最終検品日にフォールバック。
@@ -1068,14 +1072,27 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
           );
         } catch (e) {
           console.error("[completeReturn] 注文の確定に失敗しました。", e);
+          finalizeFailed = true;
+          // 補償: finalize が中断しても在庫戻し(restock)は既に実行済み。以後の二重入庫
+          //（admin 救済クローズ settleReturnStock や本チケット再確定での再 restock）を防ぐため、
+          // 継続注文に stockRestored を立てるだけにする。items/status/invoiceBlocks は finalize が
+          // 途中まで書いた状態を壊さないよう触らない（過去の誤修正=full items 上書きで返却分喪失を回避）。
+          // チケットは残し、再確定時は shouldRestock=false になり restock を重ねずに finalize だけ再試行する。
+          try {
+            if (Object.keys(restockedByItem).length > 0) {
+              updateOrder(targetOrder.id, { stockRestored: true });
+            }
+          } catch { /* ignore */ }
         }
       }
 
-      // 検品済みの walk-in 受付を削除
-      try {
-        OrderBus.remove("walkinReturns", walkinOrder.id);
-      } catch (e) {
-        console.warn("[completeReturn] walkinReturns 削除に失敗しました。", e);
+      // 検品済みの walk-in 受付を削除（finalize 失敗時は残して再確定できるようにする）。
+      if (!finalizeFailed) {
+        try {
+          OrderBus.remove("walkinReturns", walkinOrder.id);
+        } catch (e) {
+          console.warn("[completeReturn] walkinReturns 削除に失敗しました。", e);
+        }
       }
     }
 

@@ -230,9 +230,12 @@ export function billingEndDate(order: any): string | undefined {
 
 export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
   if (!order) return [];
-  const hasVehicle = (order.items || []).some(
-    (i: any) => i && i.type === "rent" && isVehicleCategory(i.category)
-  );
+  // 最低課金日数の基準(車両=3日 / 非車両=10日)は「注文全体に車両があるか」で決まる。
+  // 一部返却で車両と非車両が別注文に分割されると、分割後の items だけで再判定すると基準が変わり
+  // 過大/過小請求になる(C9)。分割時に元注文の基準を minDaysHasVehicle として刻んであれば優先する。
+  const hasVehicle = typeof (order as any).minDaysHasVehicle === "boolean"
+    ? (order as any).minDaysHasVehicle
+    : (order.items || []).some((i: any) => i && i.type === "rent" && isVehicleCategory(i.category));
   const endDate = billingEndDate(order);
   // 確定済み(キャッシュ済み invoiceBlocks がある)注文では breakdown を作り直さない。
   // 作り直すと、frozen なブロック合計と PDF 明細がズレ／管理者の手動単価(calculatedPrice)上書きが消える。
@@ -424,7 +427,7 @@ export function regenerateBlocksPreservingState(
 ): InvoiceBlock[] {
   const prevByMonth = new Map<string, InvoiceBlock>();
   (prevBlocks || []).forEach((b) => { if (b && b.monthPeriod) prevByMonth.set(b.monthPeriod, b); });
-  return (newBlocks || []).map((nb) => {
+  const result = (newBlocks || []).map((nb) => {
     const pb = prevByMonth.get(nb.monthPeriod);
     if (!pb) return nb;
     // 手動追加費用の引き継ぎ（同一idが新ブロックに既にあれば二重付与しない）
@@ -444,6 +447,38 @@ export function regenerateBlocksPreservingState(
     }
     return nb;
   });
+  // C10: 新スパンから消えた月(早期全量返却で末尾月が落ちる等)の手動追加費用を失わないよう、
+  // 最後の新ブロックへ退避する。入金済みだった月が消える場合は警告（回収済み売上の追跡が切れるため）。
+  const newMonths = new Set((newBlocks || []).map((b) => b && b.monthPeriod));
+  const dropped = (prevBlocks || []).filter((b) => b && b.monthPeriod && !newMonths.has(b.monthPeriod));
+  if (dropped.length > 0 && result.length === 0) {
+    // 新スパンがゼロブロック（全量早期返却で請求月なし等）: 退避先が無いため手動費用は載せられない。
+    // 少なくとも失われる手動費用を警告して照合できるようにする。
+    const lostManual = dropped.some((d) => ((d as any).extraCosts || []).some(
+      (c: any) => c && !AUTO_EXTRA_COST_IDS.has(String(c.id || "")),
+    ));
+    if (lostManual) console.warn("[regenerateBlocksPreservingState] 新ブロックが空のため、消えた月の手動追加費用を退避できません（要確認）。");
+  }
+  if (dropped.length > 0 && result.length > 0) {
+    const last = result[result.length - 1];
+    const existing = new Set((last.extraCosts || []).map((c: any) => String(c.id || "")));
+    let added = false;
+    for (const d of dropped) {
+      const manual = ((d as any).extraCosts || []).filter(
+        (c: any) => c && !AUTO_EXTRA_COST_IDS.has(String(c.id || "")) && !existing.has(String(c.id || "")),
+      );
+      if (manual.length > 0) {
+        (last as any).extraCosts = [...((last as any).extraCosts || []), ...manual];
+        manual.forEach((c: any) => existing.add(String(c.id || "")));
+        added = true;
+      }
+      if (!opts.closing && String((d as any).status || "") === "paid") {
+        console.warn(`[regenerateBlocksPreservingState] 入金済み月 ${d.monthPeriod} が新スパンから消えました（要確認）。`);
+      }
+    }
+    if (added) recalculateInvoiceBlock(last);
+  }
+  return result;
 }
 
 /**

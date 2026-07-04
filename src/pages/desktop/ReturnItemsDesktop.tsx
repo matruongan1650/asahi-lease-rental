@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useOrders } from "../../context/OrderContext";
 import { useUser } from "../../context/UserContext";
+import { isReturnEligible } from "../../utils/orderStatus";
 
 /** PC 用 返却アイテム選択（お客様デスクトップサイト）。モバイル ReturnItems と同じアクセス制御・返却数ロジックを再利用。 */
 export default function ReturnItemsDesktop() {
@@ -17,8 +18,9 @@ export default function ReturnItemsDesktop() {
   const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
   const foundOrder = orders.find(o => o.id === orderId);
   // deny-by-default: 特権、または「ログイン中 かつ 注文に userId があり 一致」のときだけ許可（OrderDetail と統一）。
+  const returnAllowed = (o: any) => o && (isReturnEligible(o.status) || o.status === "検品待ち" || o.status === "回収中");
   const order =
-    foundOrder && (isPrivileged || (!!currentUser?.id && !!foundOrder.userId && foundOrder.userId === currentUser.id))
+    foundOrder && returnAllowed(foundOrder) && (isPrivileged || (!!currentUser?.id && !!foundOrder.userId && foundOrder.userId === currentUser.id))
       ? foundOrder
       : undefined;
 

@@ -175,8 +175,13 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
   };
 
   // QRラベルが破損・読取不可の場合の手動確認（admin に QR未照合と分かるようタグ付け）。
+  // markScanned と同様、同一商品が複数行あっても「未検品の最初の1行」だけ立てる
+  //（1回の手動確認で全行の検品ゲートを通過させない）。
   const markManual = (product: any) => {
-    setProds(ps => ps.map(p => p.id === product.id ? { ...p, scanned: true, manualConfirm: true } : p));
+    setProds(ps => {
+      const t = ps.find(p => (p.id === product.id || (p.qr && p.qr === product.qr)) && !p.scanned);
+      return t ? ps.map(p => p === t ? { ...p, scanned: true, manualConfirm: true } : p) : ps;
+    });
   };
 
   // 履歴から検品をやり直す（差し戻し）: 最終検品キューへ recheck 伝票を再投入する。
