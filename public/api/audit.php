@@ -108,6 +108,9 @@ function audit_log(PDO $pdo, string $store, string $recordId, string $action, ?a
 {
     try {
         if (!is_audited_store($store)) return;
+        // 記録対象は admin サイト(role=admin)の操作のみ。顧客サイトの自己操作(注文・返却依頼)や
+        // スタッフAPK(role=staff)の書き込みは記録しない（ユーザー方針: 「admin サイトのみログ」）。
+        if (!is_array($user) || ($user['role'] ?? '') !== 'admin') return;
         $changes = ($action === 'update') ? audit_diff($prev, $next) : [];
         if ($action === 'update' && count($changes) === 0) return; // 実質変更なし → 記録しない
 

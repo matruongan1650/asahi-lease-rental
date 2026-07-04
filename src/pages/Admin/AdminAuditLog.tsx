@@ -96,7 +96,7 @@ export default function AdminAuditLog() {
       <Panel
         title="操作ログ"
         icon="history"
-        sub={`だれが・いつ・なにを変更したか（新しい順・90日保持）${live ? "" : "・読込中…"}`}
+        sub={`管理サイトでの変更操作（だれが・いつ・なにを／新しい順・90日保持）${live ? "" : "・読込中…"}`}
         action={<Badge tone="default">{rows.length.toLocaleString()} 件</Badge>}
       >
         <Toolbar
