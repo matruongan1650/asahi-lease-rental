@@ -22,7 +22,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { DATA_BACKEND, SYNC_POLL_MS } from "./dataBackend";
-import { apiList, apiSync, apiUpsert, apiRemove } from "./backendSync";
+import { apiList, apiSync, apiUpsert, apiRemove, ConflictError } from "./backendSync";
 import { externalizeImages } from "./imageUpload";
 import { byOrderDateDesc } from "../utils/orderSort";
 
@@ -367,6 +367,26 @@ let _firstPoll = false;
 const _pendingUpserts = new Set<string>();
 // 現在サーバへ送信中(in-flight)のキー。同一レコードの二重 upsert（遅い回線でのリトライ嵐）を防ぐ。
 const _inFlightUpserts = new Set<string>();
+
+// ── 楽観的排他（C29: 同時編集の「後勝ち全消し」防止）────────────────────────
+// sync が返すレコード別 rev を記録し、patch() 由来の upsert は X-Base-Rev 付きで送る。
+// サーバー rev と不一致なら 409 → 「サーバー最新 + 自分の変更フィールドだけ」を重ねて再送（再ベース）。
+// push()（新規作成・決定的IDの全置換）は従来どおり rev 無し = 意図的な上書き。
+const _REVS_KEY = "asahi._revs_v1";
+const _revs: Record<string, number> = (() => {
+  try { return JSON.parse(localStorage.getItem(_REVS_KEY) || "{}") || {}; } catch { return {}; }
+})();
+let _revsPersistTimer: ReturnType<typeof setTimeout> | null = null;
+function _persistRevs(): void {
+  if (_revsPersistTimer) return; // 500ms デバウンス（sync バッチで毎行書かない）
+  _revsPersistTimer = setTimeout(() => {
+    _revsPersistTimer = null;
+    try { localStorage.setItem(_REVS_KEY, JSON.stringify(_revs)); } catch { /* 容量超過は無害（次回 sync で再構築） */ }
+  }, 500);
+}
+// patch() で変更したフィールドの累積（レコード別）。409 再ベース時に「自分の変更だけ」を
+// サーバー最新へ重ねるために使う。upsert 確定・push・remove でクリア。
+const _patchUpdates = new Map<string, Record<string, unknown>>();
 const _pk = (store: string, id: string) => store + " " + id;
 // バックエンド書き込み失敗（オフライン/サーバーエラー）の購読者。
 // スタッフ現場アプリが「保存に失敗」を即座にユーザへ提示するために使う。
@@ -408,16 +428,25 @@ const _SLIM_KEY = "asahi._cache_slimmed_v1";
 //（消さないと容量超過を一度起こした端末は毎回起動時に rev=0 のフル再同期を続けてしまう）。
 let _slimResyncPending = false;
 
-function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; deleted: boolean; data: BusRecord | null }>): void {
+function _applyRemoteChanges(store: BusStore, changes: Array<{ id: string; deleted: boolean; data: BusRecord | null; rev?: number }>): void {
   const cur = _read(store);
   const map = new Map<string, BusRecord>(cur.map((r) => [String(r.id), r]));
   for (const ch of changes) {
     // サーバー upsert がまだ確定していないローカル編集（in-flight）は、増分同期で返ってくる
     // 「古いサーバー状態のエコー」で上書きしない。_reloadAuthoritativeSnapshot と同じ保護を増分側にも適用し、
     // 直近のローカル編集が一瞬で巻き戻る事象を防ぐ（upsert 確定で pending から外れれば以後は通常通り反映）。
-    if (_pendingUpserts.has(_pk(store, String(ch.id)))) continue;
-    if (ch.deleted) map.delete(String(ch.id));
-    else if (ch.data) map.set(String(ch.id), ch.data);
+    const chPk = _pk(store, String(ch.id));
+    // pending スキップ時は _revs も進めない: 進めると自分の古い編集が新しい baseRev で
+    // 衝突検査をすり抜け、相手の変更を上書きしてしまう（楽観的排他の要）。
+    if (_pendingUpserts.has(chPk)) continue;
+    if (ch.deleted) {
+      map.delete(String(ch.id));
+      delete _revs[chPk];
+      _persistRevs();
+    } else if (ch.data) {
+      map.set(String(ch.id), ch.data);
+      if (typeof ch.rev === "number") { _revs[chPk] = ch.rev; _persistRevs(); }
+    }
   }
   const merged = Array.from(map.values());
   merged.sort((a: any, b: any) => {
@@ -444,12 +473,30 @@ async function _reloadAuthoritativeSnapshot(): Promise<number> {
       const pendingLocal = before.filter(
         (r) => _pendingUpserts.has(_pk(store, String(r.id))) && !serverIds.has(String(r.id)),
       );
-      _write(store, pendingLocal.length ? [...pendingLocal, ...rows] : rows);
+      // pending 中の「編集」（サーバーにも存在する行）は、サーバー行に自分の変更フィールドを
+      // 重ねて保持する（素通しだとローカル編集が巻き戻り、次 tick が巻き戻った内容を再送してしまう）。
+      const overlaid = rows.map((r) => {
+        const rpk = _pk(store, String(r.id));
+        const mine = _pendingUpserts.has(rpk) ? _patchUpdates.get(rpk) : undefined;
+        return mine ? ({ ...r, ...mine } as BusRecord) : r;
+      });
+      _write(store, pendingLocal.length ? [...pendingLocal, ...overlaid] : overlaid);
       pendingLocal.forEach((r) => toRepush.push([store, String(r.id)]));
     }
     const fresh = await apiSync(0);
     if (fresh && typeof fresh.rev === "number") {
       maxRev = fresh.rev;
+    }
+    // フル再同期からレコード別 rev を採取（楽観的排他の基準）。pending 中はローカル編集を
+    // 保持しているため rev を進めない（進めると衝突検査をすり抜ける）。
+    if (fresh && Array.isArray(fresh.changes)) {
+      for (const ch of fresh.changes) {
+        const rpk = _pk(String(ch.store), String(ch.id));
+        if (_pendingUpserts.has(rpk)) continue;
+        if (ch.deleted) delete _revs[rpk];
+        else if (typeof ch.rev === "number") _revs[rpk] = ch.rev;
+      }
+      _persistRevs();
     }
   } finally {
     _applyingRemote = false;
@@ -470,9 +517,9 @@ async function _apiTick(): Promise<void> {
       return;
     }
     if (res && Array.isArray(res.changes)) {
-      const byStore: Record<string, Array<{ id: string; deleted: boolean; data: BusRecord | null }>> = {};
+      const byStore: Record<string, Array<{ id: string; deleted: boolean; data: BusRecord | null; rev?: number }>> = {};
       for (const ch of res.changes) {
-        (byStore[ch.store] ||= []).push({ id: ch.id, deleted: ch.deleted, data: ch.data as BusRecord | null });
+        (byStore[ch.store] ||= []).push({ id: ch.id, deleted: ch.deleted, data: ch.data as BusRecord | null, rev: ch.rev });
       }
       _applyingRemote = true;
       try {
@@ -552,46 +599,101 @@ async function _upsertExternalized(store: BusStore, recordId: string): Promise<v
   if (_inFlightUpserts.has(pk)) return;
   _inFlightUpserts.add(pk);
   try {
-    let data = _read(store);
-    let idx = data.findIndex((r) => String(r.id) === String(recordId));
-    if (idx < 0) { _pendingUpserts.delete(pk); return; }
-    const original = data[idx];
-
-    let ext: BusRecord = original;
-    try {
-      ext = await externalizeImages(original);
-    } catch {
-      ext = original;
-    }
-
-    // 画像をアップロードして URL 化した場合のみローカルを書き換える。
-    if (ext !== original) {
-      data = _read(store);
-      idx = data.findIndex((r) => String(r.id) === String(recordId));
-      if (idx >= 0) {
-        // 共有配列(_mem)を直接 mutate せず新配列で書き込む（push/patch と同じ不変性規約）。
-        _write(store, data.map((r, i) => (i === idx ? ext : r)));
-      }
-    }
-
-    // 画像アップロード待ち（await）の間にレコードが削除された場合、サーバへ再 upsert して
-    // 復活（resurrection）させない。削除は _mem へ即時反映されるので存在確認で判定する。
-    if (!_read(store).some((r) => String(r.id) === String(recordId))) {
-      return;
-    }
-    try {
-      await apiUpsert(store, ext as any);
-      _pendingUpserts.delete(pk); // 同期確定 → 未同期解除
-    } catch (e) {
-      console.warn(`[OrderBus] backend upsert failed "${store}/${recordId}":`, e);
-      _emitSyncError(store, String(recordId), e);
-      // 4xx（権限拒否など非リトライ）の場合は pending を諦めて外す。さもないと永久リトライし続け、
-      // かつ _applyRemoteChanges が当該レコードへの正当なリモート更新を恒久的に無視してしまう。
-      // 5xx/ネットワーク等の一時エラーは pending のまま保持し、次 tick で再送する。
-      if (/→ 4\d\d /.test(String((e as { message?: string })?.message ?? e))) {
+    // リトライループ: 409 再ベース時も in-flight を保持したまま同一ループ内で再送する。
+    // （旧実装は再帰 + in-flight 解除だったため、再ベース中に tick が並行 upsert を起こし
+    //   ベースrev無しの全置換で他端末の書き込みを潰す穴があった。）
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      let data = _read(store);
+      let idx = data.findIndex((r) => String(r.id) === String(recordId));
+      if (idx < 0) {
         _pendingUpserts.delete(pk);
+        _patchUpdates.delete(pk); // レコード消滅 → 累積パッチも破棄（後日の誤再適用防止）
+        return;
+      }
+      const original = data[idx];
+
+      let ext: BusRecord = original;
+      try {
+        ext = await externalizeImages(original);
+      } catch {
+        ext = original;
+      }
+
+      // 画像をアップロードして URL 化した場合のみローカルを書き換える。
+      if (ext !== original) {
+        data = _read(store);
+        idx = data.findIndex((r) => String(r.id) === String(recordId));
+        if (idx >= 0) {
+          // 共有配列(_mem)を直接 mutate せず新配列で書き込む（push/patch と同じ不変性規約）。
+          _write(store, data.map((r, i) => (i === idx ? ext : r)));
+        }
+      }
+
+      // 画像アップロード待ち（await）の間にレコードが削除された場合、サーバへ再 upsert して
+      // 復活（resurrection）させない。削除は _mem へ即時反映されるので存在確認で判定する。
+      if (!_read(store).some((r) => String(r.id) === String(recordId))) {
+        return;
+      }
+
+      // 楽観的排他: patch() 由来（変更フィールドが累積している）かつ rev 既知の場合のみ
+      // X-Base-Rev を付ける。新規作成/push は従来どおり（意図的な全置換）。
+      // sentPatch は「この送信に含めた累積パッチ」の参照。送信中に新しい patch() が来ると
+      // _patchUpdates には別オブジェクトが入る（patch() は毎回新規オブジェクトを set する）ため、
+      // 参照比較で「送信後の取りこぼし」を検知できる。
+      const sentPatch = _patchUpdates.get(pk);
+      const baseRev = sentPatch && typeof _revs[pk] === "number" ? _revs[pk] : undefined;
+      try {
+        const res = (await apiUpsert(store, ext as any, baseRev)) as { rev?: number } | null;
+        if (res && typeof res.rev === "number") { _revs[pk] = res.rev; _persistRevs(); }
+        if (_patchUpdates.get(pk) !== sentPatch) {
+          // 送信中に新しい patch() が入った → まだ確定させず、新しい rev を基準に即再送。
+          // （旧実装はここで pending を解除してしまい、in-flight 中の編集がサーバへ届かず、
+          //   自分の書き込みの sync エコーでローカルからも消える取りこぼしがあった。）
+          continue;
+        }
+        _pendingUpserts.delete(pk); // 同期確定 → 未同期解除
+        _patchUpdates.delete(pk);   // 変更フィールドの累積をクリア
+        return;
+      } catch (e) {
+        if (e instanceof ConflictError) {
+          // ── 409: 他端末が先に書いた ──────────────────────────────────
+          const mine = _patchUpdates.get(pk) || {};
+          if (e.deleted || !e.current) {
+            // リモートで削除済み → ローカル変更は破棄し、ローカルのレコードも削除して収束させる。
+            // （tombstone の sync は pending 中に既にスキップされていることがあり、待っても届かない。）
+            console.warn(`[OrderBus] conflict: "${store}/${recordId}" deleted remotely — dropping local patch`);
+            _patchUpdates.delete(pk);
+            _pendingUpserts.delete(pk);
+            delete _revs[pk];
+            _persistRevs();
+            _write(store, _read(store).filter((r) => String(r.id) !== String(recordId)));
+            return;
+          }
+          // 再ベース: サーバー最新レコードへ「自分の変更フィールドだけ」を重ねる（相手の変更を保存）。
+          const rebased = { ...(e.current as BusRecord), ...mine, updatedAt: new Date().toISOString() } as BusRecord;
+          const curRows = _read(store);
+          const hasRow = curRows.some((r) => String(r.id) === String(recordId));
+          _write(store, hasRow ? curRows.map((r) => (String(r.id) === String(recordId) ? rebased : r)) : [rebased, ...curRows]);
+          _revs[pk] = e.rev;
+          _persistRevs();
+          continue; // in-flight を保持したまま次の attempt で再送（並行 upsert を起こさない）
+        }
+        console.warn(`[OrderBus] backend upsert failed "${store}/${recordId}":`, e);
+        _emitSyncError(store, String(recordId), e);
+        // 4xx（権限拒否など非リトライ）の場合は pending と累積パッチを諦めて外す。さもないと永久リトライし続け、
+        // かつ _applyRemoteChanges が当該レコードへの正当なリモート更新を恒久的に無視してしまう。
+        // （累積パッチを残すと、拒否されたフィールドが後日の 409 再ベースで復活する誤適用も起きる。）
+        // 5xx/ネットワーク等の一時エラーは pending のまま保持し、次 tick で再送する。
+        if (/→ 4\d\d /.test(String((e as { message?: string })?.message ?? e))) {
+          _pendingUpserts.delete(pk);
+          _patchUpdates.delete(pk);
+        }
+        return;
       }
     }
+    // 4回試行しても衝突が続く（異常な競合頻度）→ pending のまま次 tick に委ねる
+    // （再ベース済みの状態が _mem にあるので、次回は最新 rev で送られる）。
+    console.warn(`[OrderBus] conflict retry exceeded for "${store}/${recordId}" — will retry next tick`);
   } finally {
     _inFlightUpserts.delete(pk);
   }
@@ -646,6 +748,9 @@ export const OrderBus: IOrderBus = {
     // Prepend (newest first)。共有配列(_mem)を直接 mutate せず新しい配列で書き込む。
     _write(store, [record, ...data]);
 
+    // push は「全置換の意図」なので楽観的排他は掛けない（累積パッチも破棄 = baseRev 無しで送る）。
+    _patchUpdates.delete(_pk(store, String(record.id)));
+
     if (DATA_BACKEND === "api" && !_applyingRemote) {
       void _upsertExternalized(store, String(record.id));
     }
@@ -666,6 +771,10 @@ export const OrderBus: IOrderBus = {
         i === idx ? { ...d, ...updates, updatedAt: new Date().toISOString() } : d
       );
       _write(store, next);
+
+      // 楽観的排他: 変更フィールドを累積（409 再ベース時に「自分の変更だけ」を重ねるため）。
+      const patchPk = _pk(store, String(targetId));
+      _patchUpdates.set(patchPk, { ..._patchUpdates.get(patchPk), ...updates });
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         // マージ後のレコード全体を upsert（base64 画像はアップロードして URL 化）。
@@ -689,6 +798,8 @@ export const OrderBus: IOrderBus = {
             const cur = _read(store);
             const has = cur.some((d) => String(d.id) === String((found as any).id));
             _write(store, has ? cur.map((d) => (String(d.id) === String((found as any).id) ? merged : d)) : [merged, ...cur]);
+            const fbPk = _pk(store, String((found as any).id));
+            _patchUpdates.set(fbPk, { ..._patchUpdates.get(fbPk), ...updates });
             void _upsertExternalized(store, String((found as any).id));
           } catch (e) {
             console.warn(`[OrderBus] patch reconcile failed for "${id}" in "${store}":`, e);
@@ -713,6 +824,9 @@ export const OrderBus: IOrderBus = {
 
       // 削除されたので未同期保持の対象から外す（再読込で復活させない）。
       _pendingUpserts.delete(_pk(store, String(targetId)));
+      _patchUpdates.delete(_pk(store, String(targetId)));
+      delete _revs[_pk(store, String(targetId))];
+      _persistRevs();
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {
         apiRemove(store, String(targetId)).catch((e) =>

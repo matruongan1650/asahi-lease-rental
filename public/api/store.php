@@ -22,6 +22,13 @@ try {
     if (enforce_user_token_enabled() && is_sensitive_store($name) && current_user() === null) {
         json_out(['error' => 'unauthorized'], 401);
     }
+    // enforce 時はスコープ対象ストア全てをトークン無しから遮断する（GET/sync の fail-closed と対に）。
+    // これが無いと、楽観的排他の 409 応答(current=最新レコード)が walkinReturns/returnInspections 等の
+    // 内容をトークン無し呼び出しへ漏らす新しい読み出し面になる（共有 api_token はバンドルから抽出可能）。
+    if (enforce_user_token_enabled() && current_user() === null
+        && in_array($name, ['returnInspections', 'walkinReturns', 'staffMessages', 'mailLogs'], true)) {
+        json_out(['error' => 'unauthorized'], 401);
+    }
 
     if ($method === 'GET') {
         $stmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND deleted = 0 ORDER BY rev DESC");
@@ -195,15 +202,48 @@ try {
         // 行ロックが INSERT 前に解放され、コミット順が rev 順とズレて sync の増分カーソルが
         // レコードを恒久的に飛ばし得る（データ欠落）。トランザクションで採番→書き込みを直列化する。
         // メール送信はコミット後（ロールバック時に誤送信しない / ロックを長く保持しない）。
+        // ── 楽観的排他（X-Base-Rev）──────────────────────────────────────────
+        // クライアントが「最後に見たレコードの rev」をヘッダで送ってきた場合のみ検査する。
+        // 現在 rev と不一致なら 409 + 最新レコードを返し、クライアント側で再ベース（サーバー最新に
+        // 自分の変更フィールドだけ重ねて再送）させる。ヘッダ無し（旧クライアント）は従来どおり
+        // 全置換 = 後方互換。同時編集の「後勝ち全消し」(C29) をこれで防ぐ。
+        $baseRevHdr = $_SERVER['HTTP_X_BASE_REV'] ?? null;
+        $baseRev = (is_string($baseRevHdr) && $baseRevHdr !== '' && ctype_digit($baseRevHdr)) ? (int) $baseRevHdr : null;
+
         $pdo->beginTransaction();
-        // プッシュ通知の「新ジョブか」判定は txn 内で FOR UPDATE 読みする（同一レコードへ2端末が
-        // ほぼ同時に POST しても後続がロック待ち→更新後の状態を見るため、二重通知にならない）。
+        // FOR UPDATE 読みは 楽観的排他 と FCMプッシュ判定 の両方で共用（同一レコードへ2端末が
+        // ほぼ同時に POST しても後続がロック待ち→更新後の状態を見る）。
         $pushPrevSS = null;   // orders: 直前の staffStatus（行なし/削除済みは ''）
         $walkinIsNew = false; // walkinReturns: 新規受付か（stage 更新=スタッフ操作では通知しない）
-        if (fcm_enabled() && ($name === 'orders' || $name === 'walkinReturns')) {
-            $lk = $pdo->prepare("SELECT data, deleted FROM records WHERE store = ? AND id = ? FOR UPDATE");
+        $lockRow = null;
+        $needLock = ($baseRev !== null) || (fcm_enabled() && ($name === 'orders' || $name === 'walkinReturns'));
+        if ($needLock) {
+            $lk = $pdo->prepare("SELECT data, deleted, rev FROM records WHERE store = ? AND id = ? FOR UPDATE");
             $lk->execute([$name, $id]);
             $lockRow = $lk->fetch(PDO::FETCH_ASSOC) ?: null;
+        }
+        if ($baseRev !== null) {
+            $curRev = $lockRow ? (int) $lockRow['rev'] : 0;
+            // 墓石(soft-delete済み)行への baseRev 付き書き込みは rev 一致でも常に衝突扱い。
+            // （tombstone の rev を base に一致させた書き込みが deleted=0 で黙って復活させるのを防ぐ。
+            //   復活はヘッダ無しの意図的な全置換(push 経路)のみに許す。）
+            if ($lockRow && (int) $lockRow['deleted'] === 1) {
+                $pdo->rollBack();
+                json_out(['error' => 'conflict', 'rev' => $curRev, 'deleted' => true, 'current' => null], 409);
+            }
+            if ($curRev !== $baseRev) {
+                $pdo->rollBack();
+                $isDeleted = $lockRow === null || (int) $lockRow['deleted'] === 1;
+                $curData = (!$isDeleted && $lockRow) ? json_decode((string) $lockRow['data'], true) : null;
+                json_out([
+                    'error'   => 'conflict',
+                    'rev'     => $curRev,
+                    'deleted' => $isDeleted,
+                    'current' => is_array($curData) ? $curData : null,
+                ], 409);
+            }
+        }
+        if (fcm_enabled() && ($name === 'orders' || $name === 'walkinReturns')) {
             if ($name === 'orders') {
                 $ld = ($lockRow && (int)$lockRow['deleted'] === 0) ? json_decode((string)$lockRow['data'], true) : null;
                 $pushPrevSS = is_array($ld) ? (string)($ld['staffStatus'] ?? '') : '';
@@ -260,7 +300,7 @@ try {
         }
         if ($push !== null) {
             // 応答を先に返してから送信する（FCM の往復で保存操作のレスポンスを遅らせない）。
-            $json = json_encode(['ok' => true, 'mail' => $mail], JSON_UNESCAPED_UNICODE);
+            $json = json_encode(['ok' => true, 'rev' => $rev, 'mail' => $mail], JSON_UNESCAPED_UNICODE);
             http_response_code(200);
             header('Content-Type: application/json; charset=utf-8');
             if (function_exists('fastcgi_finish_request')) {
@@ -281,7 +321,7 @@ try {
             }
             exit;
         }
-        json_out(['ok' => true, 'mail' => $mail]);
+        json_out(['ok' => true, 'rev' => $rev, 'mail' => $mail]); // rev: クライアントの楽観的排他トラッキング用
     }
 
     if ($method === 'PUT') {
@@ -365,7 +405,7 @@ try {
         if ($auditDelPrev !== null) {
             audit_log($pdo, $name, $id, 'delete', $auditDelPrev, null, $cu);
         }
-        json_out(['ok' => true]);
+        json_out(['ok' => true, 'rev' => $rev]);
     }
 
     json_out(['error' => 'method not allowed'], 405);

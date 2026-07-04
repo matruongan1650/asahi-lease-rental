@@ -96,6 +96,8 @@ try {
             'id'      => $row['id'],
             'deleted' => $deleted,
             'data'    => $data,
+            // レコード別の rev（楽観的排他 X-Base-Rev 用）。旧クライアントは無視するだけで無害。
+            'rev'     => $rev,
         ];
     }
 
