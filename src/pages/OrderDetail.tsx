@@ -9,6 +9,7 @@ import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGener
 import OrderBus from "../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned, isReturnEligible } from "../utils/orderStatus";
+import { computeExtension, validateExtensionDate, canExtendOrder, extensionMinDate } from "../utils/extendRental";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import OrderDetailDesktop from "./desktop/OrderDetailDesktop";
 
@@ -135,25 +136,10 @@ function OrderDetailMobile() {
     const currentEnd = parseDateLocal(order.rentalEndDate);
     if (isNaN(selectedEnd.getTime()) || selectedEnd < currentEnd) return null;
     try {
-      const hasVehicle = (order.items || []).some((i: any) => isVehicleCategory(i.category) && i.type === 'rent');
-      let totalRentalPrice = 0, totalBuyPrice = 0, totalGuaranteeFee = 0;
-      const updatedItems = (order.items || []).map((item: any) => {
-        const copy = { ...item };
-        if (copy.type === 'rent' && copy.rentPrice) {
-          const { totalPrice: itemTotal, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(copy.rentPrice, order.rentalStartDate, newEndDate, hasVehicle, isVehicleCategory(copy.category), copy.rentPriceLongTerm);
-          copy.monthlyBreakdown = breakdown; copy.calculatedPrice = itemTotal; copy.rentalDays = totalActualDays; copy.billedDays = totalBilledDays;
-          totalRentalPrice += itemTotal * copy.quantity;
-          if (copy.guaranteeFeeFlat) totalGuaranteeFee += copy.guaranteeFeeFlat;
-        } else if (copy.type === 'buy' && copy.buyPrice) { totalBuyPrice += copy.buyPrice * copy.quantity; }
-        return copy;
-      });
-      const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-      const { tax, total } = calculateTotalPayment(subtotal);
-      const tempOrder = { ...order, rentalEndDate: newEndDate, items: updatedItems, subtotal, tax, total, invoiceBlocks: undefined };
-      const blocks = getOrGenerateInvoiceBlocks(tempOrder);
-      const bt = (blocks || []).reduce((a: any, b: any) => ({ total: a.total + (Number(b.total) || 0) }), { total: 0 });
-      const newTotal = (blocks || []).length > 0 ? bt.total : total;
-      return { newTotal, diff: newTotal - (Number(order.total) || 0) };
+      // 確定処理(computeExtension)と完全に同じ計算（プレビューと確定額のズレを根絶。E2:
+      // 手動追加費用・入金済み印込み / E1: 手動単価の按分維持）。
+      const { total } = computeExtension(order, newEndDate);
+      return { newTotal: total, diff: total - (Number(order.total) || 0) };
     } catch { return null; }
   }, [newEndDate, order]);
 
@@ -235,84 +221,26 @@ function OrderDetailMobile() {
 
   const handleConfirmExtension = async () => {
     if (!order.rentalStartDate || !order.rentalEndDate) return;
-    
-    const currentEnd = parseDateLocal(order.rentalEndDate);
-    const selectedEnd = parseDateLocal(newEndDate);
-
-    if (isNaN(selectedEnd.getTime())) {
-      setExtendingError("日付を正しく入力してください。");
+    // 返却手続き進行中(回収中/検品待ち/集荷依頼あり)は延長不可（E6: 返却中の再課金を防ぐ）。
+    if (!canExtendOrder(order)) {
+      setExtendingError("返却手続き中のため延長できません。");
       return;
     }
-
-    if (selectedEnd < currentEnd) {
-      setExtendingError("延長日は現在の返却予定日以降の日付を選択してください。");
+    const dateError = validateExtensionDate(order, newEndDate);
+    if (dateError) {
+      setExtendingError(dateError);
       return;
     }
 
     try {
-      const hasVehicle = order.items.some(i => isVehicleCategory(i.category) && i.type === 'rent');
-      let totalRentalPrice = 0;
-      let totalBuyPrice = 0;
-      let totalGuaranteeFee = 0;
-
-      const updatedItems = order.items.map(item => {
-        const copy = { ...item };
-        if (copy.type === 'rent' && copy.rentPrice) {
-          const { totalPrice: itemTotal, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(
-            copy.rentPrice,
-            order.rentalStartDate,
-            newEndDate,
-            hasVehicle,
-            isVehicleCategory(copy.category),
-            copy.rentPriceLongTerm
-          );
-          copy.monthlyBreakdown = breakdown;
-          copy.calculatedPrice = itemTotal;
-          copy.rentalDays = totalActualDays;
-          copy.billedDays = totalBilledDays;
-          totalRentalPrice += itemTotal * copy.quantity;
-          
-          if (copy.guaranteeFeeFlat) {
-            totalGuaranteeFee += copy.guaranteeFeeFlat;
-          }
-        } else if (copy.type === 'buy' && copy.buyPrice) {
-          totalBuyPrice += copy.buyPrice * copy.quantity;
-        }
-        return copy;
-      });
-
-      const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-      const { tax, total } = calculateTotalPayment(subtotal);
-
-      // Regenerate invoice blocks for the extended period
-      const tempOrder = {
-        ...order,
+      // 共通ロジック（プレビューと同一計算・手動単価按分・入金済み印/手動費用の引き継ぎ込み）。
+      const { updatedItems, newInvoiceBlocks, subtotal, tax, total } = computeExtension(order, newEndDate);
+      await updateOrder(order.id, {
         rentalEndDate: newEndDate,
         items: updatedItems,
         subtotal,
         tax,
         total,
-        invoiceBlocks: undefined
-      };
-      // 延長で作り直すブロックにも、元の入金済み印・手動追加費用を月ごとに引き継ぐ
-      //（延長で既入金月が未収に戻る／admin 手動追加費用が消えるのを防ぐ。C6）。
-      const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
-
-      // 燃料補給費(order.fuelCharge)・破損紛失弁償費(order.compensationCharge)は
-      // getOrGenerateInvoiceBlocks がブロックの extraCosts に計上する。合計は items 再計算ではなく
-      // 生成済みブロックの合算を正本とし、延長時にこれらの追加費用が脱落（過少請求）しないようにする。
-      const bt = (newInvoiceBlocks || []).reduce(
-        (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
-        { subtotal: 0, tax: 0, total: 0 }
-      );
-      const hasBlocks = (newInvoiceBlocks || []).length > 0;
-
-      await updateOrder(order.id, {
-        rentalEndDate: newEndDate,
-        items: updatedItems,
-        subtotal: hasBlocks ? bt.subtotal : subtotal,
-        tax: hasBlocks ? bt.tax : tax,
-        total: hasBlocks ? bt.total : total,
         invoiceBlocks: newInvoiceBlocks
       });
 
@@ -643,6 +571,7 @@ function OrderDetailMobile() {
               レンタル操作
             </h3>
             <div className="grid grid-cols-2 gap-3">
+              {canExtendOrder(order) && (
               <button
                 onClick={handleOpenExtension}
                 className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-900/30 dark:hover:bg-slate-900/50 hover:border-primary dark:hover:border-primary transition-all active:scale-[0.98]"
@@ -650,6 +579,7 @@ function OrderDetailMobile() {
                 <span className="material-symbols-outlined text-primary text-[24px]">more_time</span>
                 <span className="text-xs font-bold">期間延長</span>
               </button>
+              )}
               
               {canStartReturn && (
                 <Link
@@ -853,7 +783,7 @@ function OrderDetailMobile() {
                   <input 
                     type="date"
                     value={newEndDate}
-                    min={order.rentalEndDate || undefined}
+                    min={extensionMinDate(order)}
                     onChange={(e) => {
                       setNewEndDate(e.target.value);
                       setExtendingError("");

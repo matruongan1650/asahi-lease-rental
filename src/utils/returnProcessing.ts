@@ -14,7 +14,7 @@ import { isVehicleCategory } from "./productUtils";
  * 例: 当初標準3万→override2.4万(=0.8)、半月返却で標準1.5万 → 1.5万×0.8=1.2万。
  * 当初標準が0/未override は按分せず newTotal をそのまま返す。
  */
-function prorateOverride(item: any, order: any, newTotal: number, hasVehicle: boolean): number {
+export function prorateOverride(item: any, order: any, newTotal: number, hasVehicle: boolean): number {
   if (!item?.priceOverride || !(Number(item.calculatedPrice) > 0)) return newTotal;
   const naturalOld = calculateRentalPrice(
     item.rentPrice || 0,
@@ -250,6 +250,7 @@ export async function finalizePartialReturn(
       tax: ft.tax,
       total: ft.total,
       status: "返却済",
+      minDaysHasVehicle, // 最低課金日数の基準を注文へ永続化（後続の延長・再生成でも 3⇔10 がブレない）
       actualReturnDate,
       invoiceBlocks: newInvoiceBlocks,
       requestedReturn: {},
@@ -299,6 +300,7 @@ export async function finalizePartialReturn(
       tax: rt.tax,
       total: rt.total,
       status: remainingStatus,
+      minDaysHasVehicle, // 継続注文にも基準を永続化（E4）
       invoiceBlocks: remainingInvoiceBlocks,
       requestedReturn: {},
       // ★itemIssues は継続注文に載せない（返却分=-R 注文に既に保存済み）。載せると同じ破損/紛失を

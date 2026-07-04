@@ -9,6 +9,7 @@ import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGener
 import OrderBus from "../../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { isFullyReturned, isReturnEligible } from "../../utils/orderStatus";
+import { computeExtension, validateExtensionDate, canExtendOrder, extensionMinDate } from "../../utils/extendRental";
 
 // PC 用 注文詳細（お客様デスクトップサイト）。
 // 期間延長・帳票表示・請求内訳・検品記録などの処理はモバイル版と完全同一。レイアウトのみ2カラム化。
@@ -151,44 +152,14 @@ export default function OrderDetailDesktop() {
 
   const handleConfirmExtension = async () => {
     if (!order.rentalStartDate || !order.rentalEndDate) return;
-    const currentEnd = parseDateLocal(order.rentalEndDate);
-    const selectedEnd = parseDateLocal(newEndDate);
-    if (isNaN(selectedEnd.getTime())) { setExtendingError("日付を正しく入力してください。"); return; }
-    if (selectedEnd < currentEnd) { setExtendingError("延長日は現在の返却予定日以降の日付を選択してください。"); return; }
+    // 返却手続き進行中(回収中/検品待ち/集荷依頼あり)は延長不可（E6）。
+    if (!canExtendOrder(order)) { setExtendingError("返却手続き中のため延長できません。"); return; }
+    const dateError = validateExtensionDate(order, newEndDate);
+    if (dateError) { setExtendingError(dateError); return; }
     try {
-      const hasVehicle = order.items.some((i) => isVehicleCategory(i.category) && i.type === "rent");
-      let totalRentalPrice = 0;
-      let totalBuyPrice = 0;
-      let totalGuaranteeFee = 0;
-      const updatedItems = order.items.map((item) => {
-        const copy = { ...item };
-        if (copy.type === "rent" && copy.rentPrice) {
-          const { totalPrice: itemTotal, breakdown, totalBilledDays, totalActualDays } = calculateRentalPrice(
-            copy.rentPrice, order.rentalStartDate, newEndDate, hasVehicle, isVehicleCategory(copy.category), copy.rentPriceLongTerm
-          );
-          copy.monthlyBreakdown = breakdown;
-          copy.calculatedPrice = itemTotal;
-          copy.rentalDays = totalActualDays;
-          copy.billedDays = totalBilledDays;
-          totalRentalPrice += itemTotal * copy.quantity;
-          if (copy.guaranteeFeeFlat) totalGuaranteeFee += copy.guaranteeFeeFlat;
-        } else if (copy.type === "buy" && copy.buyPrice) {
-          totalBuyPrice += copy.buyPrice * copy.quantity;
-        }
-        return copy;
-      });
-      const subtotal = totalRentalPrice + totalBuyPrice + totalGuaranteeFee;
-      const { tax, total } = calculateTotalPayment(subtotal);
-      const tempOrder = { ...order, rentalEndDate: newEndDate, items: updatedItems, subtotal, tax, total, invoiceBlocks: undefined };
-      // 延長で作り直すブロックにも元の入金済み印・手動追加費用を引き継ぐ（C6）。
-      const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
-      // 燃料補給費・破損紛失弁償費はブロックの extraCosts に計上されるため、合計は生成済みブロックの合算を正本とする（過少請求防止）。
-      const bt = (newInvoiceBlocks || []).reduce(
-        (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
-        { subtotal: 0, tax: 0, total: 0 }
-      );
-      const hasBlocks = (newInvoiceBlocks || []).length > 0;
-      await updateOrder(order.id, { rentalEndDate: newEndDate, items: updatedItems, subtotal: hasBlocks ? bt.subtotal : subtotal, tax: hasBlocks ? bt.tax : tax, total: hasBlocks ? bt.total : total, invoiceBlocks: newInvoiceBlocks });
+      // 共通ロジック（モバイルと同一計算。手動単価按分・入金済み印/手動費用の引き継ぎ込み）。
+      const { updatedItems, newInvoiceBlocks, subtotal, tax, total } = computeExtension(order, newEndDate);
+      await updateOrder(order.id, { rentalEndDate: newEndDate, items: updatedItems, subtotal, tax, total, invoiceBlocks: newInvoiceBlocks });
       setIsExtending(false);
       void alertDialog("レンタル期間を延長しました。");
     } catch (err) {
@@ -490,9 +461,11 @@ export default function OrderDetailDesktop() {
             <section className={card}>
               <h3 className={sectionTitle}><span className="material-symbols-outlined text-[16px]">touch_app</span>レンタル操作</h3>
               <div className="grid grid-cols-2 gap-3">
-                <button onClick={handleOpenExtension} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
-                  <span className="material-symbols-outlined text-primary text-[24px]">more_time</span><span className="text-xs font-bold">期間延長</span>
-                </button>
+                {canExtendOrder(order) && (
+                  <button onClick={handleOpenExtension} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
+                    <span className="material-symbols-outlined text-primary text-[24px]">more_time</span><span className="text-xs font-bold">期間延長</span>
+                  </button>
+                )}
                 {canStartReturn && (
                   <Link to={`/return/${order.id}`} className="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all">
                     <span className="material-symbols-outlined text-primary text-[24px]">assignment_return</span><span className="text-xs font-bold">返却手続き</span>
@@ -539,7 +512,7 @@ export default function OrderDetailDesktop() {
                 <div><p className="text-xs text-slate-500 mb-1">現在の返却予定日</p><p className="font-bold">{order.rentalEndDate?.replace(/-/g, "/")}</p></div>
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">新しい返却予定日</label>
-                  <input type="date" value={newEndDate} min={order.rentalEndDate || undefined} onChange={(e) => { setNewEndDate(e.target.value); setExtendingError(""); }} className="w-full bg-slate-50 border border-slate-200 rounded-lg h-10 px-3 font-medium outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
+                  <input type="date" value={newEndDate} min={extensionMinDate(order)} onChange={(e) => { setNewEndDate(e.target.value); setExtendingError(""); }} className="w-full bg-slate-50 border border-slate-200 rounded-lg h-10 px-3 font-medium outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
                 </div>
                 {extendingError && <p className="text-xs text-red-500 font-bold">{extendingError}</p>}
               </div>
