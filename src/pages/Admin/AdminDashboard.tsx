@@ -26,6 +26,7 @@ import AdminMaintenance from "./AdminMaintenance";
 import AdminSuppliers from "./AdminSuppliers";
 import AdminVendors from "./AdminVendors";
 import AdminSettings from "./AdminSettings";
+import AdminAuditLog from "./AdminAuditLog";
 import { buildAdminNotifications } from "../../utils/notifications";
 import { isClosedOrder } from "../../utils/orderStatus";
 import { useNotificationReads } from "../../lib/notificationReads";
@@ -75,7 +76,7 @@ export default function AdminDashboard() {
     add(can(2), ["orders", "sales", "invoices", "collection"]);
     add(can(3), ["repair", "maintenance", "field_report"]);
     add(can(4), ["users", "customers", "suppliers", "repairers"]);
-    add(can(5), ["settings"]);
+    add(can(5), ["settings", "audit"]);
     if (allowed.size === 0) allowed.add("dashboard");
     return allowed;
   }, [currentUser, roleRows]);
@@ -167,6 +168,7 @@ export default function AdminDashboard() {
     repairers: { title: "修理業者管理", sub: "提携修理工場および外注費用の管理" },
     settings: { title: "システム設定・データ連携", sub: "消費税・通知ルールおよびデータ同期管理" },
     security_goods: { title: "保安品管理", sub: "保安品マスターデータの詳細" },
+    audit: { title: "操作ログ", sub: "だれが・いつ・なにを変更したかの記録（90日保持）" },
   };
 
   const activeMeta = tabTitles[activeTab] || { title: "管理コンソール", sub: "ASAHI LEASE" };
@@ -263,6 +265,7 @@ export default function AdminDashboard() {
             {activeTab === "suppliers" && <AdminSuppliers />}
             {activeTab === "repairers" && <AdminVendors />}
             {activeTab === "settings" && <AdminSettings />}
+            {activeTab === "audit" && <AdminAuditLog />}
 
             {activeTab === "security_goods" && (
               <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-center text-slate-500 flex flex-col items-center h-[60vh] justify-center">

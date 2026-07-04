@@ -3,6 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/order_mail.php';
 require_once __DIR__ . '/fcm.php'; // スタッフ APK への FCM プッシュ（サービスアカウント未設定なら no-op）
+require_once __DIR__ . '/audit.php'; // 操作ログ（監査ログ）を server 側で記録
 
 require_api_token();
 
@@ -36,9 +37,9 @@ try {
         // orders は発注者(userId)一致、users は自分のレコードのみ。トークン未提示(旧クライアント/移行中)は
         // 後方互換で従来どおり全件返す（強制は全クライアント更新後の別フェーズ）。
         $cu = current_user();
-        // pushTokens は新設ストアで旧クライアント互換が不要 → フラグに関係なく常に fail-closed。
-        // 特権ロール(admin/staff)のみ読める（共有 api_token だけでスタッフ端末のFCMトークン一覧を取得させない）。
-        if ($name === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
+        // pushTokens / auditLogs は新設ストアで旧クライアント互換が不要 → フラグに関係なく常に fail-closed。
+        // 特権ロール(admin/staff)のみ読める（共有 api_token だけで FCMトークン一覧・操作ログを取得させない）。
+        if (in_array($name, ['pushTokens', 'auditLogs'], true) && !($cu && is_privileged_role($cu['role']))) {
             $out = [];
         }
         // enforce_user_token=true 時は sync.php と同じ fail-closed を GET にも適用（トークン未提示は
@@ -98,6 +99,10 @@ try {
             json_out(['error' => 'record with id required'], 400);
         }
         $id = (string) $body['id'];
+        // 監査ログ(auditLogs)は server 内部専用。クライアントからの書き込みは一切拒否（改竄防止）。
+        if ($name === 'auditLogs') {
+            json_out(['error' => 'forbidden'], 403);
+        }
         $previous = null;
         if ($name === 'orders' || $name === 'returnInspections') {
             // deleted=0 で絞らない: ソフト削除済みの行も「存在し所有者がいる」とみなして所有権判定する。
@@ -110,6 +115,17 @@ try {
                 if (is_array($decoded)) {
                     $previous = $decoded;
                 }
+            }
+        }
+        // 監査ログ用の変更前レコード（対象ストアのみ・現行の live 行）。create/update 判定にも使う。
+        $auditPrev = null;
+        if (is_audited_store($name)) {
+            $apStmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND id = ? AND deleted = 0");
+            $apStmt->execute([$name, $id]);
+            $apRaw = $apStmt->fetchColumn();
+            if (is_string($apRaw) && $apRaw !== '') {
+                $apDec = json_decode($apRaw, true);
+                if (is_array($apDec)) $auditPrev = $apDec;
             }
         }
         // 書き込みの所有権チェック。有効な顧客トークンを提示している非特権ユーザー(customer/customer_staff)は
@@ -202,6 +218,8 @@ try {
         );
         $stmt->execute([$name, $id, json_encode($body, JSON_UNESCAPED_UNICODE), $rev]);
         $pdo->commit();
+        // 操作ログ記録（本体コミット後・自前 txn。失敗しても応答は壊さない）。$body は所有権固定後の保存値。
+        audit_log($pdo, $name, $id, $auditPrev === null ? 'create' : 'update', $auditPrev, $body, $cu);
         $mail = ['sent' => false];
         if ($name === 'orders') {
             try {
@@ -278,12 +296,27 @@ try {
         if (!is_string($id) || $id === '') {
             json_out(['error' => 'id required'], 400);
         }
+        // 監査ログ(auditLogs)は server 内部専用。クライアントからの削除は一切拒否（改竄防止）。
+        if ($name === 'auditLogs') {
+            json_out(['error' => 'forbidden'], 403);
+        }
         // 削除も所有権チェック（POST と同様）。非特権顧客は自分の orders / 自分の users のみ削除可。
         $cu = current_user();
         // pushTokens の削除も特権ロールのみ（POST と同じ fail-closed。スタッフ端末の通知登録を
         // 共有トークンだけで剥がされないように）。
         if ($name === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
             json_out(['error' => 'forbidden'], 403);
+        }
+        // 監査ログ用に削除前レコードを取得（対象ストアのみ・ラベル生成用）。
+        $auditDelPrev = null;
+        if (is_audited_store($name)) {
+            $adStmt = $pdo->prepare("SELECT data FROM records WHERE store = ? AND id = ? AND deleted = 0");
+            $adStmt->execute([$name, $id]);
+            $adRaw = $adStmt->fetchColumn();
+            if (is_string($adRaw) && $adRaw !== '') {
+                $adDec = json_decode($adRaw, true);
+                if (is_array($adDec)) $auditDelPrev = $adDec;
+            }
         }
         if ($cu && !is_privileged_role($cu['role'])) {
             // デフォルト拒否: 非特権顧客が削除できるのは自分の orders / users のみ。
@@ -328,6 +361,10 @@ try {
         $stmt = $pdo->prepare("UPDATE records SET deleted = 1, rev = ? WHERE store = ? AND id = ?");
         $stmt->execute([$rev, $name, $id]);
         $pdo->commit();
+        // 操作ログ記録（削除。対象ストアかつ実在した行のみ）。
+        if ($auditDelPrev !== null) {
+            audit_log($pdo, $name, $id, 'delete', $auditDelPrev, null, $cu);
+        }
         json_out(['ok' => true]);
     }
 

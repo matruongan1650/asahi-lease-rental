@@ -38,7 +38,8 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     "walkinReturns",
     "returnInspections",
     "roles",
-    "systemSettings"
+    "systemSettings",
+    "auditLogs"
   ];
 
   // 1. Subscribe to orders via the shared XServer/API-backed OrderBus.

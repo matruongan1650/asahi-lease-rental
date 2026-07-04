@@ -23,6 +23,7 @@ export type AdminTab =
   | "field_report"
   | "suppliers"
   | "repairers"
+  | "audit"
   | "settings";
 
 interface AdminSidebarProps {
@@ -91,7 +92,10 @@ export const menuGroups: { title: string; items: SidebarItem[] }[] = [
   },
   {
     title: "システム",
-    items: [{ id: "settings", label: "設定・権限", icon: "settings" }],
+    items: [
+      { id: "audit", label: "操作ログ", icon: "history" },
+      { id: "settings", label: "設定・権限", icon: "settings" },
+    ],
   },
 ];
 

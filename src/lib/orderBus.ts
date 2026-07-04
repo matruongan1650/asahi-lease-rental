@@ -45,6 +45,7 @@ export type BusStore =
   | "walkinReturns"
   | "returnInspections"
   | "pushTokens"
+  | "auditLogs"
   | "stockIn"
   | "stockOut"
   | "assets"

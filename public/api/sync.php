@@ -55,9 +55,9 @@ try {
         if (($scopeCustomer || $denyTokenless) && ($store === 'staffMessages' || $store === 'mailLogs')) {
             continue;
         }
-        // pushTokens(スタッフ端末の FCM トークン)は特権ロール以外へ一切配信しない。
+        // pushTokens(FCMトークン) / auditLogs(操作ログ)は特権ロール以外へ一切配信しない。
         // 新設ストアで旧クライアント互換が不要なため、enforce フラグに関係なく常に fail-closed。
-        if ($store === 'pushTokens' && !($cu && is_privileged_role($cu['role']))) {
+        if (in_array($store, ['pushTokens', 'auditLogs'], true) && !($cu && is_privileged_role($cu['role']))) {
             continue;
         }
         // 検品(returnInspections)・持込返却(walkinReturns)は自分の注文に紐づくものだけ配信する（他顧客の PII 漏洩防止）。
