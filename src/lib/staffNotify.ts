@@ -11,6 +11,7 @@ import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { PushNotifications } from "@capacitor/push-notifications";
 import OrderBus from "./orderBus";
+import { getUserToken } from "./dataBackend";
 import type { AppNotification } from "../utils/notifications";
 
 const CHANNEL_ID = "staff-alerts";
@@ -98,6 +99,12 @@ export async function initStaffPush(userId: string): Promise<void> {
     await PushNotifications.addListener("registrationError", (e) => {
       console.warn("[push] registration error", e);
     });
+    // ユーザートークン(auth.php)が保存されるまで待ってから register する。login の acquireUserToken は
+    // 非同期(fire-and-forget)なため、未保存のまま pushTokens を POST すると X-User-Token 無し→403 になり、
+    // OrderBus は 4xx を非リトライで破棄する（＝トークンが永久に未登録になる）。最大 ~10秒待つ。
+    for (let i = 0; i < 40 && !getUserToken(); i++) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
     await PushNotifications.register();
     // フォアグラウンド受信は何もしない: アプリ起動中は既存のローカル通知(useStaffNotificationAlerts)が
     // 同内容を鳴らすため、二重通知を避ける。FCM はバックグラウンド/終了時に OS が通知欄へ表示する。
