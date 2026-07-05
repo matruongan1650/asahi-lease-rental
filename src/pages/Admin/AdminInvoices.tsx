@@ -374,10 +374,10 @@ export default function AdminInvoices() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Btn variant="secondary" icon="receipt_long" disabled={!selectedCompany || !selectedMonth} onClick={() => openB2B("summary")}>
-            総合請求書
+            請求総括表
           </Btn>
           <Btn variant="primary" icon="list_alt" disabled={!selectedCompany || !selectedMonth} onClick={() => openB2B("detailed")}>
-            内訳請求書
+            請求書（総括＋現場別）
           </Btn>
           {(!selectedCompany || !selectedMonth) && (
             <span className="text-xs font-semibold text-slate-400">企業と対象月を選択すると発行できます</span>

@@ -4,16 +4,23 @@ import { ensureMonthlyBreakdowns, getOrGenerateInvoiceBlocks, orderMonthKey, get
 
 // 消費税率のラベル（"10%" 等）。税額計算は getTaxRate() に統一済みなので表示も動的にする。
 const taxPctLabel = () => `${Math.round(getTaxRate() * 100)}%`;
-import { getItemUnit } from "./productUtils";
 
+// ============================================================
+// 発行元（自社）情報・振込先。実際の請求書（PDF）と同じ値に揃える。
+// ============================================================
 const ISSUER = {
   name: "アサヒリース 株式会社",
   zip: "〒194-0021",
   address1: "東京都町田市中町1-30-8 菅井町田ビル3-Ｄ",
-  tel: "042-709-3221",
-  fax: "042-709-3222",
-  regNo: "T1234567890123",
+  tel: "042-850-9827",
+  fax: "042-850-9837",
+  regNo: "T3020001111097", // インボイス登録番号
 };
+
+// お振込先（銀行明細どおり）。
+const BANK_LINE = "三井住友銀行 町田支店 普通 8136136 アサヒリース(カ";
+const BANK_NOTE = "誠に恐れ入りますが振込手数料は貴社にてご負担をお願いいたします。";
+const THANKS = "毎度ありがとうございます。下記の通りご請求申し上げます。";
 
 const labelDate = () => new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" });
 function todayShort() {
@@ -21,46 +28,94 @@ function todayShort() {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function generateInvoiceNo(prefix: string, seed: string) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffffffff;
-  const y = new Date().getFullYear();
-  return `${prefix}-${y}-${String(Math.abs(h) % 100000).padStart(5, "0")}`;
-}
-
 function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, c => ({
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c] as string));
 }
 
-function thStyle(extra = "") {
-  return `border:1px solid #94a3b8;background:#f1f5f9;padding:6px 8px;font-weight:bold;text-align:center;font-size:11px;${extra}`;
-}
-function tdStyle(extra = "") {
-  return `border:1px solid #cbd5e1;padding:6px 8px;font-size:11px;${extra}`;
+function yen(v: number) {
+  return Math.round(Number(v) || 0).toLocaleString("ja-JP");
 }
 
-function totalsRow(label: string, value: number, emphasize = false) {
-  return `
-    <div style="display:flex;justify-content:space-between;padding:8px 12px;${emphasize ? "background:#1e293b;color:#fff;font-weight:bold;font-size:13px;" : "font-size:11px;"}">
-      <span>${escapeHtml(label)}</span>
-      <span style="font-family:ui-monospace,'SFMono-Regular','Consolas',monospace;">¥${value.toLocaleString()}</span>
-    </div>
-  `;
+// 月キー "YYYY-MM" → 締切日ラベル "YYYY年M月DD日 締切分"（DD=当月末日）。
+function closingLabel(monthPeriod?: string): string {
+  const m = String(monthPeriod || "").match(/^(\d{4})-(\d{1,2})/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const lastDay = new Date(y, mo, 0).getDate();
+    return `${y}年${mo}月${lastDay}日 締切分`;
+  }
+  // 月未指定（全期間）は発行日を締切とみなす。
+  const d = new Date();
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 締切分`;
 }
 
+// "YYYY-MM-DD"（/区切り可）→ "M/D"。納品日の短縮表示に使う。
+function fmtMD(dateStr?: string): string {
+  const m = String(dateStr || "").replace(/\//g, "-").match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return "";
+  return `${Number(m[2])}/${Number(m[3])}`;
+}
+
+// ------------------------------------------------------------
+// 高さ見積りによるページ分割
+// 固定 A4 高（overflow:hidden）で行が切れないよう、行数固定ではなく推定高さで詰める。
+// 現場名・商品名が複数行に折り返しても A4 内に収める（超過分は次ページへ）。
+// ------------------------------------------------------------
+// 全角=1・半角≈0.55 で実効文字幅を数える（日本語主体セルの折り返し行数推定用）。
+function effLen(s: string): number {
+  let n = 0;
+  for (const ch of String(s ?? "")) n += ch.charCodeAt(0) < 128 ? 0.55 : 1;
+  return n;
+}
+// 1セルの折り返し行数（perLine=1行に収まる実効文字数の目安）。最低1行。
+function estLines(s: string, perLine: number): number {
+  return Math.max(1, Math.ceil(effLen(s) / perLine));
+}
+// items を「推定高さ合計が budget を超えない」チャンクへ分割。1ページ最低1件は必ず載せる。
+function packByHeight<T>(items: T[], estH: (it: T) => number, budget: number): T[][] {
+  const pages: T[][] = [];
+  let cur: T[] = [];
+  let h = 0;
+  for (const it of items) {
+    const ih = estH(it);
+    if (cur.length > 0 && h + ih > budget) { pages.push(cur); cur = []; h = 0; }
+    cur.push(it);
+    h += ih;
+  }
+  if (cur.length > 0) pages.push(cur);
+  if (pages.length === 0) pages.push([]);
+  return pages;
+}
+
+// 受注番号（顧客提出用）: 手入力の receiptNumber を優先し、無ければ社内伝票番号にフォールバック。
+function receiptNoOf(order: any): string {
+  return String(order?.receiptNumber || order?.orderNumber || "").trim();
+}
+
+// 現場名・工事番号を 1 セルにまとめる（総括表用）。「工事番号 現場名」の順で結合。
+function siteConstructionLabel(order: any): string {
+  const cn = String(order?.constructionNumber || "").trim();
+  const sn = String(order?.siteName || "").trim();
+  return [cn, sn].filter(Boolean).join(" ") || "-";
+}
+
+// ------------------------------------------------------------
+// 共有スタイル
+// ------------------------------------------------------------
 function pageBaseStyle(): string {
   return `
     width:${A4_PX_WIDTH}px;
     height:${A4_PX_HEIGHT}px;
     background:#ffffff;
-    color:#0f172a;
-    padding:48px 56px;
+    color:#111827;
+    padding:40px 56px 32px;
     font-family:'Noto Sans JP',sans-serif;
     font-size:12px;
     box-sizing:border-box;
-    line-height:1.55;
+    line-height:1.5;
     position:relative;
     overflow:hidden;
     display:flex;
@@ -68,672 +123,458 @@ function pageBaseStyle(): string {
   `;
 }
 
-function topHeaderHtml({ title, companyName, invoiceNo, periodLabel }: { title: string; companyName: string; invoiceNo: string; periodLabel?: string }) {
+// 表の基本罫線（濃いグレー）。
+const GRID = "#4b5563";
+const GRIDL = "#9ca3af";
+
+function thCell(extra = "") {
+  return `border:1px solid ${GRID};background:#eef2f5;padding:4px 6px;font-weight:700;text-align:center;font-size:10.5px;${extra}`;
+}
+function tdCell(extra = "") {
+  // table-layout:fixed で列幅を固定するため、長い語（ASCII含む）はセル内で折り返す。
+  return `border:1px solid ${GRIDL};padding:4px 6px;font-size:10.5px;word-break:break-word;overflow-wrap:anywhere;${extra}`;
+}
+
+// 発行元ブロック（右上）。登録番号を含めるかを選べる。
+function issuerBlockHtml(opts: { withRegNo?: boolean } = {}): string {
   return `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
-      <div style="flex:1;">
-        <h1 style="font-size:26px;font-weight:900;letter-spacing:6px;border-bottom:3px solid #0f172a;padding-bottom:6px;margin:0;display:inline-block;">${escapeHtml(title)}</h1>
-        <div style="margin-top:16px;font-size:18px;font-weight:bold;">
-          <span style="border-bottom:2px solid #0f172a;padding:0 8px 4px 8px;">${escapeHtml(companyName)} 御中</span>
-        </div>
-        <div style="margin-top:12px;font-size:11px;color:#475569;">下記の通りご請求申し上げます。</div>
-        ${periodLabel ? `<div style="margin-top:4px;font-size:11px;color:#475569;">対象期間: <span style="font-weight:bold;color:#0f172a;">${escapeHtml(periodLabel)}</span></div>` : ""}
-      </div>
-      <div style="font-size:10px;text-align:right;line-height:1.7;min-width:240px;flex-shrink:0;">
-        <div>請求書番号: <span style="font-weight:bold;color:#0f172a;font-family:ui-monospace,monospace;">${escapeHtml(invoiceNo)}</span></div>
-        <div>発行日: ${escapeHtml(labelDate())}</div>
-        <div style="margin-top:8px;text-align:left;display:inline-block;border-left:3px solid #3A4DE8;padding-left:8px;">
-          <div style="font-weight:bold;font-size:13px;letter-spacing:1px;">${escapeHtml(ISSUER.name)}</div>
-          <div style="color:#475569;font-size:9.5px;">${escapeHtml(ISSUER.zip)}</div>
-          <div style="color:#475569;font-size:9.5px;">${escapeHtml(ISSUER.address1)}</div>
-          <div style="color:#475569;font-size:9.5px;">TEL: ${escapeHtml(ISSUER.tel)} / FAX: ${escapeHtml(ISSUER.fax)}</div>
-          <div style="color:#475569;font-size:9.5px;">登録番号: ${escapeHtml(ISSUER.regNo)}</div>
-        </div>
-      </div>
+    <div style="text-align:left;font-size:10px;line-height:1.65;color:#1f2937;">
+      <div style="font-weight:800;font-size:13px;letter-spacing:1px;color:#111827;">${escapeHtml(ISSUER.name)}</div>
+      <div>${escapeHtml(ISSUER.zip)}</div>
+      <div>${escapeHtml(ISSUER.address1)}</div>
+      <div>TEL ${escapeHtml(ISSUER.tel)}</div>
+      <div>FAX ${escapeHtml(ISSUER.fax)}</div>
+      ${opts.withRegNo ? `<div>登録番号 ${escapeHtml(ISSUER.regNo)}</div>` : ""}
     </div>
   `;
 }
 
-function computeRenterPeriod(renter: RenterGroup): string {
-  const starts = renter.orders.map((o: any) => o.rentalStartDate).filter(Boolean) as string[];
-  const ends = renter.orders.map((o: any) => o.rentalEndDate).filter(Boolean) as string[];
-  if (starts.length === 0 || ends.length === 0) return "";
-  // 区切りが "/" と "-" で混在しても正しく前後判定できるよう正規化キーで比較する。
-  const norm = (d: string) => String(d || "").replace(/\//g, "-");
-  starts.sort((a, b) => norm(a).localeCompare(norm(b)));
-  ends.sort((a, b) => norm(a).localeCompare(norm(b)));
-  return `${starts[0]} 〜 ${ends[ends.length - 1]}`;
+// 宛先（会社名 御中）ブロック。
+function billToHtml(companyName: string): string {
+  return `
+    <div style="font-size:19px;font-weight:800;letter-spacing:1px;">
+      <span style="border-bottom:1.5px solid #111827;padding:0 40px 3px 4px;">${escapeHtml(companyName)}</span>
+      <span style="font-weight:700;font-size:13px;margin-left:8px;">御中</span>
+    </div>
+  `;
 }
 
-export interface PrintItem {
-  name: string;
-  detail: string;
-  quantity: number | string;
-  unit?: string; // 数量の単位（商品マスタ）。手数料/追加費用行には付けない。
-  unitPrice: number;
-  lineTotal: number;
-  typeLabel: string;
+// 振込先＋注意書き（各ページ下部）。
+function bankFooterHtml(): string {
+  return `
+    <div style="font-size:9.5px;color:#374151;line-height:1.55;">
+      <div>振込先：${escapeHtml(BANK_LINE)}</div>
+      <div>${escapeHtml(BANK_NOTE)}</div>
+    </div>
+  `;
 }
 
-export function getPrintItems(order: any, monthPeriod?: string): PrintItem[] {
-  const items: PrintItem[] = [];
-  const sourceItems = ensureMonthlyBreakdowns(order);
-  
+// ============================================================
+// 明細行データ（現場別請求書 1 品目 = 1 行）
+// ============================================================
+interface InvoiceLineRow {
+  kubun: string;       // 区分（日額/販売/保証料/その他）
+  name: string;        // 商品名
+  qty: number | string;
+  days: number | string; // 期間（日数）
+  deliveryDate: string;  // 納品日（M/D）
+  unitPrice: number | string; // 日額単価（1単位あたり日額）
+  amount: number;      // 金額（税抜・行合計）
+  remarks: string;     // 備考
+}
+
+/**
+ * 注文 1 件の請求明細行を作る。monthPeriod 指定時はその月のブロック、未指定時は全期間で集計。
+ * 日額単価 = breakdown.price / days（1単位・1日あたり）、金額 = 単価 × 数量 × 期間 と一致する。
+ */
+function getInvoiceLineRows(order: any, monthPeriod?: string): InvoiceLineRow[] {
+  const rows: InvoiceLineRow[] = [];
+  const items = ensureMonthlyBreakdowns(order);
+  const deliveryMD = fmtMD(order?.deliveryDate) || fmtMD(order?.rentalStartDate);
+
+  const pushGuarantee = (it: any) => {
+    const g = Number(it?.guaranteeFeeFlat) || 0;
+    if (g > 0) {
+      rows.push({
+        kubun: "保証料", name: `${it.name || "-"} 基本保証料`, qty: 1, days: "", deliveryDate: "",
+        unitPrice: g, amount: g, remarks: "初回のみ",
+      });
+    }
+  };
+
   if (monthPeriod) {
-    const blocks = getOrGenerateInvoiceBlocks(order);
-    const block = blocks.find((b: any) => b.monthPeriod === monthPeriod);
-    if (!block) return [];
-
-    sourceItems.forEach((it: any) => {
-      if (it.type === 'buy') {
-        const orderMonth = orderMonthKey(order);
-        if (orderMonth === monthPeriod) {
-          items.push({
-            name: it.name || "-",
-            detail: "販売品",
-            quantity: it.quantity ?? 1,
-            unit: getItemUnit(it),
-            unitPrice: Number(it.calculatedPrice ?? it.buyPrice) || 0,
-            lineTotal: (Number(it.calculatedPrice ?? it.buyPrice) || 0) * (it.quantity ?? 1),
-            typeLabel: "販売"
-          });
-        }
-      } else if (it.type === 'rent') {
-        const breakdown = it.monthlyBreakdown?.find((b: any) => b.monthStr === monthPeriod);
-        if (breakdown) {
-          const rentalFee = breakdown.price * (it.quantity ?? 1);
-          items.push({
-            name: it.name || "-",
-            detail: `${breakdown.days}日間`,
-            quantity: it.quantity ?? 1,
-            unit: getItemUnit(it),
-            unitPrice: breakdown.price, // unit price for this period
-            lineTotal: rentalFee,
-            typeLabel: "賃貸"
-          });
-
-          const isFirstMonth = it.monthlyBreakdown?.[0]?.monthStr === monthPeriod;
-          if (isFirstMonth && it.guaranteeFeeFlat) {
-            items.push({
-              name: `${it.name || "-"} (基本保証料)`,
-              detail: "初回のみ",
-              // 定額手数料は数量1行で表示する。数量割りすると 単価×数量≠金額 / 端数の単価になるため。
-              quantity: 1,
-              unitPrice: it.guaranteeFeeFlat,
-              lineTotal: it.guaranteeFeeFlat,
-              typeLabel: "手数料"
-            });
-          }
-        }
-      }
-    });
-
-    if (block.extraCosts) {
-      block.extraCosts.forEach((ec: any) => {
-        items.push({
-          name: ec.note || "追加費用",
-          detail: ec.id === "fuel-refill" ? "燃料補給" : ec.id === "compensation-charge" ? "破損・紛失弁償" : "その他",
-          quantity: 1,
-          unitPrice: ec.amount,
-          lineTotal: ec.amount,
-          typeLabel: "手数料"
+    const orderMonth = orderMonthKey(order);
+    items.forEach((it: any) => {
+      const qty = Number(it.quantity ?? 1) || 1;
+      if (it.type === "buy") {
+        if (orderMonth !== monthPeriod) return;
+        const unit = Number(it.calculatedPrice ?? it.buyPrice) || 0;
+        rows.push({
+          kubun: "販売", name: it.name || "-", qty, days: "", deliveryDate: deliveryMD,
+          unitPrice: unit, amount: unit * qty, remarks: it.remarks || "",
         });
-      });
-    }
-
-  } else {
-    // Overall invoice
-    sourceItems.forEach((it: any) => {
-      const price = it.calculatedPrice ?? it.buyPrice ?? 0;
-      const detail = it.type === "rent"
-        ? `${it.rentalDays ?? "-"}日間` + (it.billedDays && it.rentalDays && it.billedDays > it.rentalDays ? ` (請求${it.billedDays}日)` : "")
-        : "販売品";
-        
-      items.push({
-        name: it.name || "-",
-        detail,
-        quantity: it.quantity ?? 1,
-        unit: getItemUnit(it),
-        unitPrice: price,
-        lineTotal: price * (it.quantity ?? 1),
-        typeLabel: it.type === "rent" ? "賃貸" : "販売"
-      });
-
-      if (it.type === 'rent' && it.guaranteeFeeFlat) {
-        items.push({
-          name: `${it.name || "-"} (基本保証料)`,
-          detail: "初回のみ",
-          // 定額手数料は数量1行で表示する（端数単価・単価×数量≠金額を回避）。
-          quantity: 1,
-          unitPrice: it.guaranteeFeeFlat,
-          lineTotal: it.guaranteeFeeFlat,
-          typeLabel: "手数料"
-        });
-      }
-    });
-
-    const blocks = getOrGenerateInvoiceBlocks(order);
-    blocks.forEach((b: any) => {
-      if (b.extraCosts) {
-        b.extraCosts.forEach((ec: any) => {
-          items.push({
-            name: ec.note || "追加費用",
-            detail: `(${b.monthPeriod}) ${ec.id === "fuel-refill" ? "燃料補給" : ec.id === "compensation-charge" ? "破損・紛失弁償" : "その他"}`,
-            quantity: 1,
-            unitPrice: ec.amount,
-            lineTotal: ec.amount,
-            typeLabel: "手数料"
-          });
-        });
-      }
-    });
-  }
-
-  return items;
-}
-
-export interface PrintRow {
-  type: "order-header" | "item-row";
-  order: any;
-  item?: PrintItem;
-  index?: number;
-  isContinuation?: boolean;
-}
-
-/**
- * Split order rows into multiple pages using printable height budget.
- */
-export function paginateRows(rows: PrintRow[], isFirstPageOfRenter: boolean): PrintRow[][] {
-  const pages: PrintRow[][] = [];
-  let currentPageRows: PrintRow[] = [];
-  
-  let i = 0;
-  let isPage1 = isFirstPageOfRenter;
-  
-  while (i < rows.length) {
-    const isFirst = pages.length === 0 && isPage1;
-    // Page 1 has top header + renter info: height ~385px
-    // Continuation pages have smaller header: height ~95px
-    const headerHeight = isFirst ? 385 : 95;
-    const availableHeight = 1027 - headerHeight;
-    
-    let currentHeight = 0;
-    
-    // Check if we split an order and need a continuation header
-    let prevRow: PrintRow | null = null;
-    if (pages.length > 0) {
-      const prevPage = pages[pages.length - 1];
-      prevRow = prevPage[prevPage.length - 1];
-    }
-    
-    let nextRow = rows[i];
-    let needsContinuation = false;
-    if (prevRow && nextRow && nextRow.type === "item-row" && nextRow.order.id === prevRow.order.id) {
-      needsContinuation = true;
-      currentHeight += 35; // order continuation header row height
-    }
-    
-    if (needsContinuation) {
-      currentPageRows.push({
-        type: "order-header",
-        order: nextRow.order,
-        isContinuation: true
-      });
-    }
-    
-    while (i < rows.length) {
-      const row = rows[i];
-      const rowHeight = row.type === "order-header" ? 35 : 45;
-      
-      const isLastRow = (i === rows.length - 1);
-      const totalsNeeded = isLastRow ? 240 : 0;
-      
-      if (currentHeight + rowHeight + totalsNeeded <= availableHeight) {
-        currentPageRows.push(row);
-        currentHeight += rowHeight;
-        i++;
       } else {
-        if (currentPageRows.length === 0 || (currentPageRows.length === 1 && needsContinuation)) {
-          // Force fit at least one row to prevent infinite loop
-          currentPageRows.push(row);
-          currentHeight += rowHeight;
-          i++;
-        }
-        break;
+        const b = it.monthlyBreakdown?.find((x: any) => x.monthStr === monthPeriod);
+        if (!b) return;
+        const days = Number(b.days) || 0;
+        const unitPerDay = days > 0 ? b.price / days : b.price;
+        rows.push({
+          kubun: "日額", name: it.name || "-", qty, days, deliveryDate: deliveryMD,
+          unitPrice: Math.round(unitPerDay),
+          amount: Math.round(b.price * qty), remarks: it.remarks || "",
+        });
+        const isFirstMonth = it.monthlyBreakdown?.[0]?.monthStr === monthPeriod;
+        if (isFirstMonth) pushGuarantee(it);
       }
-    }
-    
-    pages.push(currentPageRows);
-    currentPageRows = [];
-    isPage1 = false;
+    });
+    // 追加費用（弁償費・燃料費・配送料 等）は当月ブロックから。
+    const block = getOrGenerateInvoiceBlocks(order).find((b: any) => b.monthPeriod === monthPeriod);
+    (block?.extraCosts || []).forEach((ec: any) => {
+      rows.push({
+        kubun: "その他", name: ec.itemName || ec.note || "追加費用", qty: 1, days: "", deliveryDate: "",
+        unitPrice: Math.round(Number(ec.amount) || 0), amount: Math.round(Number(ec.amount) || 0), remarks: "",
+      });
+    });
+  } else {
+    // 全期間（月未指定）: 品目の合計値から 1 行ずつ。
+    items.forEach((it: any) => {
+      const qty = Number(it.quantity ?? 1) || 1;
+      if (it.type === "buy") {
+        const unit = Number(it.calculatedPrice ?? it.buyPrice) || 0;
+        rows.push({
+          kubun: "販売", name: it.name || "-", qty, days: "", deliveryDate: deliveryMD,
+          unitPrice: unit, amount: unit * qty, remarks: it.remarks || "",
+        });
+      } else {
+        // 期間・日額単価は「請求日数(billedDays)」基準にする。実日数(rentalDays)で割ると
+        // 最低課金日数が隠れ、日額単価が実単価の数倍に膨らんで表示される（月別ブロックは
+        // breakdown.days=請求日数を使うのと整合させる）。
+        const days = Number(it.billedDays ?? it.rentalDays) || 0;
+        const unitTotal = Number(it.calculatedPrice) || 0; // 1単位あたり期間合計
+        const unitPerDay = days > 0 ? unitTotal / days : (Number(it.rentPrice) || 0);
+        rows.push({
+          kubun: "日額", name: it.name || "-", qty, days: days || "", deliveryDate: deliveryMD,
+          unitPrice: Math.round(unitPerDay),
+          amount: Math.round(unitTotal * qty), remarks: it.remarks || "",
+        });
+        pushGuarantee(it);
+      }
+    });
+    getOrGenerateInvoiceBlocks(order).forEach((b: any) => {
+      (b.extraCosts || []).forEach((ec: any) => {
+        rows.push({
+          kubun: "その他", name: ec.itemName || ec.note || "追加費用", qty: 1, days: "", deliveryDate: "",
+          unitPrice: Math.round(Number(ec.amount) || 0), amount: Math.round(Number(ec.amount) || 0), remarks: "",
+        });
+      });
+    });
   }
-  
-  return pages;
+
+  return rows;
 }
 
+// 注文の当月（または全期間）金額を返す（総括表・請求金額用）。
+function orderTotals(order: any, monthPeriod?: string): { subtotal: number; tax: number; total: number } {
+  const blocks = getOrGenerateInvoiceBlocks(order);
+  const target = monthPeriod ? blocks.filter((b: any) => b.monthPeriod === monthPeriod) : blocks;
+  return target.reduce(
+    (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+    { subtotal: 0, tax: 0, total: 0 },
+  );
+}
+
+// 会社グループ内の全注文をフラット化（総括表の行 = 注文 1 件）。受注番号順で安定ソート。
+function flattenOrders(group: CompanyGroup): any[] {
+  const all = group.renters.flatMap((r) => r.orders);
+  return [...all].sort((a, b) => receiptNoOf(a).localeCompare(receiptNoOf(b), "ja"));
+}
+
+// ============================================================
+// 請求総括表（会社ごとの表紙・一覧）
+// ============================================================
+// 現場名・工事番号セルの折り返しを含めた推定高さで詰める本文予算(px)。A4 固定高から
+// ヘッダ・総額ボックス・フッタ(振込先＋ページ小計)の実測オーバーヘッド分を差し引いた安全値。
+const SUMMARY_BODY_BUDGET_PX = 640;
+
 /**
- * Render Company Summary Cover Page (表紙)
+ * 請求総括表のページ群を生成。会社の全注文を 1 件 1 行で並べ、現場名の折り返し行数を
+ * 見積もって A4 高に収まるよう改ページする（長い現場名でも行が切れない）。
+ * 総額（今回売上額計・消費税・今回御請求額）は 1 枚目のみ表示（2 枚目以降は「一枚目記載」）。
  */
+export function buildCompanySummary(group: CompanyGroup, monthPeriod?: string): HTMLElement[] {
+  const orders = flattenOrders(group);
+  const monthHeader = (() => {
+    const m = String(monthPeriod || "").match(/^(\d{4})-(\d{1,2})/);
+    return m ? `${Number(m[1])}年${Number(m[2])}月` : "全期間";
+  })();
+
+  // 各注文の金額と現場ラベルを先に確定し、現場名の折り返し行数から推定高さで分割。
+  const rowData = orders.map((order) => ({
+    order,
+    t: orderTotals(order, monthPeriod),
+    label: siteConstructionLabel(order),
+  }));
+  // 現場名・工事番号セル(≈256px)は 全角22文字/行、1行=約16px + 余白10px で見積もる。
+  const pages = packByHeight(rowData, (r) => estLines(r.label, 22) * 16 + 10, SUMMARY_BODY_BUDGET_PX);
+  const totalPages = pages.length;
+
+  let runningNo = 0; // ページをまたいで連番（pages.map は順次実行される）。
+  return pages.map((pageRows, pageIdx) => {
+    const host = document.createElement("div");
+    host.setAttribute("style", pageBaseStyle());
+
+    let pageSubtotal = 0, pageTax = 0, pageTotal = 0;
+
+    const bodyRows = pageRows.map((r) => {
+      const t = r.t;
+      pageSubtotal += t.subtotal; pageTax += t.tax; pageTotal += t.total;
+      runningNo++;
+      const person = String(r.order.personName || r.order.employeeName || "").trim();
+      return `
+        <tr>
+          <td style="${tdCell("text-align:center;")}">${runningNo}</td>
+          <td style="${tdCell()}">${escapeHtml(r.label)}</td>
+          <td style="${tdCell("text-align:center;")}">${escapeHtml(person)}${person ? " 様" : ""}</td>
+          <td style="${tdCell("text-align:center;font-family:ui-monospace,monospace;")}">${escapeHtml(receiptNoOf(r.order))}</td>
+          <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;")}">${yen(t.subtotal)}</td>
+          <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;")}">${yen(t.total)}</td>
+        </tr>`;
+    }).join("");
+
+    const isFirst = pageIdx === 0;
+    const grandBox = isFirst
+      ? `
+        <div style="display:flex;">
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};background:#eef2f5;font-weight:700;">今回売上額計</div>
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};border-left:none;background:#eef2f5;font-weight:700;">消費税（${taxPctLabel()}）</div>
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};border-left:none;background:#eef2f5;font-weight:700;">今回御請求額</div>
+        </div>
+        <div style="display:flex;">
+          <div style="flex:1;text-align:right;padding:8px 12px;border:1px solid ${GRID};border-top:none;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;">${yen(group.subtotal)}</div>
+          <div style="flex:1;text-align:right;padding:8px 12px;border:1px solid ${GRID};border-top:none;border-left:none;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;">${yen(group.tax)}</div>
+          <div style="flex:1;text-align:right;padding:8px 12px;border:1px solid ${GRID};border-top:none;border-left:none;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;color:#0f172a;">${yen(group.total)}</div>
+        </div>`
+      : `
+        <div style="display:flex;">
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};background:#eef2f5;font-weight:700;">今回売上額計</div>
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};border-left:none;background:#eef2f5;font-weight:700;">消費税（${taxPctLabel()}）</div>
+          <div style="flex:1;text-align:center;padding:6px;border:1px solid ${GRID};border-left:none;background:#eef2f5;font-weight:700;">今回御請求額</div>
+        </div>
+        <div style="display:flex;">
+          <div style="flex:1;text-align:center;padding:8px 12px;border:1px solid ${GRID};border-top:none;color:#6b7280;">一枚目記載</div>
+          <div style="flex:1;text-align:center;padding:8px 12px;border:1px solid ${GRID};border-top:none;border-left:none;color:#6b7280;">一枚目記載</div>
+          <div style="flex:1;text-align:center;padding:8px 12px;border:1px solid ${GRID};border-top:none;border-left:none;color:#6b7280;">一枚目記載</div>
+        </div>`;
+
+    host.innerHTML = `
+      <!-- ヘッダ -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div style="flex:1;">
+          <div style="text-align:center;font-size:18px;font-weight:800;letter-spacing:8px;margin-bottom:14px;">請求総括表</div>
+          ${billToHtml(group.companyName)}
+        </div>
+        <div style="min-width:230px;flex-shrink:0;margin-left:24px;">${issuerBlockHtml()}</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin:14px 0 8px;">
+        <div style="font-size:10.5px;color:#374151;">${escapeHtml(THANKS)}</div>
+        <div style="font-size:11px;font-weight:700;">${escapeHtml(closingLabel(monthPeriod))}</div>
+      </div>
+
+      <!-- 総額ボックス -->
+      <div style="margin-bottom:14px;">${grandBox}</div>
+
+      <!-- 一覧テーブル -->
+      <div style="flex:1;">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+          <colgroup>
+            <col style="width:52px;" /><col style="width:254px;" /><col style="width:96px;" /><col style="width:84px;" /><col style="width:96px;" /><col style="width:98px;" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th style="${thCell("")}">${escapeHtml(monthHeader)}<br/>番号</th>
+              <th style="${thCell("")}">現場名・工事番号</th>
+              <th style="${thCell("")}">担当者</th>
+              <th style="${thCell("")}">受注番号</th>
+              <!-- 「単価（税抜）」列は実際の請求書に合わせ、注文 1 件の税抜合計(t.subtotal)を表示する
+                   （＝単価ではなく現場ごとの税抜金額。手本の PDF がこの見出しでこの値を出しているため踏襲）。 -->
+              <th style="${thCell("")}">単価（税抜）</th>
+              <th style="${thCell("")}">金額（税込）</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+
+      <!-- フッタ：振込先＋ページ小計 -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:10px;">
+        ${bankFooterHtml()}
+        <div style="width:240px;flex-shrink:0;">
+          <div style="display:flex;justify-content:space-between;padding:3px 8px;border:1px solid ${GRIDL};font-size:10.5px;"><span>小計</span><span style="font-family:ui-monospace,monospace;">${yen(pageSubtotal)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 8px;border:1px solid ${GRIDL};border-top:none;font-size:10.5px;"><span>消費税 小計</span><span style="font-family:ui-monospace,monospace;">${yen(pageTax)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:5px 8px;border:1.5px solid ${GRID};border-top:none;font-weight:800;"><span>合計</span><span style="font-family:ui-monospace,monospace;">${yen(pageTotal)}</span></div>
+        </div>
+      </div>
+
+      <div style="position:absolute;bottom:12px;right:56px;font-size:9px;color:#9ca3af;font-family:ui-monospace,monospace;">${pageIdx + 1} / ${totalPages}</div>
+    `;
+
+    return host;
+  });
+}
+
+// 後方互換：以前の renderCompanyCoverPage は 1 枚の HTMLElement を返していた。総括表 1 枚目を返す。
 export function renderCompanyCoverPage(
   group: CompanyGroup,
-  overallPageCount: number,
+  _overallPageCount?: number,
   monthPeriod?: string,
-  overallPageIndex = 0
+  _overallPageIndex = 0,
 ): HTMLElement {
-  const host = document.createElement("div");
-  host.setAttribute("style", pageBaseStyle());
-
-  const invoiceNoSeed = `${group.companyName}_cover_${monthPeriod ?? ""}`;
-  const invoiceNo = generateInvoiceNo("INV-C", invoiceNoSeed);
-  const periodLabel = monthPeriod ? `${monthPeriod.replace("-", "/")}分` : "全期間分";
-
-  const rows = group.renters
-    .map((r, idx) => `
-      <tr>
-        <td style="${tdStyle('text-align:center;')}">${idx + 1}</td>
-        <td style="${tdStyle('font-weight:600;')}">${escapeHtml(r.personName)} 様</td>
-        <td style="${tdStyle('text-align:center;')}">${r.orders.length} 件</td>
-        <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;font-weight:600;')}">¥${r.total.toLocaleString()}</td>
-      </tr>
-    `)
-    .join("");
-
-  host.innerHTML = `
-    <!-- Top Header -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
-      <div style="flex:1;">
-        <h1 style="font-size:26px;font-weight:900;letter-spacing:6px;border-bottom:3px solid #0f172a;padding-bottom:6px;margin:0;display:inline-block;">請求書</h1>
-        <div style="margin-top:16px;font-size:18px;font-weight:bold;">
-          <span style="border-bottom:2px solid #0f172a;padding:0 8px 4px 8px;">${escapeHtml(group.companyName)} 御中</span>
-        </div>
-        <div style="margin-top:12px;font-size:11px;color:#475569;">下記の通りご請求申し上げます。</div>
-        <div style="margin-top:4px;font-size:11px;color:#475569;">対象期間: <span style="font-weight:bold;color:#0f172a;">${escapeHtml(periodLabel)}</span></div>
-      </div>
-      <div style="font-size:10px;text-align:right;line-height:1.7;min-width:240px;flex-shrink:0;">
-        <div>請求書番号: <span style="font-weight:bold;color:#0f172a;font-family:ui-monospace,monospace;">${escapeHtml(invoiceNo)}</span></div>
-        <div>発行日: ${escapeHtml(labelDate())}</div>
-        <div style="margin-top:8px;text-align:left;display:inline-block;border-left:3px solid #3A4DE8;padding-left:8px;">
-          <div style="font-weight:bold;font-size:13px;letter-spacing:1px;">${escapeHtml(ISSUER.name)}</div>
-          <div style="color:#475569;font-size:9.5px;">${escapeHtml(ISSUER.zip)}</div>
-          <div style="color:#475569;font-size:9.5px;">${escapeHtml(ISSUER.address1)}</div>
-          <div style="color:#475569;font-size:9.5px;">TEL: ${escapeHtml(ISSUER.tel)} / FAX: ${escapeHtml(ISSUER.fax)}</div>
-          <div style="color:#475569;font-size:9.5px;">登録番号: ${escapeHtml(ISSUER.regNo)}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Summary Total Block -->
-    <div style="border:1.5px solid #0f172a;background:#f8fafc;padding:14px;margin-bottom:20px;border-radius:4px;">
-      <h2 style="margin:0;font-size:20px;font-weight:800;color:#1e3a8a;display:flex;justify-content:space-between;align-items:center;">
-        <span>ご請求金額：</span>
-        <span style="font-family:ui-monospace,monospace;font-size:24px;">¥${group.total.toLocaleString()} -</span>
-      </h2>
-      <div style="margin-top:6px;font-size:10.5px;color:#475569;display:flex;justify-content:flex-end;gap:16px;">
-        <span>小計 (税抜): ¥${group.subtotal.toLocaleString()}</span>
-        ${(group.guaranteeFee || 0) > 0 ? `<span>うち保証料: ¥${group.guaranteeFee.toLocaleString()}</span>` : ""}
-        <span>消費税 (${taxPctLabel()}): ¥${group.tax.toLocaleString()}</span>
-      </div>
-    </div>
-
-    <!-- Renter List Table -->
-    <div style="flex:1;">
-      <h3 style="font-size:11.5px;font-weight:bold;color:#334155;margin-bottom:6px;border-left:3px solid #1e3a8a;padding-left:8px;">ご請求内訳（担当者別）</h3>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-        <thead>
-          <tr>
-            <th style="${thStyle('width:50px;')}">No.</th>
-            <th style="${thStyle('text-align:left;')}">ご担当者名</th>
-            <th style="${thStyle('width:120px;')}">注文件数</th>
-            <th style="${thStyle('width:160px;text-align:right;')}">金額（税込）</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-          <tr style="background:#f1f5f9;font-weight:bold;">
-            <td colspan="2" style="${tdStyle('text-align:right;')}">合計</td>
-            <td style="${tdStyle('text-align:center;')}">${group.orderCount} 件</td>
-            <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${group.total.toLocaleString()}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Bank Details and Footer -->
-    <div>
-      <div style="font-size:9.5px;color:#64748b;line-height:1.6;margin-bottom:10px;">
-        ※ お支払いは月末締め翌月末払いでお願いいたします。<br/>
-        ※ 振込手数料はお客様にてご負担ください。<br/>
-        ※ 本書はインボイス制度の適格請求書を兼ねます。
-      </div>
-      <div style="font-size:9.5px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;line-height:1.6;background:#fbfbfb;">
-        <div style="font-weight:bold;color:#0f172a;margin-bottom:2px;">お振込先</div>
-        <div>〇〇銀行 〇〇支店 (普) 1234567 / 口座名義：アサヒリース株式会社</div>
-      </div>
-      <div style="position:absolute;bottom:20px;right:56px;font-size:10px;color:#64748b;font-family:ui-monospace,monospace;">
-        ページ ${overallPageIndex + 1} / ${overallPageCount}
-      </div>
-    </div>
-  `;
-
-  return host;
+  return buildCompanySummary(group, monthPeriod)[0];
 }
 
-export interface RenterInvoicePageOpts {
-  mode: "company-invoice" | "renter-invoice" | "order-invoice" | "breakdown-detail";
+// ============================================================
+// 現場別 請求書（注文 1 件 = 1 通、明細多数時は複数ページ）
+// ============================================================
+// 明細行の推定高さで詰める本文予算(px)。A4 固定高からヘッダ・請求金額ボックス・
+// 合計・振込先の実測オーバーヘッド分を差し引いた安全値。
+const INVOICE_BODY_BUDGET_PX = 540;
+
+interface OrderInvoiceOpts {
   companyName: string;
-  renter: RenterGroup;
-  companyTotal?: CompanyGroup;
-  pageRows: PrintRow[];
-  pageIndex: number;
-  pageCount: number;
-  overallPageIndex: number;
-  overallPageCount: number;
   monthPeriod?: string;
 }
 
 /**
- * Render a single paginated page of detailed items for a renter.
+ * 注文 1 件を伝統的な請求書レイアウトでレンダリング。明細が多い場合は複数ページに分割し、
+ * 合計・振込先は最終ページのみに表示する。
  */
-export function renderRenterInvoicePage(opts: RenterInvoicePageOpts): HTMLElement {
-  const host = document.createElement("div");
-  host.setAttribute("style", pageBaseStyle());
+export function renderOrderInvoicePage(order: any, opts: OrderInvoiceOpts): HTMLElement[] {
+  const rows = getInvoiceLineRows(order, opts.monthPeriod);
+  const t = orderTotals(order, opts.monthPeriod);
 
-  const showFullHeader = opts.pageIndex === 0 && (opts.mode === "renter-invoice" || opts.mode === "order-invoice");
-  const showCoverHeader = opts.pageIndex === 0 && (opts.mode === "company-invoice" || opts.mode === "breakdown-detail");
+  // 商品名(≈198px,17字/行)・備考(≈96px,8字/行)の折り返し行数から高さを見積もって分割
+  // （1行=約16px + 余白10px。最終ページは合計欄ぶん予算を抑えめにして切れを防ぐ）。
+  const chunks = packByHeight(
+    rows,
+    (r) => Math.max(estLines(r.name, 17), estLines(String(r.remarks || ""), 8)) * 16 + 10,
+    INVOICE_BODY_BUDGET_PX,
+  );
+  const totalPages = chunks.length;
 
-  const invoiceNoSeed = `${opts.companyName}_${opts.renter.personName}_${opts.renter.orders[0]?.id ?? ""}_${opts.monthPeriod ?? ""}`;
-  const invoiceNo = generateInvoiceNo(opts.mode === "order-invoice" ? "ORD" : "INV", invoiceNoSeed);
+  const person = String(order.personName || order.employeeName || "").trim();
+  const deliveryStaff = String(order.deliveryStaff || "").trim();
+  const billingStaff = String(order.billingStaff || "").trim();
 
-  const periodLabel = opts.monthPeriod
-    ? `${opts.monthPeriod.replace("-", "/")}分`
-    : computeRenterPeriod(opts.renter);
+  return chunks.map((chunk, pageIdx) => {
+    const host = document.createElement("div");
+    host.setAttribute("style", pageBaseStyle());
+    const isLast = pageIdx === totalPages - 1;
 
-  // Render headers
-  let headerHtml = "";
-  if (showFullHeader) {
-    headerHtml = topHeaderHtml({
-      title: "請求書",
-      companyName: opts.companyName,
-      invoiceNo,
-      periodLabel
-    });
-  } else if (showCoverHeader) {
-    headerHtml = `
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #3A4DE8;padding-bottom:8px;margin-bottom:14px;">
-        <div>
-          <h2 style="font-size:18px;font-weight:800;color:#1e3a8a;margin:0;">請求書（内訳明細）</h2>
-          <div style="font-size:12px;font-weight:bold;color:#475569;margin-top:2px;">${escapeHtml(opts.companyName)} 御中</div>
+    const bodyRows = chunk.map((r) => `
+      <tr>
+        <td style="${tdCell("text-align:center;")}">${escapeHtml(r.kubun)}</td>
+        <td style="${tdCell()}">${escapeHtml(r.name)}</td>
+        <td style="${tdCell("text-align:center;")}">${r.qty === "" ? "" : escapeHtml(String(r.qty))}</td>
+        <td style="${tdCell("text-align:center;")}">${r.days === "" ? "" : escapeHtml(String(r.days))}</td>
+        <td style="${tdCell("text-align:center;")}">${escapeHtml(r.deliveryDate)}</td>
+        <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;")}">${r.unitPrice === "" ? "" : yen(Number(r.unitPrice))}</td>
+        <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;font-weight:600;")}">${yen(r.amount)}</td>
+        <td style="${tdCell("font-size:9.5px;color:#4b5563;")}">${escapeHtml(r.remarks)}</td>
+      </tr>`).join("");
+
+    const totalsBlock = isLast ? `
+      <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+        <div style="width:260px;">
+          <div style="display:flex;justify-content:space-between;padding:4px 10px;border:1px solid ${GRIDL};font-size:11px;"><span>小計</span><span style="font-family:ui-monospace,monospace;">${yen(t.subtotal)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 10px;border:1px solid ${GRIDL};border-top:none;font-size:11px;"><span>消費税（${taxPctLabel()}）</span><span style="font-family:ui-monospace,monospace;">${yen(t.tax)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:6px 10px;border:1.5px solid ${GRID};border-top:none;font-weight:800;font-size:13px;"><span>合計</span><span style="font-family:ui-monospace,monospace;">${yen(t.total)}</span></div>
         </div>
-        <div style="font-size:10px;text-align:right;color:#475569;line-height:1.6;min-width:240px;flex-shrink:0;">
-          <div>請求書番号: <span style="font-family:ui-monospace,monospace;">${escapeHtml(invoiceNo)}</span></div>
-          ${periodLabel ? `<div>対象期間: ${escapeHtml(periodLabel)}</div>` : ""}
-        </div>
+      </div>` : "";
+
+    host.innerHTML = `
+      <!-- 上部：受注番号・宛先・発行元 -->
+      <div style="display:flex;justify-content:flex-end;font-size:10px;font-family:ui-monospace,monospace;color:#374151;margin-bottom:4px;">
+        受注番号 ${escapeHtml(receiptNoOf(order))}${totalPages > 1 ? `　（${pageIdx + 1}/${totalPages}）` : ""}
       </div>
-    `;
-  } else {
-    // Continuation Page Header
-    headerHtml = `
-      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;padding-bottom:6px;margin-bottom:14px;">
-        <div style="font-size:11px;font-weight:bold;color:#475569;">
-          請求書（内訳） - ${escapeHtml(opts.companyName)} 御中
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div style="flex:1;">
+          <div style="font-size:18px;font-weight:800;letter-spacing:8px;margin-bottom:12px;">請求書</div>
+          ${billToHtml(opts.companyName)}
         </div>
-        <div style="font-size:10px;color:#64748b;font-family:ui-monospace,monospace;">
-          担当者内訳: ${opts.pageIndex + 1} / ${opts.pageCount}
-        </div>
+        <div style="min-width:230px;flex-shrink:0;margin-left:24px;">${issuerBlockHtml({ withRegNo: true })}</div>
       </div>
-    `;
-  }
 
-  // Renter sub-header (only on renter's first page)
-  let renterHeaderHtml = "";
-  if (opts.pageIndex === 0) {
-    renterHeaderHtml = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;border-bottom:1px dashed #cbd5e1;padding-bottom:8px;">
-        <div>
-          <div style="font-size:10px;color:#475569;font-weight:bold;letter-spacing:1px;">発注担当者</div>
-          <div style="font-size:14px;font-weight:bold;margin-top:2px;">${escapeHtml(opts.renter.personName)} 様</div>
+      <!-- 現場情報 -->
+      <div style="display:flex;flex-wrap:wrap;gap:6px 20px;margin:12px 0 4px;font-size:11px;">
+        <div><span style="color:#6b7280;">現場名</span>　<span style="font-weight:700;">${escapeHtml(order.siteName || "-")}</span></div>
+        <div><span style="color:#6b7280;">工事番号</span>　<span style="font-weight:700;font-family:ui-monospace,monospace;">${escapeHtml(order.constructionNumber || "-")}</span></div>
+        <div><span style="color:#6b7280;">担当</span>　<span style="font-weight:700;">${escapeHtml(person)}${person ? " 様" : ""}</span></div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin:6px 0 10px;">
+        <div style="font-size:10.5px;color:#374151;">${escapeHtml(THANKS)}　<span style="font-weight:700;color:#111827;">${escapeHtml(closingLabel(opts.monthPeriod))}</span></div>
+      </div>
+
+      <!-- 請求金額＋担当ボックス -->
+      <div style="display:flex;gap:12px;align-items:stretch;margin-bottom:12px;">
+        <div style="flex:1;border:1.5px solid ${GRID};display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#f8fafc;">
+          <span style="font-size:14px;font-weight:800;letter-spacing:2px;">ご請求金額</span>
+          <span style="font-family:ui-monospace,monospace;font-size:22px;font-weight:800;">¥${yen(t.total)}</span>
         </div>
-        <div style="text-align:right;">
-          <div style="font-size:10px;color:#475569;">対象注文: ${opts.renter.orders.length}件</div>
-          <div style="margin-top:2px;font-size:12px;font-weight:bold;color:#1e3a8a;">
-            担当者合計: <span style="font-family:ui-monospace,monospace;font-size:13px;margin-left:4px;">¥${opts.renter.total.toLocaleString()}</span>
+        <div style="width:180px;flex-shrink:0;">
+          <div style="display:flex;">
+            <div style="flex:1;text-align:center;padding:3px;border:1px solid ${GRID};background:#eef2f5;font-size:10px;font-weight:700;">納品担当</div>
+            <div style="flex:1;text-align:center;padding:3px;border:1px solid ${GRID};border-left:none;background:#eef2f5;font-size:10px;font-weight:700;">請求担当</div>
+          </div>
+          <div style="display:flex;">
+            <div style="flex:1;text-align:center;padding:8px 3px;border:1px solid ${GRID};border-top:none;font-size:11px;">${escapeHtml(deliveryStaff)}</div>
+            <div style="flex:1;text-align:center;padding:8px 3px;border:1px solid ${GRID};border-top:none;border-left:none;font-size:11px;">${escapeHtml(billingStaff)}</div>
           </div>
         </div>
       </div>
-    `;
-  } else {
-    renterHeaderHtml = `
-      <div style="font-size:10.5px;color:#475569;margin-bottom:8px;display:flex;justify-content:space-between;">
-        <span>担当者: <strong>${escapeHtml(opts.renter.personName)} 様</strong> (続き)</span>
-      </div>
-    `;
-  }
 
-  // Table rows HTML
-  const tableRowsHtml = opts.pageRows.map(row => {
-    if (row.type === "order-header") {
-      const o = row.order;
-      const label = row.isContinuation ? `${o.orderNumber} (続き)` : o.orderNumber;
-      const duration = `${o.rentalStartDate || "-"} 〜 ${o.rentalEndDate || "-"}`;
-      return `
-        <tr style="background:#eff6ff;">
-          <td colspan="6" style="${tdStyle('font-weight:bold;color:#1e3a8a;')}">
-            <span style="color:#64748b;">注文日時</span>
-            <span style="font-family:ui-monospace,monospace;margin-left:4px;margin-right:12px;">${escapeHtml(o.date || "-")}</span>
-            <span style="color:#64748b;">伝票番号</span>
-            <span style="font-family:ui-monospace,monospace;margin-left:6px;">${escapeHtml(label || "-")}</span>
-            <span style="margin-left:12px;color:#64748b;">現場</span> ${escapeHtml(o.siteName || "-")}
-            <span style="margin-left:12px;color:#64748b;">工事No</span> ${escapeHtml(o.constructionNumber || "-")}
-            <span style="margin-left:12px;color:#64748b;">期間</span> ${escapeHtml(duration)}
-          </td>
-        </tr>
-      `;
-    } else {
-      const it = row.item!;
-      const idx = row.index!;
-      return `
-        <tr>
-          <td style="${tdStyle('text-align:center;')}">${idx + 1}</td>
-          <td style="${tdStyle()}">
-            <div style="font-weight:600;">${escapeHtml(it.name)}</div>
-            <div style="font-size:10px;color:#64748b;">${escapeHtml(it.detail)}</div>
-          </td>
-          <td style="${tdStyle('text-align:center;')}">${it.quantity}${it.unit ? escapeHtml(it.unit) : ""}</td>
-          <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${Number(it.unitPrice).toLocaleString()}</td>
-          <td style="${tdStyle('text-align:right;font-weight:600;font-family:ui-monospace,monospace;')}">¥${Number(it.lineTotal).toLocaleString()}</td>
-          <td style="${tdStyle('text-align:center;color:#64748b;')}">${it.typeLabel}</td>
-        </tr>
-      `;
-    }
-  }).join("");
-
-  const tableHtml = `
-    <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
-      <thead>
-        <tr>
-          <th style="${thStyle('width:36px;')}">No.</th>
-          <th style="${thStyle('text-align:left;')}">商品 / 内容</th>
-          <th style="${thStyle('width:54px;')}">数量</th>
-          <th style="${thStyle('width:90px;')}">単価</th>
-          <th style="${thStyle('width:100px;')}">金額</th>
-          <th style="${thStyle('width:54px;')}">区分</th>
-        </tr>
-      </thead>
-      <tbody>${tableRowsHtml}</tbody>
-    </table>
-  `;
-
-  // Totals & Bank details (only on final page of this renter)
-  const isLastPageOfRenter = opts.pageIndex === opts.pageCount - 1;
-  let totalsHtml = "";
-  if (isLastPageOfRenter) {
-    totalsHtml = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:8px;gap:24px;">
-        <div style="flex:1;font-size:9px;color:#64748b;line-height:1.6;">
-          ※ お支払いは月末締め翌月末払いでお願いいたします。<br/>
-          ※ 振込手数料はお客様にてご負担ください。<br/>
-          ※ 本書はインボイス制度の適格請求書を兼ねます。
-        </div>
-        <div style="width:240px;border:1.5px solid #0f172a;flex-shrink:0;">
-          ${totalsRow("小計", opts.renter.subtotal)}
-          ${(opts.renter.guaranteeFee || 0) > 0 ? totalsRow("うち保証料", opts.renter.guaranteeFee) : ""}
-          ${totalsRow(`消費税 (${taxPctLabel()})`, opts.renter.tax)}
-          ${totalsRow("担当者合計", opts.renter.total, true)}
-          ${opts.companyTotal ? `<div style="border-top:1px dashed #94a3b8;padding:6px 12px;font-size:9px;color:#475569;display:flex;justify-content:space-between;"><span>会社合計参考</span><span style="font-weight:bold;color:#0f172a;font-family:ui-monospace,monospace;">¥${opts.companyTotal.total.toLocaleString()}</span></div>` : ""}
-        </div>
-      </div>
-      <div style="margin-top:8px;font-size:9.5px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;line-height:1.5;background:#fbfbfb;">
-        <div style="font-weight:bold;color:#0f172a;margin-bottom:2px;">お振込先</div>
-        <div>〇〇銀行 〇〇支店 (普) 1234567 / 口座名義：アサヒリース株式会社</div>
-      </div>
-    `;
-  }
-
-  host.innerHTML = `
-    ${headerHtml}
-    ${renterHeaderHtml}
-    <div style="flex:1;">
-      ${tableHtml}
-    </div>
-    ${totalsHtml}
-    <div style="position:absolute;bottom:20px;right:56px;font-size:10px;color:#64748b;font-family:ui-monospace,monospace;display:flex;gap:12px;">
-      <span>担当者内訳: ${opts.pageIndex + 1} / ${opts.pageCount}</span>
-      <span>|</span>
-      <span>全体ページ: ${opts.overallPageIndex + 1} / ${opts.overallPageCount}</span>
-    </div>
-  `;
-
-  return host;
-}
-
-export function renderBreakdownSummary(groups: CompanyGroup[], overallPageCount: number, monthPeriod?: string): HTMLElement {
-  const host = document.createElement("div");
-  host.setAttribute("style", pageBaseStyle());
-
-  const total = aggregateTotals(groups);
-
-  host.innerHTML = `
-    ${topHeaderHtml({
-      title: "内訳請求書",
-      companyName: "全取引先合計",
-      invoiceNo: generateInvoiceNo("AGG", String(total.total) + (monthPeriod ?? "")),
-      periodLabel: monthPeriod ? `${monthPeriod.replace("-", "/")}分` : undefined,
-    })}
-
-    <div style="margin-bottom:18px;font-size:12px;">
-      対象 ${groups.length} 社 / 担当者 ${total.renterCount} 名 / 注文 ${total.orderCount} 件分の請求金額を取りまとめてご請求申し上げます。
-    </div>
-
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-      <thead>
-        <tr>
-          <th style="${thStyle('width:40px;')}">No.</th>
-          <th style="${thStyle('text-align:left;')}">会社名 / 担当者</th>
-          <th style="${thStyle('width:70px;')}">件数</th>
-          <th style="${thStyle('width:100px;')}">小計</th>
-          <th style="${thStyle('width:100px;')}">消費税</th>
-          <th style="${thStyle('width:120px;background:#dbeafe;')}">合計 (税込)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${groups.flatMap((g, gi) => [
-          `<tr style="background:#f8fafc;">
-             <td style="${tdStyle('text-align:center;font-weight:bold;')}">${gi + 1}</td>
-             <td style="${tdStyle('font-weight:bold;')}">${escapeHtml(g.companyName)}</td>
-             <td style="${tdStyle('text-align:center;')}">${g.orderCount}</td>
-             <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${g.subtotal.toLocaleString()}</td>
-             <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${g.tax.toLocaleString()}</td>
-             <td style="${tdStyle('text-align:right;font-weight:bold;background:#dbeafe;font-family:ui-monospace,monospace;')}">¥${g.total.toLocaleString()}</td>
-           </tr>`,
-          ...g.renters.map(r => `
+      <!-- 明細テーブル -->
+      <div style="flex:1;">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+          <colgroup>
+            <col style="width:46px;" /><col style="width:260px;" /><col style="width:44px;" /><col style="width:44px;" /><col style="width:52px;" /><col style="width:70px;" /><col style="width:76px;" /><col style="width:88px;" />
+          </colgroup>
+          <thead>
             <tr>
-              <td style="${tdStyle()}"></td>
-              <td style="${tdStyle('padding-left:32px;color:#475569;')}">└ ${escapeHtml(r.personName)}</td>
-              <td style="${tdStyle('text-align:center;')}">${r.orders.length}</td>
-              <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${r.subtotal.toLocaleString()}</td>
-              <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${r.tax.toLocaleString()}</td>
-              <td style="${tdStyle('text-align:right;font-family:ui-monospace,monospace;')}">¥${r.total.toLocaleString()}</td>
-            </tr>`),
-        ]).join("")}
-        <tr style="font-weight:bold;">
-          <td colspan="2" style="${tdStyle('text-align:right;background:#0f172a;color:#fff;')}">総合計</td>
-          <td style="${tdStyle('text-align:center;background:#0f172a;color:#fff;')}">${total.orderCount}</td>
-          <td style="${tdStyle('text-align:right;background:#0f172a;color:#fff;font-family:ui-monospace,monospace;')}">¥${total.subtotal.toLocaleString()}</td>
-          <td style="${tdStyle('text-align:right;background:#0f172a;color:#fff;font-family:ui-monospace,monospace;')}">¥${total.tax.toLocaleString()}</td>
-          <td style="${tdStyle('text-align:right;background:#0f172a;color:#fff;font-family:ui-monospace,monospace;')}">¥${total.total.toLocaleString()}</td>
-        </tr>
-      </tbody>
-    </table>
+              <th style="${thCell("")}">区分</th>
+              <th style="${thCell("")}">商品名</th>
+              <th style="${thCell("")}">数量</th>
+              <th style="${thCell("")}">期間</th>
+              <th style="${thCell("")}">納品日</th>
+              <th style="${thCell("")}">日額単価</th>
+              <th style="${thCell("")}">金額</th>
+              <th style="${thCell("")}">備考</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
 
-    <div style="margin-top:18px;font-size:10px;color:#475569;line-height:1.8;">
-      ※ 次ページ以降、各取引先・担当者ごとの明細を綴じております。<br/>
-      ※ 担当者ごとに改ページ、各担当者の明細が A4 1枚に収まらない場合は自動的に次ページへ続きます。
-    </div>
+      ${totalsBlock}
 
-    <div style="position:absolute;bottom:20px;right:56px;font-size:10px;color:#64748b;font-family:ui-monospace,monospace;">
-      ページ 1 / ${overallPageCount}
-    </div>
-  `;
+      <div style="margin-top:10px;">${bankFooterHtml()}</div>
+      <div style="position:absolute;bottom:12px;right:56px;font-size:9px;color:#9ca3af;font-family:ui-monospace,monospace;">${pageIdx + 1} / ${totalPages}</div>
+    `;
 
-  return host;
+    return host;
+  });
 }
 
 // ============================================================
-// High-level issuer helpers
+// High-level issuer helpers（エクスポート署名は従来どおり維持）
 // ============================================================
 
+/** 注文 1 件の請求書 PDF ノードを生成。 */
 export function buildOrderInvoice(order: any, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
-  // 全体合計(monthPeriod 無し)の請求書は、生成済みブロック合計を使う。getPrintItems は
-  // ブロックの extraCosts(弁償費・燃料費・配送料)を明細行に出すため、合計も order.subtotal/total
-  // ではなくブロック合計に揃えないと「明細合計≠総額」になる（過少請求/不整合）。
-  const allBlocks = !monthPeriod ? getOrGenerateInvoiceBlocks(order) : null;
-  const block = monthPeriod
-    ? getOrGenerateInvoiceBlocks(order).find((b: any) => b.monthPeriod === monthPeriod)
-    : null;
-  const sumBlk = (k: "subtotal" | "tax" | "total" | "guaranteeFee") =>
-    (allBlocks || []).reduce((s: number, b: any) => s + Number(b[k] || 0), 0);
-
-  const guaranteeFee = block
-    ? Number(block.guaranteeFee || 0)
-    : (allBlocks && allBlocks.length
-        ? sumBlk("guaranteeFee")
-        : (order.items || [])
-            .filter((i: any) => i?.type === "rent")
-            .reduce((s: number, i: any) => s + Number(i.guaranteeFeeFlat || 0), 0));
-
-  const renter: RenterGroup = {
-    personName: order.personName?.trim() || order.employeeName?.trim() || order.customerName?.trim() || "(担当者未設定)",
-    orders: [order],
-    subtotal: block ? block.subtotal || 0 : (allBlocks && allBlocks.length ? sumBlk("subtotal") : order.subtotal || 0),
-    tax: block ? block.tax || 0 : (allBlocks && allBlocks.length ? sumBlk("tax") : order.tax || 0),
-    total: block ? block.total || 0 : (allBlocks && allBlocks.length ? sumBlk("total") : order.total || 0),
-    guaranteeFee,
-  };
-
-  const rows: PrintRow[] = [{ type: "order-header", order }];
-  const pItems = getPrintItems(order, monthPeriod);
-  pItems.forEach((it, idx) => {
-    rows.push({ type: "item-row", order, item: it, index: idx });
-  });
-
-  const pages = paginateRows(rows, true);
-  const totalPages = pages.length;
-
-  const nodes = pages.map((pageRows, pi) =>
-    renderRenterInvoicePage({
-      mode: "order-invoice",
-      companyName: order.companyName?.trim() || order.customer?.trim() || order.customerName?.trim() || "(会社名未設定)",
-      renter,
-      pageRows,
-      pageIndex: pi,
-      pageCount: pages.length,
-      overallPageIndex: pi,
-      overallPageCount: totalPages,
-      monthPeriod,
-    })
-  );
-
-  return { nodes, filename: `請求書_${order.orderNumber || "no-num"}.pdf` };
+  const companyName = order.companyName?.trim() || order.customer?.trim() || order.customerName?.trim() || "(会社名未設定)";
+  const nodes = renderOrderInvoicePage(order, { companyName, monthPeriod });
+  return { nodes, filename: `請求書_${receiptNoOf(order) || order.orderNumber || "no-num"}.pdf` };
 }
 
 export async function issueOrderInvoice(order: any, monthPeriod?: string) {
@@ -742,36 +583,9 @@ export async function issueOrderInvoice(order: any, monthPeriod?: string) {
   try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
 }
 
+/** 担当者 1 名分：その担当者の注文ごとに請求書を綴じる。 */
 export function buildRenterInvoice(companyName: string, renter: RenterGroup, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
-  const rows: PrintRow[] = renter.orders.flatMap(o => {
-    const headerRow: PrintRow = { type: "order-header", order: o };
-    const pItems = getPrintItems(o, monthPeriod);
-    const itemRows: PrintRow[] = pItems.map((it, idx) => ({
-      type: "item-row",
-      order: o,
-      item: it,
-      index: idx
-    }));
-    return [headerRow, ...itemRows];
-  });
-
-  const pages = paginateRows(rows, true);
-  const totalPages = pages.length;
-
-  const nodes = pages.map((pageRows, pi) =>
-    renderRenterInvoicePage({
-      mode: "renter-invoice",
-      companyName,
-      renter,
-      pageRows,
-      pageIndex: pi,
-      pageCount: pages.length,
-      overallPageIndex: pi,
-      overallPageCount: totalPages,
-      monthPeriod,
-    })
-  );
-
+  const nodes = renter.orders.flatMap((o) => renderOrderInvoicePage(o, { companyName, monthPeriod }));
   return { nodes, filename: `請求書_${companyName}_${renter.personName}_${todayShort()}.pdf` };
 }
 
@@ -781,64 +595,14 @@ export async function issueRenterInvoice(companyName: string, renter: RenterGrou
   try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
 }
 
+/** 会社 1 社分：請求総括表（表紙）＋ 現場別請求書（注文ごと）。 */
 export function buildCompanyInvoice(group: CompanyGroup, monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
   if (!group.renters || group.renters.length === 0) {
-    throw new Error(`「${group.companyName}」に該当する担当者がありません。`);
+    throw new Error(`「${group.companyName}」に該当する注文がありません。`);
   }
-
-  // 1. Paginate all renters' details
-  const renterPagesList: PrintRow[][][] = [];
-  let totalDetailPages = 0;
-
-  for (const r of group.renters) {
-    const rows: PrintRow[] = r.orders.flatMap(o => {
-      const headerRow: PrintRow = { type: "order-header", order: o };
-      const pItems = getPrintItems(o, monthPeriod);
-      const itemRows: PrintRow[] = pItems.map((it, idx) => ({
-        type: "item-row",
-        order: o,
-        item: it,
-        index: idx
-      }));
-      return [headerRow, ...itemRows];
-    });
-
-    const pages = paginateRows(rows, true);
-    totalDetailPages += pages.length;
-    renterPagesList.push(pages);
-  }
-
-  const totalPages = 1 + totalDetailPages; // 1 cover page + details
-
-  // 2. Generate cover page
-  const coverNode = renderCompanyCoverPage(group, totalPages, monthPeriod, 0);
-
-  // 3. Generate detailed pages
-  const detailNodes: HTMLElement[] = [];
-  let overallIndex = 1;
-
-  group.renters.forEach((r, ri) => {
-    const pages = renterPagesList[ri];
-    pages.forEach((pageRows, pi) => {
-      const node = renderRenterInvoicePage({
-        mode: "company-invoice",
-        companyName: group.companyName,
-        renter: r,
-        companyTotal: group,
-        pageRows,
-        pageIndex: pi,
-        pageCount: pages.length,
-        overallPageIndex: overallIndex,
-        overallPageCount: totalPages,
-        monthPeriod,
-      });
-      detailNodes.push(node);
-      overallIndex++;
-    });
-  });
-
-  const allNodes = [coverNode, ...detailNodes];
-  return { nodes: allNodes, filename: `請求書_${group.companyName}_${todayShort()}.pdf` };
+  const summaryPages = buildCompanySummary(group, monthPeriod);
+  const orderPages = flattenOrders(group).flatMap((o) => renderOrderInvoicePage(o, { companyName: group.companyName, monthPeriod }));
+  return { nodes: [...summaryPages, ...orderPages], filename: `請求書_${group.companyName}_${todayShort()}.pdf` };
 }
 
 export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: string) {
@@ -847,77 +611,80 @@ export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: str
   try { await renderSectionsToPdf(nodes, filename); } finally { cleanup(); }
 }
 
+// ------------------------------------------------------------
+// 全取引先まとめ（内訳一覧の総合版）
+// ------------------------------------------------------------
+
+/** 全取引先の集計一覧（マスター表紙）。 */
+function renderMasterSummary(groups: CompanyGroup[], totalPages: number, monthPeriod?: string): HTMLElement {
+  const host = document.createElement("div");
+  host.setAttribute("style", pageBaseStyle());
+  const total = aggregateTotals(groups);
+
+  const rows = groups.map((g, gi) => `
+    <tr>
+      <td style="${tdCell("text-align:center;")}">${gi + 1}</td>
+      <td style="${tdCell("font-weight:700;")}">${escapeHtml(g.companyName)}</td>
+      <td style="${tdCell("text-align:center;")}">${g.orderCount}</td>
+      <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;")}">${yen(g.subtotal)}</td>
+      <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;")}">${yen(g.tax)}</td>
+      <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;font-weight:700;")}">${yen(g.total)}</td>
+    </tr>`).join("");
+
+  host.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div style="flex:1;">
+        <div style="font-size:18px;font-weight:800;letter-spacing:8px;margin-bottom:12px;">請求一覧表</div>
+        <div style="font-size:11px;color:#374151;">対象 ${groups.length} 社 / 注文 ${total.orderCount} 件　${escapeHtml(closingLabel(monthPeriod))}</div>
+      </div>
+      <div style="min-width:230px;flex-shrink:0;margin-left:24px;">${issuerBlockHtml()}</div>
+    </div>
+
+    <div style="flex:1;margin-top:16px;">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+        <thead>
+          <tr>
+            <th style="${thCell("width:44px;")}">No.</th>
+            <th style="${thCell("")}">会社名</th>
+            <th style="${thCell("width:64px;")}">件数</th>
+            <th style="${thCell("width:100px;")}">小計</th>
+            <th style="${thCell("width:100px;")}">消費税</th>
+            <th style="${thCell("width:110px;")}">合計（税込）</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+          <tr>
+            <td colspan="2" style="${tdCell("text-align:right;background:#eef2f5;font-weight:800;")}">総合計</td>
+            <td style="${tdCell("text-align:center;background:#eef2f5;font-weight:800;")}">${total.orderCount}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.subtotal)}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.tax)}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:10px;">${bankFooterHtml()}</div>
+    <div style="position:absolute;bottom:12px;right:56px;font-size:9px;color:#9ca3af;font-family:ui-monospace,monospace;">1 / ${totalPages}</div>
+  `;
+
+  return host;
+}
+
 export function buildAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
   if (groups.length === 0) throw new Error("対象データがありません。");
 
-  // 1. Calculate pagination for all companies and renters
-  const companyPagesList: {
-    group: CompanyGroup;
-    coverIndex: number;
-    renterPages: { r: RenterGroup; pages: PrintRow[][] }[];
-  }[] = [];
+  // 各社の [総括表 + 現場別請求書] を連結。先頭にマスター一覧を付す。
+  const companySections = groups.map((g) => [
+    ...buildCompanySummary(g, monthPeriod),
+    ...flattenOrders(g).flatMap((o) => renderOrderInvoicePage(o, { companyName: g.companyName, monthPeriod })),
+  ]);
+  const detailNodes = companySections.flat();
+  const totalPages = 1 + detailNodes.length;
+  const master = renderMasterSummary(groups, totalPages, monthPeriod);
 
-  let currentOverallPageIndex = 1; // Page 0 is the Master Cover Page
-
-  for (const g of groups) {
-    const coverIndex = currentOverallPageIndex;
-    currentOverallPageIndex++; // for company cover page
-
-    const renterPages: { r: RenterGroup; pages: PrintRow[][] }[] = [];
-    for (const r of g.renters) {
-      const rows: PrintRow[] = r.orders.flatMap(o => {
-        const headerRow: PrintRow = { type: "order-header", order: o };
-        const pItems = getPrintItems(o, monthPeriod);
-        const itemRows: PrintRow[] = pItems.map((it, idx) => ({
-          type: "item-row",
-          order: o,
-          item: it,
-          index: idx
-        }));
-        return [headerRow, ...itemRows];
-      });
-      const pages = paginateRows(rows, true);
-      renterPages.push({ r, pages });
-      currentOverallPageIndex += pages.length;
-    }
-    companyPagesList.push({ group: g, coverIndex, renterPages });
-  }
-
-  const totalPages = currentOverallPageIndex;
-
-  // 2. Generate Master Cover Page
-  const masterCover = renderBreakdownSummary(groups, totalPages, monthPeriod);
-
-  // 3. Generate all detailed company pages
-  const sections: HTMLElement[] = [masterCover];
-
-  for (const { group, coverIndex, renterPages } of companyPagesList) {
-    // Generate company cover page
-    const companyCover = renderCompanyCoverPage(group, totalPages, monthPeriod, coverIndex);
-    sections.push(companyCover);
-
-    // Generate renter pages
-    for (const { r, pages } of renterPages) {
-      pages.forEach((pageRows, pi) => {
-        const pageIndexOverall = sections.length;
-        const node = renderRenterInvoicePage({
-          mode: "breakdown-detail",
-          companyName: group.companyName,
-          renter: r,
-          companyTotal: group,
-          pageRows,
-          pageIndex: pi,
-          pageCount: pages.length,
-          overallPageIndex: pageIndexOverall,
-          overallPageCount: totalPages,
-          monthPeriod,
-        });
-        sections.push(node);
-      });
-    }
-  }
-
-  return { nodes: sections, filename: `内訳請求書_${monthPeriod ?? todayShort()}.pdf` };
+  return { nodes: [master, ...detailNodes], filename: `内訳請求書_${monthPeriod ?? todayShort()}.pdf` };
 }
 
 export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string) {

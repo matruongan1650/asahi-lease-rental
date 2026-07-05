@@ -331,6 +331,8 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
         buyPrice: item.buyPrice === "" || item.buyPrice === undefined ? item.buyPrice : Number(item.buyPrice),
         calculatedPrice: newCalc,
         guaranteeFeeFlat: Number(item.guaranteeFeeFlat || 0),
+        // 請求書「備考」欄（手入力・表示のみ。合計計算には影響しない）。
+        remarks: item.remarks || "",
         ...((priceChanged || item.priceOverride) ? { priceOverride: true } : {}),
       };
     });
@@ -366,6 +368,10 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       userPhone: livePhone || "",
       siteName: editDraft.siteName || "",
       constructionNumber: editDraft.constructionNumber || "",
+      // 請求書用の手入力欄（受注番号・自社担当）。
+      receiptNumber: editDraft.receiptNumber || "",
+      deliveryStaff: editDraft.deliveryStaff || "",
+      billingStaff: editDraft.billingStaff || "",
       deliveryLocation: editDraft.deliveryLocation || "",
       deliveryDate: editDraft.deliveryDate || "",
       rentalStartDate: editDraft.rentalStartDate || "",
@@ -1001,6 +1007,19 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">工事番号</span>
                       <input value={editDraft.constructionNumber || ""} onChange={(e) => setDraftValue("constructionNumber", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
                     </label>
+                    {/* 請求書用の手入力欄（受注番号・自社担当）。 */}
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">受注番号<span className="text-slate-400 font-normal">（請求書）</span></span>
+                      <input value={editDraft.receiptNumber || ""} onChange={(e) => setDraftValue("receiptNumber", e.target.value)} placeholder="例: 13K-016" className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">納品担当</span>
+                      <input value={editDraft.deliveryStaff || ""} onChange={(e) => setDraftValue("deliveryStaff", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
+                    <label>
+                      <span className="text-[11px] font-bold text-slate-500 block mb-1">請求担当</span>
+                      <input value={editDraft.billingStaff || ""} onChange={(e) => setDraftValue("billingStaff", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
+                    </label>
                     <label className="col-span-2">
                       <span className="text-[11px] font-bold text-slate-500 block mb-1">納品先住所</span>
                       <input value={editDraft.deliveryLocation || ""} onChange={(e) => setDraftValue("deliveryLocation", e.target.value)} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500" />
@@ -1099,6 +1118,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                         <th className="p-2 text-right">数量</th>
                         <th className="p-2 text-right">単価</th>
                         <th className="p-2 text-right">保証料</th>
+                        <th className="p-2 text-left">備考</th>
                         <th className="p-2 text-right">操作</th>
                       </tr>
                     </thead>
@@ -1128,6 +1148,10 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
                           </td>
                           <td className="p-2">
                             <input type="number" value={item.guaranteeFeeFlat || 0} onChange={(e) => setDraftItemValue(idx, "guaranteeFeeFlat", e.target.value)} className="w-24 border border-slate-200 rounded p-1.5 text-right font-mono outline-none focus:border-blue-500" />
+                          </td>
+                          {/* 請求書「備考」欄（機番・数量範囲など。例: 1〜10）。 */}
+                          <td className="p-2">
+                            <input value={item.remarks || ""} onChange={(e) => setDraftItemValue(idx, "remarks", e.target.value)} placeholder="例: 1〜10" className="w-32 border border-slate-200 rounded p-1.5 outline-none focus:border-blue-500" />
                           </td>
                           <td className="p-2 text-right">
                             <button

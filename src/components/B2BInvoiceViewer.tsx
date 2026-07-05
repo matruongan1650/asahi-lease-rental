@@ -2,7 +2,7 @@ import React, { useRef, useState, useMemo, useEffect } from "react";
 import { alertDialog } from "./AppDialog";
 import { groupOrdersByCompany } from "../utils/rentalInvoiceGrouping";
 import {
-  renderCompanyCoverPage,
+  buildCompanySummary,
   buildCompanyInvoice,
   issueCompanyInvoice
 } from "../utils/invoiceTemplatesAdmin";
@@ -48,14 +48,11 @@ export default function B2BInvoiceViewer({
   const pages = useMemo(() => {
     if (!group) return [];
 
-    if (type === "summary") {
-      const cover = renderCompanyCoverPage(group, 1, monthPeriod, 0);
-      return [cover];
-    }
-
-    // 内訳プレビューは PDF と同じ buildCompanyInvoice を使う。
-    // （以前は生の o.items を描画していたため、単価・金額が ¥NaN・区分/内容が空・保証料/弁償費行が欠落していた）。
+    // 総合＝請求総括表（会社の全注文一覧・複数ページ）。内訳＝総括表＋現場別請求書一式。
     try {
+      if (type === "summary") {
+        return buildCompanySummary(group, monthPeriod);
+      }
       return buildCompanyInvoice(group, monthPeriod).nodes;
     } catch (err) {
       console.error("invoice preview build error:", err);
@@ -68,10 +65,10 @@ export default function B2BInvoiceViewer({
     setIsGenerating(true);
     try {
       if (type === "summary") {
-        const coverNode = renderCompanyCoverPage(group, 1, monthPeriod, 0);
-        const cleanup = mountOffscreen([coverNode]);
+        const summaryNodes = buildCompanySummary(group, monthPeriod);
+        const cleanup = mountOffscreen(summaryNodes);
         try {
-          await renderSectionsToPdf([coverNode], `総合請求書_${companyName}_${monthPeriod}.pdf`);
+          await renderSectionsToPdf(summaryNodes, `請求総括表_${companyName}_${monthPeriod}.pdf`);
         } finally {
           cleanup();
         }
@@ -93,7 +90,7 @@ export default function B2BInvoiceViewer({
         {/* Header Toolbar */}
         <div className="flex justify-between items-center p-4 border-b border-slate-200">
           <h2 className="font-bold text-lg">
-            {type === "summary" ? "総合請求書" : "内訳請求書"} プレビュー
+            {type === "summary" ? "請求総括表" : "請求書（総括＋現場別）"} プレビュー
           </h2>
           <div className="flex gap-2">
             <button

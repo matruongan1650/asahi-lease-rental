@@ -79,6 +79,8 @@ export interface CartItem {
   calculatedPrice?: number;
   monthlyBreakdown?: MonthlyBreakdown[];
   guaranteeFeeFlat?: number;
+  /** 請求書「備考」欄（機番・数量範囲などの注記。例: "1〜10"）。手入力・表示のみ（合計計算には影響しない）。 */
+  remarks?: string;
 }
 
 // ==========================================
@@ -127,6 +129,12 @@ export interface Order {
   constructionNumber?: string;
   companyName?: string;
   personName?: string;
+  /** 請求書の受注番号（例: 13K-016）。社内伝票番号(orderNumber)とは別に手入力できる、顧客提出用の受注番号。 */
+  receiptNumber?: string;
+  /** 請求書「納品担当」欄（自社担当者名・手入力）。 */
+  deliveryStaff?: string;
+  /** 請求書「請求担当」欄（自社担当者名・手入力）。 */
+  billingStaff?: string;
   rentalStartDate?: string;
   rentalEndDate?: string;
   actualReturnDate?: string;
