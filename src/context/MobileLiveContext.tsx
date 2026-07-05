@@ -522,6 +522,9 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         time: now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 持帰り",
         note: "現場回収分の倉庫最終検品",
         source: "field_recovery",
+        // 返却分(-R)のレンタル課金は「回収完了当日(=一次受付相当)」で締める。最終検品が後日でも
+        // 検品日まで課金を伸ばさない(過大請求防止)。completeReturn の actualReturnDate フォールバック(C3)。
+        receptionReturnDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
         stage: "recheck",
         fieldSignature: signature || null,
         // 現場で撮影した写真（dataURL のみ抽出）— 倉庫の最終検品画面で参照できる

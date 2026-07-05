@@ -13,9 +13,6 @@ import { ProductProvider } from "./context/ProductContext";
 import { VehicleProvider } from "./context/VehicleContext";
 import { UserProvider } from "./context/UserContext";
 import { StaffStandaloneApp } from "./pages/Staff/StaffDashboard";
-import StaffJobDetail from "./pages/Staff/StaffJobDetail";
-import StaffJobList from "./pages/Staff/StaffJobList";
-import StaffVehicleDetail from "./pages/Staff/StaffVehicleDetail";
 import { DialogHost } from "./components/AppDialog";
 import "./index.css";
 
@@ -30,9 +27,9 @@ function StaffRoot() {
                 <Routes>
                   <Route path="/" element={<Navigate to="/staff" replace />} />
                   <Route path="/staff" element={<StaffAuthGate><StaffStandaloneApp /></StaffAuthGate>} />
-                  <Route path="/staff/vehicle/:id" element={<StaffAuthGate><StaffVehicleDetail /></StaffAuthGate>} />
-                  <Route path="/staff/:role" element={<StaffAuthGate><StaffJobList /></StaffAuthGate>} />
-                  <Route path="/staff/:role/job/:orderId" element={<StaffAuthGate><StaffJobDetail /></StaffAuthGate>} />
+                  {/* orphan なスタッフ個別ジョブ画面(StaffJobList/StaffJobDetail/StaffVehicleDetail)は
+                      本体アプリからリンクされず、完了処理が本体と乖離して claim/最終検品/請求を壊すため撤去。
+                      URL 直打ちは下の * ルートで /staff へリダイレクトされる。 */}
                   <Route path="*" element={<Navigate to="/staff" replace />} />
                 </Routes>
               </BrowserRouter>

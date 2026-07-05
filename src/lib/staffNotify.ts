@@ -128,11 +128,14 @@ function countOf(title: string): number {
  * 件数が減った場合（タスク完了など）は記録だけ更新して鳴らさない。
  * 初回（未記録）は鳴らさず現状を記録するだけ（起動時の一斉鳴動を防ぐ）。
  */
-export function useStaffNotificationAlerts(notifications: AppNotification[]): void {
+export function useStaffNotificationAlerts(notifications: AppNotification[], ready: boolean = true): void {
   // 署名（id + タイトル）が変わった時だけ effect を走らせる。
   const sig = notifications.map((n) => `${n.id}=${n.title}`).sort().join("|");
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    // データ未ロード(sync 未接続)の間は seen マップを読み書きしない。起動直後に空→実データで
+    // 全件を「新規」と誤検知し、既存ジョブ全部の音を鳴らし直すのを防ぐ(C20)。
+    if (!ready) return;
 
     const isFirst = localStorage.getItem(SEEN_KEY) === null;
     const seen = readSeen();
@@ -168,5 +171,5 @@ export function useStaffNotificationAlerts(notifications: AppNotification[]): vo
       });
     }).catch(() => { /* ignore */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig]);
+  }, [sig, ready]);
 }

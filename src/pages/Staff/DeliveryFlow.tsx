@@ -51,7 +51,9 @@ const DLV_STEPS = ["確認", "移動", "写真", "サイン", "完了"];
 export default function DeliveryFlow({ o, onComplete, onExit, staffName }: DeliveryFlowProps) {
   const draftKey = "dlv:" + o.id;
   const draft = loadDraft(draftKey, {} as any);
-  const [step, setStep] = useState<number>(() => Number(draft.step) || 0);
+  // 復元時は step を写真ステップ(2)以下にクランプ。写真/サインはドラフトに保存しないため、それ以降を
+  // 復元すると必須写真ゲートを飛ばして写真ゼロで完了できてしまう(C2)。
+  const [step, setStep] = useState<number>(() => Math.min(Number(draft.step) || 0, 2));
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [signed, setSigned] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState(false);

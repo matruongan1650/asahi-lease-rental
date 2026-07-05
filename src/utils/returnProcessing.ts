@@ -301,6 +301,9 @@ export async function finalizePartialReturn(
       total: rt.total,
       status: remainingStatus,
       minDaysHasVehicle, // 継続注文にも基準を永続化（E4）
+      // 一部回収後、継続注文の staffStatus=回収完了 が残ると回収一覧から永久に消える(C23/C5)。
+      // 納品済み相当(配送完了)へ戻し、残数の回収タスクが再表示されるようにする。
+      staffStatus: "配送完了",
       invoiceBlocks: remainingInvoiceBlocks,
       requestedReturn: {},
       // ★itemIssues は継続注文に載せない（返却分=-R 注文に既に保存済み）。載せると同じ破損/紛失を

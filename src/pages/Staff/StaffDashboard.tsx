@@ -738,8 +738,10 @@ function RouteOverview({ deliveries, recoveries, doneDlv, doneRtn, outdoorMode, 
     let url: string;
     if (addrs.length === 1) url = `https://www.google.com/maps/dir/?api=1&destination=${enc(addrs[0])}&travelmode=driving`;
     else {
-      const dest = enc(addrs[addrs.length - 1]);
-      const wps = addrs.slice(0, -1).slice(0, 9).map(enc).join("|"); // Google の waypoints 上限に配慮(最大9)
+      // 実際の先頭10地点をルート化する（旧実装は末尾1点+先頭9点で中間を飛ばしていた=C27）。
+      const first = addrs.slice(0, 10);
+      const dest = enc(first[first.length - 1]);
+      const wps = first.slice(0, -1).map(enc).join("|"); // Google の waypoints 上限(最大9)
       url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&waypoints=${wps}&travelmode=driving`;
     }
     window.open(url, "_blank");
@@ -1188,7 +1190,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
   const notifReads = useNotificationReads("staff:" + (currentUser?.id || ""));
   const staffUnread = notifReads.unreadCount(staffNotifications);
   // 新しい業務通知を検知したら端末通知（音付き）を鳴らす（APK のみ。Web は no-op）。
-  useStaffNotificationAlerts(staffNotifications);
+  useStaffNotificationAlerts(staffNotifications, ml.connected);
 
   // ↓ ここから先は早期 return 可（全フック呼び出し済み）。
   if (flow) {
@@ -1217,6 +1219,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
       return (
         <RecoveryFlow
           o={flow.order}
+          staffName={staff.name}
           onExit={() => { if (flow?.order) releaseJob(flow.order); setFlow(null); }}
           onComplete={async (id, signature, photos, inspected, extra) => {
             setDoneRtn(d => d.includes(flow.order.id) ? d : [...d, flow.order.id]);

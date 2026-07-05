@@ -28,6 +28,7 @@ import { pushFieldReportsLocal, STAFF } from "../../context/MobileLiveContext";
 import ProductQrScanner from "../../components/staff/ProductQrScanner";
 
 export interface RecoveryFlowProps {
+  staffName?: string;
   o: {
     id: string;
     firestoreId?: string;
@@ -48,7 +49,7 @@ export interface RecoveryFlowProps {
 
 const RTN_STEPS = ["確認", "移動", "スキャン", "サイン", "完了"];
 
-export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProps) {
+export default function RecoveryFlow({ staffName, o, onComplete, onExit }: RecoveryFlowProps) {
   const draftKey = "rcv:" + o.id;
   const draft = loadDraft(draftKey, {} as any);
   const [step, setStep] = useState<number>(() => Number(draft.step) || 0);
@@ -97,7 +98,7 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
         pushFieldReportsLocal({
           source: "回収",
           ref: o.id,
-          reporter: STAFF.kaishu.name,
+          reporter: staffName || STAFF.kaishu.name,
           customer: o.company,
           site: o.site,
           products: reportable,
@@ -133,7 +134,11 @@ export default function RecoveryFlow({ o, onComplete, onExit }: RecoveryFlowProp
 
   // QRラベルが破損・読取不可の場合の手動確認（admin に QR未照合と分かるようタグ付け）。
   const markManual = (product: any) => {
-    setProds(ps => ps.map(p => (p.id === product.id) ? { ...p, scanned: true, manualConfirm: true } : p));
+    // 同一商品が複数行あっても未検品の最初の1行だけ立てる（WalkInReturnFlow と統一。1タップで全行通過させない）。
+    setProds(ps => {
+      const t = ps.find(p => (p.id === product.id || (p.qr && p.qr === product.qr)) && !p.scanned);
+      return t ? ps.map(p => p === t ? { ...p, scanned: true, manualConfirm: true } : p) : ps;
+    });
   };
 
   const allScanned = prods.every(p => p.scanned);
