@@ -1,6 +1,6 @@
 import { type Product, type CartItem, type Order, type MonthlyBreakdown, type InvoiceBlock, type ExtraCost } from "../types";
 import { isVehicleCategory } from "./productUtils";
-import { isFullyReturned } from "./orderStatus";
+import { isFullyReturned, isClosedOrder } from "./orderStatus";
 
 /**
  * 長期割引（単価B / rentPriceLongTerm）が適用される累計レンタル日数のしきい値。
@@ -482,6 +482,55 @@ export function regenerateBlocksPreservingState(
 }
 
 /**
+ * 稼働中（未クローズ）の注文で、課金終了日(billingEndDate)がキャッシュ済みブロックの最終月より先へ
+ * 進んでいれば、不足している「新しい月」のブロックだけを末尾へ追記する（月次請求の自動ロールフォワード）。
+ * - 既存のキャッシュ月は一切変更しない（入金済み・確定額・PDF 明細を壊さない = append-only）。
+ * - クローズ済み（返却済/完了/キャンセル）は凍結。返却時に締めた最終請求を後から伸ばさない。
+ * - 追記月はフル span 再計算（ensureMonthlyBreakdowns 経由）から採るため、長期割引の累計日数も正しい。
+ * - 追記は「当月まで」に限定する。将来の返却予定日を持つ契約でも、未経過の将来月を先に請求ブロック化して
+ *   AR を水増ししない（将来分は実際にその月へ到達したとき/返却確定時に載る）。
+ * - 過去のまま「集計中(accumulating)」で残った月は「未入金(pending)」へ確定させる（新月が当月へ繰り上がる
+ *   ため。入金済み・手動状態は変更しない）。これで期限超過の当月請求が、イベント無しでも自動で現れる。
+ */
+function appendRolledForwardMonths(order: Order, cached: InvoiceBlock[]): InvoiceBlock[] {
+  if (isClosedOrder(order.status)) return cached;
+  const end = billingEndDate(order);
+  if (!end) return cached;
+  const endMonth = String(end).replace(/\//g, "-").slice(0, 7);
+  if (endMonth.length !== 7) return cached;
+  const thisMonthStr = (() => {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  // 追記対象は「当月まで」。将来返却予定(未来の rentalEndDate)でも未経過の将来月は先取り請求しない。
+  const targetMonth = endMonth > thisMonthStr ? thisMonthStr : endMonth;
+  const lastCachedMonth = cached.reduce(
+    (m, b) => (b && b.monthPeriod && b.monthPeriod > m ? b.monthPeriod : m),
+    "",
+  );
+  if (!lastCachedMonth || targetMonth <= lastCachedMonth) return cached;
+  // フル span を再計算し、最終キャッシュ月より後 〜 当月 の月ブロックだけ採用（既存月・将来月は不変）。
+  const fresh = getOrGenerateInvoiceBlocks({ ...order, invoiceBlocks: undefined } as Order);
+  const appended = fresh
+    .filter((b) => b && b.monthPeriod && b.monthPeriod > lastCachedMonth && b.monthPeriod <= targetMonth)
+    .map((b) => {
+      // 追記月は純粋なレンタル料のみ。自動費用（配送料=初月 / 弁償費・燃料費=クローズ月）は
+      // キャッシュ済みブロック側に既に載っているため、追記した中間月へ二重計上しない（防御）。
+      const hasAuto = (b.extraCosts || []).some((c: any) => AUTO_EXTRA_COST_IDS.has(String(c?.id || "")));
+      if (!hasAuto) return b;
+      const cleaned = { ...b, extraCosts: (b.extraCosts || []).filter((c: any) => !AUTO_EXTRA_COST_IDS.has(String(c?.id || ""))) };
+      return recalculateInvoiceBlock(cleaned);
+    });
+  if (appended.length === 0) return cached;
+  const finalized = cached.map((b) =>
+    b && (b as any).status === "accumulating" && b.monthPeriod && b.monthPeriod < thisMonthStr
+      ? ({ ...b, status: "pending" } as InvoiceBlock)
+      : b,
+  );
+  return [...finalized, ...appended];
+}
+
+/**
  * Generates monthly invoice blocks dynamically from order items and dates if not already present.
  */
 export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
@@ -515,7 +564,9 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
     // 弁償費・配送料が未計上ならここで注入（キャッシュ済みブロックにも反映。冪等・削除尊重）。
     injectCompensationCharge(order, cached);
     injectDeliveryCharge(order, cached);
-    return cached;
+    // 稼働中（未クローズ）の注文は、当月へ繰り越した月次請求ブロックを自動追記する
+    //（イベント無しでも期限超過中の当月請求が現れる。既存の確定/入金済み月は不変）。
+    return appendRolledForwardMonths(order, cached);
   }
 
   // breakdown が無い品目は補完してから月ブロックを構築（¥0 請求書の防止）
