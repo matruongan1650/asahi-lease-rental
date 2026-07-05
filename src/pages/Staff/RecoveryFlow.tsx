@@ -114,8 +114,11 @@ export default function RecoveryFlow({ staffName, o, onComplete, onExit }: Recov
   };
 
   const confirmSign = () => {
+    // サイン確定タップで即コミット（旧実装は step4 の「倉庫へ戻る」まで onComplete を遅延させ、その間に
+    // アプリが kill されると回収が未確定＝現場サイン/検品結果の喪失になった=C1）。
     pushReports();
-    next();
+    clearDraft(draftKey);
+    onComplete(o.firestoreId || o.id, signed, prods.flatMap(p => p.report?.flatMap((r: any) => r.photos || []) || []), prods, buildExtra());
   };
 
   // 完了時に渡す付帯情報（受領者不在の根拠など）。

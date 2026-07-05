@@ -363,9 +363,12 @@ export default function DeliveryFlow({ o, onComplete, onExit, staffName }: Deliv
         </div>
       </>
     );
+    // 確定タップで即コミット（旧実装は step4 の「次の配送へ」まで onComplete を遅延させ、その間に
+    // アプリが kill されると成功表示済みなのに配送が未確定＝データ喪失＋課金開始日ズレになった=C1）。
+    const finishDelivery = () => { clearDraft(draftKey); pushDeliveryReports(); onComplete(o.firestoreId || o.id, signed, photos, buildExtra()); };
     footer = absentMode
-      ? <Btn full size="lg" variant="success" icon="check" disabled={!absentNote.trim() || (hasVehicleItems && !vehKm.trim())} onClick={next}>受領者不在で完了</Btn>
-      : <Btn full size="lg" variant="success" icon="check" disabled={!signed || (hasVehicleItems && !vehKm.trim())} onClick={next}>サインを確定</Btn>;
+      ? <Btn full size="lg" variant="success" icon="check" disabled={!absentNote.trim() || (hasVehicleItems && !vehKm.trim())} onClick={finishDelivery}>受領者不在で完了</Btn>
+      : <Btn full size="lg" variant="success" icon="check" disabled={!signed || (hasVehicleItems && !vehKm.trim())} onClick={finishDelivery}>サインを確定</Btn>;
   }
 
   if (step === 4) {
