@@ -136,8 +136,16 @@ export function buildStaffNotifications({
     list.push({ id: "staff-walkin", title: `持込返却 ${walkin.length}件`, body: "一次受付または最終検品が必要です", tone: "warning", target: "walkin" });
   }
 
-  const vehicleAlerts = vehicles.filter((v: any) => Number(v.days ?? v.inspectionDaysRemaining ?? 999) <= 30);
-  const maintAlerts = maintenance.filter((m: any) => Number(m.days ?? 999) <= 7);
+  // 車検/点検の残日数は保存値(v.days/m.days)ではなく日付から都度再計算する（保存値は登録時のスナップショットで、
+  // 日が経つと期限切れ車両がバッジ/ベルから漏れる=C21）。
+  const _st0 = (() => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime(); })();
+  const _daysFrom = (dateStr: any, fallback: number): number => {
+    const m = String(dateStr || "").replace(/\//g, "-").slice(0, 10).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (!m) return fallback;
+    return Math.round((new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime() - _st0) / 86400000);
+  };
+  const vehicleAlerts = vehicles.filter((v: any) => _daysFrom(v.inspectionDate ?? v.nextInspectionDate, Number(v.days ?? v.inspectionDaysRemaining ?? 999)) <= 30);
+  const maintAlerts = maintenance.filter((m: any) => _daysFrom(m.next ?? m.nextDate, Number(m.days ?? 999)) <= 7);
   if (vehicleAlerts.length + maintAlerts.length) {
     list.push({ id: "staff-inspection", title: `点検要対応 ${vehicleAlerts.length + maintAlerts.length}件`, body: "車両・保守点検を確認してください", tone: "danger", target: "inspect" });
   }

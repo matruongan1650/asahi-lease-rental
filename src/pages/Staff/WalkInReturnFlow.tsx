@@ -126,6 +126,9 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
 
   const isRecheck = order?.stage === "recheck";
   const priorSignature = order?.receptionSignature || order?.fieldSignature || null;
+  // 現場回収で受領者不在(サイン無し)だった recheck は、サインを必須にしない（倉庫スタッフの手書きを
+  // お客様サインとして誤記録しないため。バナー表示に切替）=C4。
+  const absentNoSign = isRecheck && !!order?.collectionUnsigned && !priorSignature;
   // 正規 whitelist で判定（部分一致だと「車両衝突緩衝材」等の保安用品が誤って車両扱いになる）。
   const hasVehicleItems = (order?.products || []).some((p: any) =>
     isVehicleCategory(p.category)
@@ -533,6 +536,12 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
             <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--fg-muted)", marginBottom: 8 }}>お客様サイン（{order.source === "field_recovery" ? "現場回収時" : "一次受付時"}に取得済み）</div>
             <img src={priorSignature} alt="サイン" style={{ width: "100%", maxHeight: 120, objectFit: "contain", background: "#fff", borderRadius: 12, border: "1px solid var(--border-2)" }} />
           </Card>
+        ) : absentNoSign ? (
+          <Card pad={14}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--warning-bright)" }}>現場回収時に受領者不在（サイン無し）</div>
+            {order?.collectionAbsentReason ? <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 6 }}>理由: {order.collectionAbsentReason}</div> : null}
+            <div style={{ fontSize: 12, color: "var(--fg-subtle)", marginTop: 6 }}>サインは不要です。倉庫検品を確定してください。</div>
+          </Card>
         ) : (
           <SignaturePad onChange={setSigned} />
         )}
@@ -540,7 +549,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
     );
     footer = (
       <Btn full size="lg" variant="success" icon="check"
-        disabled={(!signed && !(isRecheck && priorSignature)) || (isRecheck && hasVehicleItems && !fuelFull && !(Number(fuelCost) > 0))}
+        disabled={(!signed && !(isRecheck && priorSignature) && !absentNoSign) || (isRecheck && hasVehicleItems && !fuelFull && !(Number(fuelCost) > 0))}
         onClick={confirmSign}>
         {isRecheck ? "最終検品を確定" : "サインを確定"}
       </Btn>

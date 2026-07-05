@@ -393,13 +393,17 @@ function DeliveryRecoveryTab({ setFlow, doneDlv, doneRtn, outdoorMode }: any) {
   // 納品履歴: 配送完了済み（completeDelivery が staffStatus=配送完了 を設定）。
   // 回収履歴: 回収完了済み（completeRecovery が staffStatus=回収完了 を設定）。
   const deliveryHistory = (orders || []).filter(
-    (o: any) => o && (o.staffStatus === "配送完了" || o.signature || o.deliverySignature)
+    // 配送完了の恒久マーカーで判定（回収完了で staffStatus が上書きされても・不在納品でサインが無くても残す=C24）。
+    (o: any) => o && (o.staffStatus === "配送完了" || o.signature || o.deliverySignature || o.deliveryConfirmedAt || o.deliveredBy || o.deliveryUnsigned)
   ).sort(byOrderDateDesc);
   const recoveryHistory = (orders || []).filter(
     (o: any) =>
       o &&
+      // -R 返却分注文は継続注文と二重計上になるため除外（C25）。
+      !/-R-\d+$/.test(String(o.orderNumber || "")) &&
       (o.staffStatus === "回収完了" ||
         o.collectionSignature ||
+        o.collectionConfirmedAt ||
         o.status === "完了" ||
         o.status === "返却済" ||
         o.status === "返却済み")
@@ -531,6 +535,7 @@ function HistoryCard({ order, kind, date, onViewDoc }: any) {
 }
 
 function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, deliveries, recoveries, outdoorMode, onToggleOutdoor }: any) {
+  const { isEmailTaken } = useUser();
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>(user || {});
@@ -586,6 +591,10 @@ function ProfileTab({ staff, user, onUpdateProfile, onLogout, doneDlv, doneRtn, 
   if (editing) {
     const setValue = (key: string, value: string) => setDraft((d: any) => ({ ...d, [key]: value }));
     const save = () => {
+      // メール重複/空で保存すると本人も相手も login 不能(fail-closed)になるため事前検証(C22)。
+      const em = (draft.email || "").trim();
+      if (!em) { void alertDialog("メールアドレスを入力してください。"); return; }
+      if (isEmailTaken && isEmailTaken(em, user?.id)) { void alertDialog("このメールアドレスは既に使われています。別のアドレスを入力してください。"); return; }
       onUpdateProfile({
         lastName: draft.lastName || "",
         firstName: draft.firstName || "",

@@ -145,7 +145,7 @@ interface MobileLiveContextProps {
   returnInspections: any[];
   stockMoves: any[];
   recordMaintenance: (id: string, updates: any) => void;
-  addStockMove: (type: string, details?: { item: string; qty: number; ref?: string; icon?: string }, operator?: string) => void;
+  addStockMove: (type: string, details?: { item: string; qty: number; ref?: string; icon?: string; productId?: string }, operator?: string) => void;
   pushFieldReports: (reports: any[]) => void;
   /** 直前に完了した現場回収を取り消す（誤操作の訂正）。最終検品キューも削除し状態を戻す。 */
   undoRecovery: (orderId: string) => void;
@@ -527,6 +527,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         receptionReturnDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
         stage: "recheck",
         fieldSignature: signature || null,
+        // 受領者不在(サイン無し)で回収した場合の印。倉庫最終検品でサイン必須を解除し、倉庫スタッフの
+        // 手書きを「お客様の受領印」として誤記録しないようにする(C4)。
+        collectionUnsigned: !!(extra && extra.collectionUnsigned),
+        collectionAbsentReason: (extra && extra.absentReason) || "",
         // 現場で撮影した写真（dataURL のみ抽出）— 倉庫の最終検品画面で参照できる
         photos: (photos || [])
           .map((p: any) => (typeof p === "string" ? p : (p && p.dataUrl) || null))
@@ -623,8 +627,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     OrderBus.patch("maintenance", id, updates);
   };
 
-  const addStockMove = (type: string, details?: { item: string; qty: number; ref?: string; icon?: string }, operator?: string) => {
-    const { item, qty, ref, icon } = details || ({} as { item?: string; qty?: number; ref?: string; icon?: string });
+  const addStockMove = (type: string, details?: { item: string; qty: number; ref?: string; icon?: string; productId?: string }, operator?: string) => {
+    const { item, qty, ref, icon, productId } = details || ({} as { item?: string; qty?: number; ref?: string; icon?: string; productId?: string });
     if (!item) return; // 品目未指定（QR未スキャン等の不正呼び出し）でのクラッシュ／空レコード生成を防ぐ
     const isIn = type === "入庫";
     const now = new Date();
@@ -641,7 +645,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     if (!isIn && /配送|レンタル/.test(r)) category = "レンタル";
     else if (!isIn && /販売/.test(r)) category = "販売";
     else if (isIn && /回収|返却/.test(r)) category = "回収戻し";
-    const doc = { id, item, qty, date, type: category, staff: staffName, seq: now.getTime(), icon: icon || "package" };
+    // seq はシステム伝票(stockLedger.nextSeq=getTime*1000)とスケールを揃える。以前は getTime() (ms) で
+    // 桁が1000分の1になり履歴ソートで手動登録が常に最下層へ沈んでいた(C11)。productId で取消の商品解決を確実に(C10)。
+    const doc: any = { id, item, qty, date, type: category, staff: staffName, seq: now.getTime() * 1000, icon: icon || "package" };
+    if (productId) doc.productId = productId;
     if (isIn) {
       (doc as any).src = ref || "手動入庫";
       OrderBus.push("stockIn", doc);
@@ -656,9 +663,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
   };
 
   const stockMoves = useMemo(() => [
-    ...stockInRows.map(r => ({ id: r.id, type: "入庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.src || r.type || "", icon: r.icon || "boxIn", seq: r.seq || 0 })),
-    ...stockOutRows.map(r => ({ id: r.id, type: "出庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.dst || r.type || "", icon: r.icon || "boxOut", seq: r.seq || 0 })),
-  ].sort((a, b) => (b.seq || 0) - (a.seq || 0)), [stockInRows, stockOutRows]);
+    ...stockInRows.map(r => ({ id: r.id, type: "入庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.src || r.type || "", icon: r.icon || "boxIn", seq: r.seq || 0, productId: r.productId })),
+    ...stockOutRows.map(r => ({ id: r.id, type: "出庫", item: r.item, qty: r.qty, date: r.date || "", time: (r.date || "").slice(-5), ref: r.dst || r.type || "", icon: r.icon || "boxOut", seq: r.seq || 0, productId: r.productId })),
+    // 日時(文字列 YYYY/MM/DD HH:MM は辞書順=時系列)優先、同時刻は seq。旧データの seq スケール差(C11)にも耐える。
+  ].sort((a, b) => { const d = String(b.date || "").localeCompare(String(a.date || "")); return d !== 0 ? d : (b.seq || 0) - (a.seq || 0); }), [stockInRows, stockOutRows]);
 
   return (
     <MobileLiveContext.Provider value={{

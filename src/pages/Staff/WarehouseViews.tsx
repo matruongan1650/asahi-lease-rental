@@ -651,8 +651,11 @@ export function WhStock({ moves, addMove, onReturn, staffName }: any) {
     movingRef.current = true;
     try {
       const isIn = scan === "入庫";
-      if (picked && ml.adjustStock) ml.adjustStock(picked.firestoreId || picked.id, isIn ? qty : -qty);
-      if (picked) addMove(scan!, { item: picked.name, qty, icon: isVehicle(picked) ? "car" : "package" }, staffName);
+      // 出庫は在庫を超えて引かない（adjustStock は 0 でクランプするが伝票 qty は元のままだと、取消(+qty)と
+      // 非対称になり幽霊在庫が生まれる=C9）。実際に動かせる数(applied)を伝票にも記録して取消を対称にする。
+      const applied = isIn ? qty : Math.min(qty, Number(picked?.stock ?? 0));
+      if (picked && ml.adjustStock) ml.adjustStock(picked.firestoreId || picked.id, isIn ? applied : -applied);
+      if (picked) addMove(scan!, { item: picked.name, qty: applied, productId: picked.firestoreId || picked.id, icon: isVehicle(picked) ? "car" : "package" }, staffName);
       else addMove(scan!, undefined, staffName);
       setScan(null); setPicked(null);
     } finally {
@@ -677,7 +680,15 @@ export function WhStock({ moves, addMove, onReturn, staffName }: any) {
     if (reversingRef.current) return;
     if (!canReverse(m)) { setMoveDetail(null); return; }
     const isIn = m.type === "入庫";
-    const prod = ml.findProductByName ? ml.findProductByName(m.item) : null;
+    // 商品解決は伝票の productId 優先（同名商品=homonym で別商品の在庫を壊さない=C10）。
+    // 旧データ(productId 無し)は名前フォールバックだが、同名が複数ヒットしたら誤調整を避けて中止する。
+    let prod: any = null;
+    if (m.productId) prod = (ml.products || []).find((x: any) => x && (x.id === m.productId || x.firestoreId === m.productId)) || null;
+    if (!prod) {
+      const byName = (ml.products || []).filter((x: any) => x && x.name === m.item);
+      if (byName.length > 1) { setMoveDetail(null); return; } // 同名複数 → 誤取消防止で中止
+      prod = byName[0] || (ml.findProductByName ? ml.findProductByName(m.item) : null);
+    }
     if (!prod) { setMoveDetail(null); return; }
     reversingRef.current = true;
     try {
@@ -1152,8 +1163,13 @@ export function WhStocktake({ onBack, staffName }: { onBack?: () => void; staffN
     setDmg(null);
   };
 
+  const confirmingStRef = useRef(false);
   const confirmStocktake = () => {
-    const diffItems = inv.filter(i => i.counted !== null && i.counted !== i.system);
+    if (confirmingStRef.current) return; // 二度押しで棚卸調整伝票・セッションが二重記録されるのを防ぐ(C12)
+    confirmingStRef.current = true;
+    setTimeout(() => { confirmingStRef.current = false; }, 1000);
+    // リスト外商品(EX-)や商品マスタ未解決の行は在庫を動かせないので伝票も作らない(C14)。
+    const diffItems = inv.filter(i => i.counted !== null && i.counted !== i.system && !String(i.id).startsWith("EX-"));
     if (ml.setStock) {
       diffItems.forEach(i => {
         const targetId = i.firestoreId || i.id;
