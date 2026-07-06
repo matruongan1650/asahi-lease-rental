@@ -1,6 +1,7 @@
 import { CompanyGroup, RenterGroup, aggregateTotals } from "./rentalInvoiceGrouping";
 import { A4_PX_WIDTH, A4_PX_HEIGHT, renderSectionsToPdf, mountOffscreen } from "./pdfMultiPage";
-import { ensureMonthlyBreakdowns, getOrGenerateInvoiceBlocks, orderMonthKey, getTaxRate } from "./billing";
+import { ensureMonthlyBreakdowns, getOrGenerateInvoiceBlocks, orderMonthKey, getTaxRate, calculateRentalPrice, billingEndDate } from "./billing";
+import { isVehicleCategory } from "./productUtils";
 import { COMPANY, BANK } from "./companyInfo";
 
 // 消費税率のラベル（"10%" 等）。税額計算は getTaxRate() に統一済みなので表示も動的にする。
@@ -217,8 +218,47 @@ function getInvoiceLineRows(order: any, monthPeriod?: string): InvoiceLineRow[] 
         if (isFirstMonth) pushGuarantee(it);
       }
     });
-    // 追加費用（弁償費・燃料費・配送料 等）は当月ブロックから。
+    // 当月ブロック（追加費用の反映・明細フォールバックに使う）。
     const block = getOrGenerateInvoiceBlocks(order).find((b: any) => b.monthPeriod === monthPeriod);
+    // キャッシュ済み breakdown に当月が無い（レンタル中の自動延長で、後から新しい月のブロックだけ
+    // 生成された等）が、ブロックには当月の課金がある場合、rentPrice から当月分を再計算して明細を補完する。
+    // （明細が空欄のまま「ご請求金額」だけ出る不具合の根治。金額はブロックの baseSubtotal に按分整合させる。）
+    const hadItemRows = rows.some((r) => r.kubun === "日額" || r.kubun === "販売");
+    if (!hadItemRows && block && Number(block.baseSubtotal) > 0) {
+      const hasVehicle = typeof (order as any).minDaysHasVehicle === "boolean"
+        ? (order as any).minDaysHasVehicle
+        : (order.items || []).some((i: any) => i && i.type === "rent" && isVehicleCategory(i.category));
+      const end = billingEndDate(order);
+      const fresh = items
+        .filter((it: any) => it.type !== "buy")
+        .map((it: any) => {
+          const rp = Number(it.rentPrice) || 0;
+          if (!rp || !order.rentalStartDate || !end) return null;
+          try {
+            const { breakdown } = calculateRentalPrice(rp, order.rentalStartDate, end, hasVehicle, isVehicleCategory(it.category), it.rentPriceLongTerm);
+            const mb = breakdown.find((x: any) => x.monthStr === monthPeriod);
+            return mb && mb.price > 0 ? { it, days: Number(mb.days) || 0, price: mb.price } : null;
+          } catch { return null; }
+        })
+        .filter(Boolean) as { it: any; days: number; price: number }[];
+      const qtyOf = (it: any) => Number(it.quantity ?? 1) || 1;
+      const natural = fresh.reduce((s, x) => s + x.price * qtyOf(x.it), 0);
+      const target = Number(block.baseSubtotal) || 0;
+      const factor = natural > 0 ? target / natural : 1;
+      let acc = 0;
+      fresh.forEach((x, idx) => {
+        const qty = qtyOf(x.it);
+        // 端数は最終行で吸収し、行合計の総和 = block.baseSubtotal に一致させる。
+        const amount = idx === fresh.length - 1 ? Math.max(0, target - acc) : Math.round(x.price * qty * factor);
+        acc += amount;
+        const unitPerDay = x.days > 0 ? amount / (qty * x.days) : x.price;
+        rows.push({
+          kubun: "日額", name: x.it.name || "-", qty, days: x.days || "", deliveryDate: deliveryMD,
+          unitPrice: Math.round(unitPerDay),
+          amount: Math.round(amount), remarks: x.it.remarks || "",
+        });
+      });
+    }
     (block?.extraCosts || []).forEach((ec: any) => {
       rows.push({
         kubun: "その他", name: ec.itemName || ec.note || "追加費用", qty: 1, days: "", deliveryDate: "",
