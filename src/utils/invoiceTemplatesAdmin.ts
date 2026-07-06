@@ -1,25 +1,15 @@
 import { CompanyGroup, RenterGroup, aggregateTotals } from "./rentalInvoiceGrouping";
 import { A4_PX_WIDTH, A4_PX_HEIGHT, renderSectionsToPdf, mountOffscreen } from "./pdfMultiPage";
 import { ensureMonthlyBreakdowns, getOrGenerateInvoiceBlocks, orderMonthKey, getTaxRate } from "./billing";
+import { COMPANY, BANK } from "./companyInfo";
 
 // 消費税率のラベル（"10%" 等）。税額計算は getTaxRate() に統一済みなので表示も動的にする。
 const taxPctLabel = () => `${Math.round(getTaxRate() * 100)}%`;
 
-// ============================================================
-// 発行元（自社）情報・振込先。実際の請求書（PDF）と同じ値に揃える。
-// ============================================================
-const ISSUER = {
-  name: "アサヒリース 株式会社",
-  zip: "〒194-0021",
-  address1: "東京都町田市中町1-30-8 菅井町田ビル3-Ｄ",
-  tel: "042-850-9827",
-  fax: "042-850-9837",
-  regNo: "T3020001111097", // インボイス登録番号
-};
-
-// お振込先（銀行明細どおり）。
-const BANK_LINE = "三井住友銀行 町田支店 普通 8136136 アサヒリース(カ";
-const BANK_NOTE = "誠に恐れ入りますが振込手数料は貴社にてご負担をお願いいたします。";
+// 発行元（自社）情報・振込先は companyInfo.ts（単一の正）を参照する。
+const ISSUER = COMPANY;
+const BANK_LINE = BANK.line;
+const BANK_NOTE = BANK.note;
 const THANKS = "毎度ありがとうございます。下記の通りご請求申し上げます。";
 
 const labelDate = () => new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" });

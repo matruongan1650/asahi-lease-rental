@@ -3,6 +3,7 @@ import { alertDialog } from "./AppDialog";
 import { elementToPdf } from "../utils/pdfMultiPage"; // 複数ページ分割 + モバイル共有フォールバック
 import { isVehicleCategory } from "../utils/productUtils";
 import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks, ensureMonthlyBreakdowns, getTaxRate } from "../utils/billing";
+import { COMPANY, BANK } from "../utils/companyInfo";
 
 interface DocumentViewerProps {
   order: any;
@@ -114,6 +115,11 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     ? (block ? block.endDate : getInvoiceIssueDate(order))
     : today;
 
+  // 明細行に手入力の「備考」を引き当てる（注文品目から id→name の順で照合）。
+  const remarksById = new Map((order.items || []).map((i: any) => [i.id, i.remarks || ""]));
+  const remarksByName = new Map((order.items || []).map((i: any) => [i.name, i.remarks || ""]));
+  const lookupRemarks = (it: any) => it?.remarks ?? remarksById.get(it?.id) ?? remarksByName.get(it?.name) ?? "";
+
   let itemsToRender: any[] = [];
   if (block) {
     const monthlyData = calculateMonthlyInvoice(order, block.monthPeriod);
@@ -126,7 +132,8 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
       // 以前は buy で存在しない item.buyPrice を読み単価列が ¥0 になっていた。
       price: item.price,
       calculatedPrice: item.type === 'rent' ? item.rentalFee : item.total,
-      guaranteeFeeFlat: item.guaranteeFee
+      guaranteeFeeFlat: item.guaranteeFee,
+      remarks: lookupRemarks(item),
     }));
     if (block.extraCosts) {
       block.extraCosts.forEach((cost: any) => {
@@ -263,7 +270,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
               </div>
               <div className="text-right">
                 <p className="mb-2 text-sm">発行日: {issueDate}</p>
-                <p className="text-sm">文書番号: {order.orderNumber}</p>
+                <p className="text-sm">受注番号: {order.receiptNumber || order.orderNumber}</p>
               </div>
             </div>
 
@@ -288,12 +295,11 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
               </div>
               
               <div className="text-right text-sm leading-relaxed">
-                <p className="font-bold text-lg mb-1 tracking-widest">アサヒリース 株式会社</p>
-                <p>〒194-0021</p>
-                <p>東京都町田市中町1-30-8</p>
-                <p>菅井町田ビル3-Ｄ</p>
-                <p>TEL: 042-709-3221</p>
-                <p>インボイス登録番号: T1234567890123</p>
+                <p className="font-bold text-lg mb-1 tracking-widest">{COMPANY.name}</p>
+                <p>{COMPANY.zip}</p>
+                <p>{COMPANY.address1}</p>
+                <p>TEL: {COMPANY.tel} / FAX: {COMPANY.fax}</p>
+                <p>登録番号: {COMPANY.regNo}</p>
               </div>
             </div>
 
@@ -316,6 +322,13 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                       )}
                     </td>
                   </tr>
+                  {/* 自社担当（手入力）: 請求書→請求担当 / 納品書・回収書→納品担当。値がある時のみ表示。 */}
+                  {((type === "請求書" && order.billingStaff) || (type !== "請求書" && order.deliveryStaff)) && (
+                    <tr>
+                      <th className="border border-slate-300 bg-slate-100 p-2 text-left">{type === "請求書" ? "請求担当" : "納品担当"}</th>
+                      <td className="border border-slate-300 p-2" colSpan={3}>{type === "請求書" ? order.billingStaff : order.deliveryStaff}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -336,6 +349,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                       <th className="border border-slate-400 p-2 text-right w-32">金額</th>
                     </>
                   )}
+                  <th className="border border-slate-400 p-2 text-left w-28">備考</th>
                 </tr>
               </thead>
               <tbody>
@@ -371,6 +385,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                           <td className="border border-slate-300 p-2 text-right">¥{formatYen(calculatedPrice)}</td>
                         </>
                       )}
+                      <td className="border border-slate-300 p-2 text-xs text-slate-600">{item.remarks || ""}</td>
                     </tr>
                   );
                 })}
@@ -388,6 +403,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
                         <td className="border border-slate-300 p-2">&nbsp;</td>
                       </>
                     )}
+                    <td className="border border-slate-300 p-2">&nbsp;</td>
                   </tr>
                 ))}
               </tbody>
@@ -443,9 +459,9 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
             {type === "請求書" && (
               <div className="mt-12 text-sm p-4 border border-slate-300 rounded">
                 <p className="font-bold mb-2 underline">お振込先</p>
-                <p>〇〇銀行 〇〇支店 (普) 1234567</p>
-                <p>口座名義：アサヒリース株式会社</p>
-                <p className="mt-2 text-red-600 text-xs">※お振込手数料は貴社にてご負担くださいますようお願い申し上げます。</p>
+                <p>{BANK.line}</p>
+                <p>口座名義：{BANK.holder}</p>
+                <p className="mt-2 text-red-600 text-xs">※{BANK.note}</p>
               </div>
             )}
 
