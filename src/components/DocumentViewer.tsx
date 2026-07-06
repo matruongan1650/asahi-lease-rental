@@ -1,9 +1,22 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { alertDialog } from "./AppDialog";
-import { elementToPdf } from "../utils/pdfMultiPage"; // 複数ページ分割 + モバイル共有フォールバック
+import { elementToPdf, renderSectionsToPdf, mountOffscreen } from "../utils/pdfMultiPage"; // 複数ページ分割 + モバイル共有フォールバック
 import { isVehicleCategory } from "../utils/productUtils";
 import { calculateMonthlyInvoice, getOrGenerateInvoiceBlocks, ensureMonthlyBreakdowns, getTaxRate } from "../utils/billing";
 import { COMPANY, BANK } from "../utils/companyInfo";
+import { renderOrderInvoicePage } from "../utils/invoiceTemplatesAdmin";
+
+// 会社別請求書PDFと同じ HTMLElement（現場別請求書ページ）をプレビューに差し込むラッパー。
+function HTMLElementWrapper({ element }: { element: HTMLElement }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.innerHTML = "";
+    container.appendChild(element);
+  }, [element]);
+  return <div ref={containerRef} />;
+}
 
 interface DocumentViewerProps {
   order: any;
@@ -43,23 +56,53 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     return () => window.removeEventListener("resize", compute);
   }, []);
 
-  const handleDownloadPdf = async () => {
-    if (!documentRef.current) return;
-    setIsGenerating(true);
-    const element = documentRef.current;
-    // PDF は常に等倍の A4 でキャプチャする。スマホ表示の縮小はラッパー(fitRef)の zoom で行うため、
-    // 撮影中だけラッパーの zoom を解除して documentRef の実寸(794px)を確保する（縮小されたまま撮ると小さく粗い PDF になる）。
-    const fit = fitRef.current;
-    const prevZoom = fit ? (fit.style as any).zoom : undefined;
-    if (fit) (fit.style as any).zoom = "1";
+  // 請求書は、会社別請求書PDFと同一の「現場別請求書」レイアウト(renderOrderInvoicePage)で描画して両者を一致させる。
+  // 納品書・回収書は従来の JSX 帳票(documentRef)のまま。
+  // (type as string) で型の絞り込みを避ける：documentRef 内には従来の請求書用分岐が残るが、
+  // 請求書は下の invoicePages で描画するため documentRef には入らず、その分岐は 納品書・回収書 では発火しない。
+  const isInvoice = (type as string) === "請求書";
+  const allBlocks = getOrGenerateInvoiceBlocks(order);
+  const block = blockId ? allBlocks.find((b: any) => b.id === blockId) : null;
+  const companyNameForInvoice = order.companyName?.trim() || order.customer?.trim() || order.customerName?.trim() || "(会社名未設定)";
+  // 特定月ブロックを表示中はその月に絞る。注文詳細から開いた場合(block 無し)は全期間の請求書。
+  const invoiceMonthPeriod = block ? block.monthPeriod : undefined;
+  const invoicePages = useMemo(() => {
+    if (!isInvoice) return [];
     try {
-      // elementToPdf が「画像デコード待ち → 等倍キャプチャ → 複数ページ分割 → 保存（モバイルは共有）」を行う。
-      await elementToPdf(element, `${type}_${order.orderNumber || "document"}.pdf`);
+      return renderOrderInvoicePage(order, { companyName: companyNameForInvoice, monthPeriod: invoiceMonthPeriod });
+    } catch (e) {
+      console.error("請求書レンダリングエラー:", e);
+      return [] as HTMLElement[];
+    }
+  }, [isInvoice, order, invoiceMonthPeriod, companyNameForInvoice]);
+
+  const handleDownloadPdf = async () => {
+    setIsGenerating(true);
+    try {
+      // 請求書: 会社別請求書PDFと同じ現場別請求書を新規ノードで生成して出力（プレビュー用ノードを壊さない）。
+      if (isInvoice) {
+        const nodes = renderOrderInvoicePage(order, { companyName: companyNameForInvoice, monthPeriod: invoiceMonthPeriod });
+        const cleanup = mountOffscreen(nodes);
+        try {
+          await renderSectionsToPdf(nodes, `請求書_${order.receiptNumber || order.orderNumber || "document"}.pdf`);
+        } finally { cleanup(); }
+        return;
+      }
+      // 納品書・回収書: 従来どおり documentRef を等倍キャプチャして出力。
+      if (!documentRef.current) return;
+      const element = documentRef.current;
+      const fit = fitRef.current;
+      const prevZoom = fit ? (fit.style as any).zoom : undefined;
+      if (fit) (fit.style as any).zoom = "1";
+      try {
+        await elementToPdf(element, `${type}_${order.orderNumber || "document"}.pdf`);
+      } finally {
+        if (fit) (fit.style as any).zoom = prevZoom || "";
+      }
     } catch (err) {
       console.error("PDF生成エラー:", err);
       void alertDialog("PDFの生成中にエラーが発生しました。");
     } finally {
-      if (fit) (fit.style as any).zoom = prevZoom || "";
       setIsGenerating(false);
     }
   };
@@ -91,12 +134,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
     return `${yyyy}/${mm}/${dd}`;
   }
 
-  // 注文に invoiceBlocks が保存されていない場合でも生成して参照する。
-  // （保存されていないと per-month 請求書がブロックを見つけられず、注文全体の合計に
-  //  フォールバックして月別の金額がずれる）
-  const allBlocks = getOrGenerateInvoiceBlocks(order);
-  const block = blockId ? allBlocks.find((b: any) => b.id === blockId) : null;
-
+  // allBlocks / block は上部（請求書レンダリング用）で算出済みのものを再利用する。
   // Totals to display.
   // 全体合計(block 無し)の請求書は、order.subtotal/total（弁償費・燃料費・配送料が反映されない
   // 古い値になり得る）ではなく、生成済みブロック allBlocks の合計を使う。これで印字明細(下で
@@ -249,7 +287,17 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
           {/* 表示フィット用ラッパー: スマホでは zoom で画面幅に縮小（PDF 撮影時のみ等倍へ戻す）。
               撮影対象の documentRef 自体は常に固定 A4(794px) を保ち、見積書PDFと同一条件で出力する。 */}
           <div ref={fitRef} style={{ zoom: docScale } as React.CSSProperties}>
-          {/* A4 Document Container（固定 794×1123px・等倍・白背景）— 見積書PDFと同じ方式。 */}
+          {isInvoice ? (
+            /* 請求書: 会社別請求書PDFと同一の現場別請求書ページ（複数ページは縦に積む）。 */
+            <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 12 : 24 }}>
+              {invoicePages.map((pageEl, i) => (
+                <div key={i} className="bg-white shadow-sm" style={{ width: "794px", minHeight: "1123px" }}>
+                  <HTMLElementWrapper element={pageEl} />
+                </div>
+              ))}
+            </div>
+          ) : (
+          /* A4 Document Container（固定 794×1123px・等倍・白背景）— 見積書PDFと同じ方式。 */
           <div
             ref={documentRef}
             className="bg-white shadow-sm"
@@ -483,6 +531,7 @@ export default function DocumentViewer({ order, type, blockId, onClose }: Docume
             )}
 
           </div>
+          )}
           </div>
         </div>
       </div>
