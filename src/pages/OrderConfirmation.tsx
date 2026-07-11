@@ -1,4 +1,5 @@
 import { Link, useNavigate, useLocation, Navigate } from "react-router-dom";
+import { getTaxRate } from "../utils/billing";
 import { useEffect } from "react";
 import { useCart } from "../context/CartContext";
 import { isVehicleCategory } from '../utils/productUtils';
@@ -135,7 +136,7 @@ function OrderConfirmationMobile() {
         <span className="font-medium">¥{subtotal.toLocaleString()}</span>
       </div>
       <div className="flex justify-between items-center text-sm">
-        <span className="text-slate-500 dark:text-slate-400">消費税 (10%)</span>
+        <span className="text-slate-500 dark:text-slate-400">消費税 ({subtotal > 0 ? Math.round((tax / subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span>
         <span className="font-medium">¥{tax.toLocaleString()}</span>
       </div>
       <div className="flex justify-between items-center pt-2 border-t border-dashed border-border-light dark:border-border-dark mt-2">

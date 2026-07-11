@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { alertDialog } from "../../components/AppDialog";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useOrders } from "../../context/OrderContext";
 import { useUser } from "../../context/UserContext";
 import { isVehicleCategory, getItemUnit } from "../../utils/productUtils";
 import DocumentViewer from "../../components/DocumentViewer";
-import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState } from "../../utils/billing";
+import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState, getTaxRate } from "../../utils/billing";
 import OrderBus from "../../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { isFullyReturned, isReturnEligible } from "../../utils/orderStatus";
@@ -94,6 +94,19 @@ export default function OrderDetailDesktop() {
   const isPrivileged = currentUser?.role === "admin" || currentUser?.role === "staff";
   // deny-by-default: 未ログイン + userId 未設定の注文で undefined === undefined となり素通りしていた IDOR を防ぐ。
   const order = found && (isPrivileged || (!!currentUser?.id && !!found.userId && found.userId === currentUser.id)) ? found : undefined;
+
+  // 延長後の合計を即時プレビュー（モバイル版 E2 と同一。確定前に追加課金額が見えるように）(C9)。
+  const extensionPreview = useMemo(() => {
+    if (!order || !order.rentalStartDate || !order.rentalEndDate || !newEndDate) return null;
+    const selectedEnd = parseDateLocal(newEndDate);
+    const currentEnd = parseDateLocal(order.rentalEndDate);
+    if (isNaN(selectedEnd.getTime()) || selectedEnd < currentEnd) return null;
+    try {
+      // 確定処理(computeExtension)と完全に同じ計算（プレビューと確定額のズレを根絶）。
+      const { total } = computeExtension(order, newEndDate);
+      return { newTotal: total, diff: total - (Number(order.total) || 0) };
+    } catch { return null; }
+  }, [newEndDate, order]);
 
   if (!order) {
     return (
@@ -451,7 +464,7 @@ export default function OrderDetailDesktop() {
             <h3 className={sectionTitle}>お支払い明細</h3>
             <div className="flex flex-col gap-3">
               <div className="flex justify-between text-sm"><span className="text-slate-500">小計</span><span className="font-medium text-slate-900">¥{order.subtotal.toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-slate-500">消費税 (10%)</span><span className="font-medium text-slate-900">¥{order.tax.toLocaleString()}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-slate-500">消費税 ({order.subtotal > 0 ? Math.round((order.tax / order.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span><span className="font-medium text-slate-900">¥{order.tax.toLocaleString()}</span></div>
               <div className="flex justify-between items-center pt-3 border-t border-slate-200"><span className="font-bold text-slate-900">合計金額</span><span className="font-extrabold text-primary text-2xl tracking-tighter">¥{order.total.toLocaleString()}</span></div>
             </div>
           </section>
@@ -479,10 +492,18 @@ export default function OrderDetailDesktop() {
           <section className={card}>
             <h3 className={sectionTitle}><span className="material-symbols-outlined text-[16px]">file_copy</span>帳票・書類</h3>
             <div className="flex flex-col gap-3">
+              {/* 納品書は配送済み以降のみ（モバイル版と同一ゲート。処理中/キャンセルで発行できてしまう移植漏れの修正）(C8) */}
+              {activeStep >= 3 ? (
               <button onClick={() => setViewingDoc("納品書")} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-primary hover:bg-blue-50 transition-all font-medium text-sm text-slate-700">
                 <div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-blue-100 flex items-center justify-center text-primary"><span className="material-symbols-outlined text-[18px]">receipt_long</span></div><span>納品書を表示・DL</span></div>
                 <span className="material-symbols-outlined text-slate-400 text-[20px]">chevron_right</span>
               </button>
+              ) : (
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-slate-200 text-sm text-slate-400">
+                <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center"><span className="material-symbols-outlined text-[18px]">receipt_long</span></div>
+                <span>納品書は配送完了後に発行されます</span>
+              </div>
+              )}
               {(isFullyReturned(order.status) || order.status === "一部返却" || order.status === "完了" || (blocks && blocks.length > 0)) && (
                 <>
                   <button onClick={() => { if (blocks && blocks.length > 1) setShowInvoiceSelector(true); else if (blocks && blocks.length === 1) { setViewingBlockId(blocks[0].id); setViewingDoc("請求書"); } else setViewingDoc("請求書"); }} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-primary hover:bg-blue-50 transition-all font-medium text-sm text-slate-700 cursor-pointer">
@@ -514,6 +535,17 @@ export default function OrderDetailDesktop() {
                   <label className="block text-xs font-bold text-slate-600 mb-1">新しい返却予定日</label>
                   <input type="date" value={newEndDate} min={extensionMinDate(order)} onChange={(e) => { setNewEndDate(e.target.value); setExtendingError(""); }} className="w-full bg-slate-50 border border-slate-200 rounded-lg h-10 px-3 font-medium outline-none focus:ring-1 focus:ring-primary focus:border-primary" />
                 </div>
+                {extensionPreview && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-100 p-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-slate-500">延長後の合計</span>
+                      <span className="font-bold text-primary text-base">¥{extensionPreview.newTotal.toLocaleString()}</span>
+                    </div>
+                    {extensionPreview.diff > 0 && (
+                      <p className="text-[11px] text-slate-400 mt-0.5 text-right">現在より +¥{extensionPreview.diff.toLocaleString()}</p>
+                    )}
+                  </div>
+                )}
                 {extendingError && <p className="text-xs text-red-500 font-bold">{extendingError}</p>}
               </div>
             </div>

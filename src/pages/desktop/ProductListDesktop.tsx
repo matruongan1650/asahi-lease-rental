@@ -128,7 +128,9 @@ export default function ProductListDesktop() {
             <div className="grid grid-cols-2 xl:grid-cols-3 gap-5">
               {filteredProducts.map((product) => {
                 const qty = quantities[product.id] || 0;
-                const out = !product.stock || product.stock <= 0;
+                const out = !product.stock || product.stock <= 0
+                  // レンタル単価未設定は SALES_ENABLED=false ではカート投入不可（¥0 レンタル注文の防止）(C4)。
+                  || (!SALES_ENABLED && !(Number(product.rentPrice) > 0));
                 return (
                   <div key={product.id} className="group bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
                     <Link to={`/product/${product.id}`} className="relative block aspect-[4/3] bg-slate-50 overflow-hidden">

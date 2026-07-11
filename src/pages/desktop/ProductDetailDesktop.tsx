@@ -23,7 +23,10 @@ export default function ProductDetailDesktop() {
     window.scrollTo(0, 0);
     setQuantity(1);
     setActionType(!SALES_ENABLED ? "rent" : (product?.rentPrice ? "rent" : "buy"));
-  }, [id, product]);
+    // 依存は id（+初回ロード時の product?.id 遷移）のみ。product 参照だとポーリング更新のたびに
+    // 数量・スクロール位置がリセットされる(C5)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, product?.id]);
 
   if (!product) {
     // 未ロード時はローディング、ロード済みで該当なしのときのみ「見つかりません」（先頭商品に誤フォールバックしない）。
@@ -41,7 +44,9 @@ export default function ProductDetailDesktop() {
     );
   }
 
-  const out = actionType === "rent" && Number(product.stock || 0) <= 0;
+  const out = actionType === "rent" && (Number(product.stock || 0) <= 0
+    // レンタル単価未設定は SALES_ENABLED=false ではカート投入不可（¥0 レンタル注文の防止）(C4)。
+    || (!SALES_ENABLED && !(Number(product.rentPrice) > 0)));
   const related = (products || []).filter((p) => p?.category === product.category && p.id !== product.id).slice(0, 4);
 
   const buildItem = () => ({

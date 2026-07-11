@@ -1,13 +1,15 @@
 import React, { useState, useRef } from "react";
 import { alertDialog } from "../../components/AppDialog";
 import { Link, useNavigate } from "react-router-dom";
+import OrderBus from "../../lib/orderBus";
 import { useUser } from "../../context/UserContext";
 
 /** PC 用 個人情報編集（お客様デスクトップサイト）。モバイル PersonalInfo と同じ保存処理・権限ロジックを再利用。 */
 export default function PersonalInfoDesktop() {
   const navigate = useNavigate();
-  const { profile, setProfile } = useUser();
+  const { profile, updateUser, isEmailTaken } = useUser();
   const [formData, setFormData] = useState(profile);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -30,12 +32,38 @@ export default function PersonalInfoDesktop() {
   // 会社グループが壊れるのを防ぐ）。会社情報の変更は会社代表(customer)または管理者のみ。
   const isSubUser = profile.role === "customer_staff";
 
-  const handleSave = () => {
-    setProfile({
-      ...formData,
-      companyName: isSubUser ? profile.companyName : formData.companyName,
+  const handleSave = async () => {
+    const email = (formData.email || "").trim();
+    // 必須・形式・重複チェック（モバイル版と同一）。重複メールにすると login が fail-closed になり
+    // 自分と相手の両方がメールでログイン不能になるため必須(C18)。
+    if (!(formData.lastName || "").trim() || !(formData.firstName || "").trim()) {
+      void alertDialog("姓・名を入力してください。");
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      void alertDialog("メールアドレスの形式が正しくありません。");
+      return;
+    }
+    if (isEmailTaken(email, profile.id)) {
+      void alertDialog("このメールアドレスは既に使われています。別のアドレスを入力してください。");
+      return;
+    }
+    if (isSaving) return; // 二重送信ガード(C21)
+    setIsSaving(true);
+    // 編集フィールドのみ差分パッチ（password/status 等を書き戻して admin の変更を巻き戻さない）(C20)。
+    updateUser(profile.id, {
+      lastName: formData.lastName || "",
+      firstName: formData.firstName || "",
+      email,
+      phone: formData.phone || "",
+      address: formData.address || "",
+      avatarUrl: formData.avatarUrl || "",
+      ...(isSubUser ? {} : { companyName: formData.companyName || "" }),
     });
-    void alertDialog("保存しました。");
+    // 同期の確定を待って成功/送信待ちを出し分け（オフラインでも「保存しました」と誤表示しない）(C21)。
+    const ok = await OrderBus.flush(8000);
+    setIsSaving(false);
+    void alertDialog(ok ? "保存しました。" : "保存しましたが、通信が不安定なため同期待ちです。電波の良い場所で自動的に再送信されます。");
     navigate(-1);
   };
 
@@ -151,9 +179,10 @@ export default function PersonalInfoDesktop() {
           </button>
           <button
             onClick={handleSave}
-            className="inline-flex items-center gap-2 px-8 py-3 rounded-xl bg-primary text-white font-bold hover:bg-blue-600 active:scale-[0.98] transition-transform shadow-lg shadow-primary/20"
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 px-8 py-3 rounded-xl bg-primary text-white font-bold hover:bg-blue-600 active:scale-[0.98] transition-transform shadow-lg shadow-primary/20 disabled:opacity-60"
           >
-            <span className="material-symbols-outlined text-[20px]">save</span>保存する
+            <span className="material-symbols-outlined text-[20px]">save</span>{isSaving ? "保存中…" : "保存する"}
           </button>
         </div>
       </div>

@@ -229,6 +229,19 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const currentUser =
     (sessionUserId && users.find((u) => u && u.id === sessionUserId)) || null;
 
+  // 停止(inactive)・削除されたアカウントの「生存セッション」を終了させる。login 時だけの判定だと、
+  // admin がユーザー管理で停止してもログイン済み端末には一生効かない（3sポーリングで status は
+  // 同期済みなので追加通信は不要）(C19)。初期ロード前(users 空)は誤破棄しないようスキップ。
+  useEffect(() => {
+    if (!sessionUserId || users.length === 0) return;
+    const u = users.find((x) => x && x.id === sessionUserId);
+    if (!u || (u.status || "active") === "inactive") {
+      setUserToken(null);
+      persistSession(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUserId, users]);
+
   // profile: ログイン中はそのユーザー。未ログイン時は旧来のフォールバック
   // （admin 画面など認証ゲート外からの利用を壊さないため）。
   const profile = currentUser || fallbackProfile;

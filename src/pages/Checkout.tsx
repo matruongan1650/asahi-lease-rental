@@ -568,7 +568,7 @@ function CheckoutMobile() {
                   <td className="border p-2.5 text-right font-medium" style={{ borderColor: "#94a3b8" }}>¥{subtotal.toLocaleString()}</td>
                 </tr>
                 <tr>
-                  <th className="border p-2.5 text-right font-bold" style={{ borderColor: "#94a3b8", backgroundColor: "#f8fafc" }}>消費税 (10%)</th>
+                  <th className="border p-2.5 text-right font-bold" style={{ borderColor: "#94a3b8", backgroundColor: "#f8fafc" }}>消費税 ({Math.round(getTaxRate() * 100)}%)</th>
                   <td className="border p-2.5 text-right font-medium" style={{ borderColor: "#94a3b8" }}>¥{tax.toLocaleString()}</td>
                 </tr>
                 <tr>

@@ -5,7 +5,7 @@ import { useOrders } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
 import { isVehicleCategory, getItemUnit } from '../utils/productUtils';
 import DocumentViewer from "../components/DocumentViewer";
-import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState } from "../utils/billing";
+import { calculateRentalPrice, calculateTotalPayment, parseDateLocal, getOrGenerateInvoiceBlocks, regenerateBlocksPreservingState, getTaxRate } from "../utils/billing";
 import OrderBus from "../lib/orderBus";
 import { formatStatusWithReturnRequest } from "../utils/returnLabels";
 import { isFullyReturned, isReturnEligible } from "../utils/orderStatus";
@@ -422,7 +422,7 @@ function OrderDetailMobile() {
               <span className="font-medium text-slate-900 dark:text-white">¥{order.subtotal.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">消費税 (10%)</span>
+              <span className="text-slate-500 dark:text-slate-400">消費税 ({order.subtotal > 0 ? Math.round((order.tax / order.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span>
               <span className="font-medium text-slate-900 dark:text-white">¥{order.tax.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center pt-3 border-t border-slate-200 dark:border-slate-700">

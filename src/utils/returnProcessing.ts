@@ -73,7 +73,11 @@ export function computeReturnSplit(
     // 返却数は「貸出中の残数」を上限にクランプする。倉庫最終検品の QtyStepper は expected+20 まで
     // 入力できるため、数量超過（誤カウント/別物混入）があってもレンタル料が過大請求にならないようにする
     //（超過分は数量超過レポートで扱う。弁償費側 computeCompensationCharge は既にクランプ済み）。
-    const returningQty = Math.min(returnQuantities[item.id] || 0, Math.max(0, currentRemainingQty));
+    // 返却数はレンタル行にのみ適用する。数量マップは item.id キーのため、同一IDで rent/buy 両行を
+    // 持つ旧注文だと購入行にも返却数が乗り、-R 注文に buyPrice が計上されて請求が狂う(C15)。
+    const returningQty = item.type === "rent"
+      ? Math.min(returnQuantities[item.id] || 0, Math.max(0, currentRemainingQty))
+      : 0;
     const newRemainingQty = currentRemainingQty - returningQty;
 
     // 1. 返却される品目
@@ -254,6 +258,7 @@ export async function finalizePartialReturn(
       actualReturnDate,
       invoiceBlocks: newInvoiceBlocks,
       requestedReturn: {},
+      returnRequestType: "", // 依頼中フラグを確定時に消す（「返却済 一括返却」等の残留チップ防止）(C10)
       ...extraFields,
       ...(itemIssues ? { itemIssues } : {}),
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
@@ -306,6 +311,7 @@ export async function finalizePartialReturn(
       staffStatus: "配送完了",
       invoiceBlocks: remainingInvoiceBlocks,
       requestedReturn: {},
+      returnRequestType: "", // 確定済みなのに「一部返却 一部返却」と依頼中チップが重複表示されるのを防ぐ(C10)
       // ★itemIssues は継続注文に載せない（返却分=-R 注文に既に保存済み）。載せると同じ破損/紛失を
       //   継続注文の現場報告からも弁償請求でき、二重請求になる（C15）。表示用途は -R 側で確認する。
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),

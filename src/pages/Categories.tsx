@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useProducts } from "../context/ProductContext";
-import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
+import { getSupplyCategories, getCategoryIcon, getVehicleCategories, VEHICLE_CATEGORY_IMAGES } from "../utils/productUtils";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import CategoriesDesktop from "./desktop/CategoriesDesktop";
@@ -153,15 +153,22 @@ function CategoriesMobile() {
                 <span className="material-symbols-outlined text-blue-500">local_shipping</span>
                 保安車両一覧
               </h2>
-              <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-1 rounded-full">5 カテゴリ</span>
+              <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-1 rounded-full">{getVehicleCategories(products).length} カテゴリ</span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <VehicleCategoryItem name="軽トラック" bgImage="https://img1.kakaku.k-img.com/Images/prdnews/2021122%2F20211220190008_457_.jpg" />
-              <VehicleCategoryItem name="軽バン" bgImage="https://www.carsensor.net/contents/article_images/_66941/every01.jpg" />
-              <VehicleCategoryItem name="2tノーマル" bgImage="https://www.kaitoriou.net/page/wp-content/uploads/2021/10/aeee94831383a2fa7cc4b3acad0ece5d.png" />
-              <VehicleCategoryItem name="2tロング" bgImage="https://www.trl-chiba.co.jp/images/car/t3-01-01.jpg" />
-              <VehicleCategoryItem name="2t Wキャブノーマル" bgImage="https://www.imagiire.co.jp/files/topics/495_ext_05_0_L.png" />
-            </div>
+            {/* 商品から動的抽出（ハードコード5件だと 2tトラック/3tロング/高所作業車 が導線から欠落する）(C6) */}
+            {getVehicleCategories(products).length > 0 ? (
+              <div className="grid grid-cols-2 gap-3">
+                {getVehicleCategories(products).map((cat) => (
+                  <VehicleCategoryItem
+                    key={cat}
+                    name={cat}
+                    bgImage={VEHICLE_CATEGORY_IMAGES[cat] || products.find((p) => p && p.category === cat && p.image)?.image || ""}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">カテゴリがありません</div>
+            )}
           </section>
         )}
       </main>
@@ -171,7 +178,7 @@ function CategoriesMobile() {
 
 function CategoryItem({ icon, name }: { icon: string, name: string }) {
   return (
-    <Link to={`/products?category=${name}`} className="flex items-center p-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm hover:border-primary/50 transition-all active:scale-[0.98]">
+    <Link to={`/products?category=${encodeURIComponent(name)}`} className="flex items-center p-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm hover:border-primary/50 transition-all active:scale-[0.98]">
       <span className="material-symbols-outlined text-slate-400 text-[20px] mr-2">{icon}</span>
       <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{name}</span>
     </Link>
@@ -180,7 +187,7 @@ function CategoryItem({ icon, name }: { icon: string, name: string }) {
 
 function VehicleCategoryItem({ name, bgImage }: { name: string, bgImage: string }) {
   return (
-    <Link to={`/products?category=${name}`} className="group relative overflow-hidden rounded-xl bg-slate-900 aspect-[4/3] shadow-sm">
+    <Link to={`/products?category=${encodeURIComponent(name)}`} className="group relative overflow-hidden rounded-xl bg-slate-900 aspect-[4/3] shadow-sm">
       <div className="absolute inset-0 bg-cover bg-center group-hover:scale-110 transition-transform duration-500" style={{ backgroundImage: `url("${bgImage}")`}}></div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
       <div className="absolute bottom-0 left-0 p-3 w-full">

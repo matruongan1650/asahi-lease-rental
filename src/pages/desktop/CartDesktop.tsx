@@ -71,9 +71,10 @@ export default function CartDesktop() {
           <div className="rounded-xl bg-blue-50/60 p-4 border border-blue-100 text-xs text-blue-800 flex gap-2">
             <span className="material-symbols-outlined text-[18px] text-blue-600 shrink-0">info</span>
             <p className="leading-relaxed">
+              {/* 最低日数は開始月ブロックに適用される（総日数基準ではない）。実請求と一致する文言に修正(C2)。 */}
               {hasVehicle
-                ? "※車両を含むため、レンタル期間が3日未満でも最低3日分の料金が発生します。"
-                : "※レンタル期間が10日未満でも最低10日分の料金が発生します（車両を含む場合は最低3日分）。"}
+                ? "※車両を含むため、開始月のご利用日数が3日未満の場合、開始月は最低3日分の料金となります。"
+                : "※開始月のご利用日数が10日未満の場合、開始月は最低10日分の料金となります（車両を含む場合は最低3日分）。"}
             </p>
           </div>
 

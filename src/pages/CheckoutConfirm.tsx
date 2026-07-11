@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useLocation, useNavigate, Navigate } from "react-router-dom";
 import { useOrders } from "../context/OrderContext";
 import { useCart } from "../context/CartContext";
+import { useProducts } from "../context/ProductContext";
 import { alertDialog } from "../components/AppDialog";
 import { getItemUnit } from "../utils/productUtils";
 import { useIsDesktop } from "../hooks/useIsDesktop";
@@ -16,6 +17,7 @@ function CheckoutConfirmMobile() {
   const navigate = useNavigate();
   const { addOrder } = useOrders();
   const { clearCart } = useCart();
+  const { products } = useProducts();
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const orderData = location.state?.orderData;
@@ -27,6 +29,25 @@ function CheckoutConfirmMobile() {
   const handleOrderConfirm = async () => {
     if (isSubmitting) return; // 連打による二重注文を防止
     setIsSubmitting(true);
+    // 注文確定直前に最新在庫と再照合する（カート投入時クランプだけでは 3s ポーリング/長期保持で
+    // 在庫超過のまま確定できてしまう）(C1)。超過・取扱終了があれば中断して確認を促す。
+    if ((products || []).length > 0) {
+      const problems: string[] = [];
+      (orderData.items || []).forEach((it: any) => {
+        if (!it || it.type !== 'rent') return;
+        const prod = (products || []).find((p: any) => p && p.id === it.id);
+        if (!prod) { problems.push(`${it.name}：現在お取り扱いがありません`); return; }
+        const st = Number(prod.stock);
+        if (Number.isFinite(st) && Number(it.quantity) > Math.max(0, st)) {
+          problems.push(`${it.name}：在庫 ${Math.max(0, st)} に対して数量 ${it.quantity}`);
+        }
+      });
+      if (problems.length > 0) {
+        void alertDialog("在庫状況が変わったため注文を確定できません。数量をご調整ください。\n" + problems.join("\n"));
+        setIsSubmitting(false);
+        return;
+      }
+    }
     try {
       // Add the order
       const newOrder = await addOrder({

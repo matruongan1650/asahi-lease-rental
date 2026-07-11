@@ -54,7 +54,7 @@ function ReturnItemsMobile() {
 
   const handleUpdateQuantity = (id: string, delta: number, max: number) => {
     setReturnQuantities(prev => {
-      const current = prev[id] || 0;
+      const current = Math.max(0, prev[id] || 0); // 空欄センチネル(-1)は0扱い（+の1回目が0止まりになる無反応防止）(C17)
       return { ...prev, [id]: Math.max(0, Math.min(max, current + delta)) };
     });
   };

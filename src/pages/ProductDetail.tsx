@@ -33,7 +33,10 @@ function ProductDetailMobile() {
     setQuantity(1);
     // 販売無効時はレンタル固定。
     setActionType(!SALES_ENABLED ? 'rent' : (product?.rentPrice ? 'rent' : 'buy'));
-  }, [id, product]);
+    // 依存は id（+初回ロード時の product?.id 遷移）のみ。product オブジェクト参照だと 3s ポーリングの
+    // データ更新のたびに数量・スクロール位置がリセットされる(C5)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, product?.id]);
 
   // 商品リストが空（クラウド同期前など）でも product が undefined になり得る。
   // 全フックの後で早期 return し、以降の product.* アクセスによるクラッシュを防ぐ。
@@ -273,10 +276,13 @@ function ProductDetailMobile() {
           {(() => {
             // 在庫0の品目はレンタル不可（販売のみ）。ProductList の「在庫なし (販売のみ)」と整合させる。
             const outOfStockRent = actionType === "rent" && Number(product.stock || 0) <= 0;
+            // レンタル単価未設定は SALES_ENABLED=false ではカート投入不可（¥0 レンタル注文の防止）(C4)。
+            const rentUnavailable = actionType === "rent" && !SALES_ENABLED && !(Number(product.rentPrice) > 0);
+            const blocked = outOfStockRent || rentUnavailable;
             return (
           <div className="flex gap-3">
             <button
-              disabled={outOfStockRent}
+              disabled={blocked}
               onClick={() => {
                 addToCart({
                   id: product.id,
@@ -293,16 +299,16 @@ function ProductDetailMobile() {
                 });
                 triggerToast("カートに追加しました", "ok");
               }}
-              className={`flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors ${outOfStockRent ? "opacity-40 cursor-not-allowed" : ""}`}
+              className={`flex-1 py-3.5 px-4 rounded-xl border-2 border-primary text-primary dark:text-blue-400 dark:border-blue-400 font-bold text-sm active:bg-primary/5 transition-colors ${blocked ? "opacity-40 cursor-not-allowed" : ""}`}
             >
                 カートに入れる
             </button>
             <button
-              disabled={outOfStockRent}
+              disabled={blocked}
               onClick={handleAddToCart}
-              className={`flex-1 py-3.5 px-4 rounded-xl bg-primary text-white font-bold text-sm shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform ${outOfStockRent ? "opacity-40 cursor-not-allowed" : ""}`}
+              className={`flex-1 py-3.5 px-4 rounded-xl bg-primary text-white font-bold text-sm shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform ${blocked ? "opacity-40 cursor-not-allowed" : ""}`}
             >
-                {outOfStockRent ? (SALES_ENABLED ? "在庫なし（販売のみ）" : "在庫なし") : `今すぐ${actionType === 'rent' ? 'レンタル' : '購入'}`}
+                {outOfStockRent ? (SALES_ENABLED ? "在庫なし（販売のみ）" : "在庫なし") : rentUnavailable ? "レンタル対象外" : `今すぐ${actionType === 'rent' ? 'レンタル' : '購入'}`}
             </button>
           </div>
             );

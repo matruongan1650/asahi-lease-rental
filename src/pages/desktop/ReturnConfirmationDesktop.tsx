@@ -29,7 +29,9 @@ export default function ReturnConfirmationDesktop() {
     );
   }
 
-  const itemsToReturn = order.items.filter((item: any) => returnQuantities[item.id] > 0);
+  // 返却対象はレンタル行のみ。数量マップは item.id キーのため、同一IDで rent/buy 両行を持つ注文だと
+  // 購入行まで返却対象に取り違えられる（計数・walkinProducts・-R請求の水増し）(C15)。
+  const itemsToReturn = order.items.filter((item: any) => item.type === 'rent' && returnQuantities[item.id] > 0);
   const totalItemsCount = itemsToReturn.reduce((sum: number, item: any) => sum + returnQuantities[item.id], 0);
 
   const handleSubmit = async () => {
@@ -57,7 +59,7 @@ export default function ReturnConfirmationDesktop() {
     let totalRemainingQty = 0;
 
     order.items.forEach((item: any) => {
-      const returningQty = returnQuantities[item.id] || 0;
+      const returningQty = item.type === 'rent' ? (returnQuantities[item.id] || 0) : 0; // buy 行は返却数を適用しない(C15)
       const alreadyReturnedQty = item.returnedQuantity || 0;
       const currentRemainingQty = item.quantity - alreadyReturnedQty;
       const newRemainingQty = currentRemainingQty - returningQty;
@@ -137,10 +139,22 @@ export default function ReturnConfirmationDesktop() {
     const usePickupFlow = method === "pickup" && returningEverything;
 
     if (usePickupFlow) {
+      // 倉庫が既に受付・検品中(stage=recheck / receptionAt)のチケットがある間は、集荷依頼の再提出で
+      // 検品結果を消したり注文を回収中へ巻き戻したりしない（walkin 分岐と同じガード）(C12)。
+      const inProgressTicket = OrderBus.getAll<any>("walkinReturns").some((w: any) =>
+        w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)) &&
+        (w.stage === "recheck" || w.receptionAt));
+      if (inProgressTicket) {
+        void alertDialog("この返却は既に倉庫で受付・検品中のため、内容を変更できません。変更が必要な場合は倉庫までご連絡ください。");
+        navigate("/orders");
+        return;
+      }
       // walkin→pickup の切替時、以前の持込チケットが倉庫キューに残らないよう掃除する。
+      // 進行中（受付済み・倉庫差戻しの再検品 WIN-RE-*）は掃除対象外(C13)。
       try {
         OrderBus.getAll<any>("walkinReturns")
-          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          .filter((w: any) => w && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber))
+            && w.stage !== "recheck" && !w.receptionAt)
           .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
       } catch { /* ignore */ }
       updateOrder(order.id, {
@@ -149,7 +163,8 @@ export default function ReturnConfirmationDesktop() {
         returnRequestType: returnReqType,
         requestedReturn: returnQuantities,
         rentalEndDate: pickupDate || order.rentalEndDate,
-        notes: `【回収リクエスト】希望日時: ${pickupDate} ${pickupTime}\n集荷場所: ${address}\n${order.notes || order.note || ''}`
+        // 再提出時は前回の【回収リクエスト】ブロックを取り除いてから付け直す（編集のたびに古い日時・住所が蓄積しない）(C16)。
+        notes: `【回収リクエスト】希望日時: ${pickupDate} ${pickupTime}\n集荷場所: ${address}\n${String(order.notes || order.note || '').replace(/^(【回収リクエスト】希望日時:.*\n集荷場所:.*(\n|$))+/, '')}`
       });
     } else {
       // 直接持ち込み（全量・一部いずれも）: ここでは確定・請求分割しない。
@@ -186,7 +201,9 @@ export default function ReturnConfirmationDesktop() {
       }
       try {
         OrderBus.getAll<any>("walkinReturns")
-          .filter((w: any) => w && w.id !== walkinId && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber)))
+          // 倉庫差戻しの再検品チケット(WIN-RE-*, stage=recheck)等の進行中チケットは掃除しない(C13)。
+          .filter((w: any) => w && w.id !== walkinId && (w.orderId === order.id || (order.orderNumber && w.orderNumber === order.orderNumber))
+            && w.stage !== "recheck" && !w.receptionAt)
           .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
       } catch { /* ignore */ }
 

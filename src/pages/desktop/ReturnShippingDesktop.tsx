@@ -74,6 +74,11 @@ export default function ReturnShippingDesktop() {
       void alertDialog("返却予定日はレンタル開始日以降の日付で選択してください（延滞中は本日まで指定できます）。");
       return;
     }
+    // 回収場所は必須（未入力だと住所の無い回収タスクが発行され回収できない）(C14)。
+    if (method === "pickup" && !String(address || "").trim()) {
+      void alertDialog("回収場所（住所）を入力してください。");
+      return;
+    }
     setProfile({ ...profile, address });
     navigate(`/return-confirmation`, { state: { returnQuantities, order, method, address, pickupDate, pickupTime, photos } });
   };

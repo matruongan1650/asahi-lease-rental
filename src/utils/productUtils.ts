@@ -47,6 +47,51 @@ export function getCategoryIcon(category: string | undefined): string {
   return SUPPLY_CATEGORY_ICONS[category] || 'category';
 }
 
+/** 顧客サイトの車両カテゴリーカード用の代表画像。無いカテゴリーは商品画像でフォールバックする。 */
+export const VEHICLE_CATEGORY_IMAGES: Record<string, string> = {
+  '軽トラック': 'https://img1.kakaku.k-img.com/Images/prdnews/2021122%2F20211220190008_457_.jpg',
+  '軽バン': 'https://www.carsensor.net/contents/article_images/_66941/every01.jpg',
+  '2tノーマル': 'https://www.kaitoriou.net/page/wp-content/uploads/2021/10/aeee94831383a2fa7cc4b3acad0ece5d.png',
+  '2tロング': 'https://www.trl-chiba.co.jp/images/car/t3-01-01.jpg',
+  '2t Wキャブノーマル': 'https://www.imagiire.co.jp/files/topics/495_ext_05_0_L.png',
+};
+
+/** 車両カテゴリー用アイコン（ホームの横スクロールリスト用。未知は local_shipping）。 */
+export const VEHICLE_CATEGORY_ICONS: Record<string, string> = {
+  '軽トラック': 'local_shipping',
+  '軽バン': 'airport_shuttle',
+  '2tノーマル': 'directions_car',
+  '2tロング': 'local_shipping',
+  '2t Wキャブノーマル': 'rv_hookup',
+  '2tトラック': 'local_shipping',
+  '3tロング': 'local_shipping',
+  '高所作業車': 'construction',
+};
+
+/** 車両カテゴリー用アイコンを返す。 */
+export function getVehicleCategoryIcon(category: string | undefined): string {
+  if (!category) return 'local_shipping';
+  return VEHICLE_CATEGORY_ICONS[category] || 'local_shipping';
+}
+
+/**
+ * 商品リストに実在する車両カテゴリー一覧を抽出する（正規一覧 VEHICLE_CATEGORIES の順、
+ * リスト外の車両カテゴリー('保安車両'等)は末尾）。ハードコードの5件だと 2tトラック/3tロング/
+ * 高所作業車 の商品がカテゴリー導線から到達不能になるため、保安用品と同様に動的化する(C6)。
+ */
+export function getVehicleCategories(
+  products: ReadonlyArray<{ category?: string } | null | undefined> | null | undefined
+): string[] {
+  const present = new Set(
+    (products || [])
+      .map((p) => p?.category)
+      .filter((c): c is string => !!c && isVehicleCategory(c))
+  );
+  const ordered = VEHICLE_CATEGORIES.filter((c) => present.has(c));
+  const extras = Array.from(present).filter((c) => !VEHICLE_CATEGORIES.includes(c));
+  return [...ordered, ...extras];
+}
+
 /**
  * 商品リストから保安用品（車両以外）のカテゴリー一覧を重複なしで抽出する。
  * 管理画面で商品を追加するとここに自動的に反映される。

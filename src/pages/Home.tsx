@@ -6,7 +6,7 @@ import { useFeatured } from "../context/FeaturedContext";
 import { useCart } from "../context/CartContext";
 import { useUser } from "../context/UserContext";
 import { useProducts } from "../context/ProductContext";
-import { getSupplyCategories, getCategoryIcon } from "../utils/productUtils";
+import { getSupplyCategories, getCategoryIcon, getVehicleCategories, getVehicleCategoryIcon } from "../utils/productUtils";
 import CustomerNotificationBell from "../components/CustomerNotificationBell";
 import { SALES_ENABLED } from "../config/features";
 import { LONG_TERM_THRESHOLD_DAYS } from "../utils/billing";
@@ -31,6 +31,12 @@ function HomeMobile() {
   const supplyCategoryColumns: string[][] = [];
   for (let i = 0; i < supplyCategories.length; i += 2) {
     supplyCategoryColumns.push(supplyCategories.slice(i, i + 2));
+  }
+  // 車両カテゴリーも商品から動的抽出（ハードコード5件だと 2tトラック/3tロング/高所作業車 が欠落）(C6)。
+  const vehicleCategories = getVehicleCategories(products);
+  const vehicleCategoryColumns: string[][] = [];
+  for (let i = 0; i < vehicleCategories.length; i += 2) {
+    vehicleCategoryColumns.push(vehicleCategories.slice(i, i + 2));
   }
   const featuredProducts = safeProducts.filter(p => featuredIds.includes(p?.id));
   
@@ -267,19 +273,17 @@ function HomeMobile() {
                 </div>
               ))
             ) : (
-              <>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="local_shipping" name="軽トラック" />
-                  <SmallCategoryItem icon="airport_shuttle" name="軽バン" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="directions_car" name="2tノーマル" />
-                  <SmallCategoryItem icon="local_shipping" name="2tロング" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <SmallCategoryItem icon="rv_hookup" name="2t Wキャブノーマル" />
-                </div>
-              </>
+              vehicleCategoryColumns.length > 0 ? (
+                vehicleCategoryColumns.map((col, idx) => (
+                  <div key={idx} className="flex flex-col gap-2">
+                    {col.map((cat) => (
+                      <SmallCategoryItem key={cat} icon={getVehicleCategoryIcon(cat)} name={cat} />
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div className="px-2 py-3 text-xs text-slate-400">カテゴリがありません</div>
+              )
             )}
           </div>
         </div>
@@ -320,6 +324,7 @@ function HomeMobile() {
                 badge={product.badge}
                 badgeColor={product.badgeColor}
                 stock={product.stock}
+                rentBlocked={!SALES_ENABLED && !(Number(product.rentPrice) > 0)}
                 quantity={quantities[product.id] || 0}
                 onQuantityChange={(delta) => handleQuantityChange(product.id, delta)}
                 onSetQuantity={(val) => handleSetQuantity(product.id, val)}
@@ -347,14 +352,14 @@ function HomeMobile() {
 
 function SmallCategoryItem({ icon, name }: { icon: string, name: string }) {
   return (
-    <Link to={`/products?category=${name}`} className="flex items-center shrink-0 w-36 px-2.5 py-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm hover:border-primary/50 transition-all active:scale-[0.98]">
+    <Link to={`/products?category=${encodeURIComponent(name)}`} className="flex items-center shrink-0 w-36 px-2.5 py-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm hover:border-primary/50 transition-all active:scale-[0.98]">
       <span className="material-symbols-outlined text-slate-400 text-[18px] mr-2">{icon}</span>
       <span className="text-xs font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">{name}</span>
     </Link>
   );
 }
 
-const ProductCard: React.FC<{id: string, name: string, price: string, salePrice: string, image: string, badge?: string, badgeColor?: string, stock: number, quantity: number, onQuantityChange: (delta: number) => void, onSetQuantity?: (val: number) => void, isFeatured: boolean, onToggleFeatured: () => void}> = ({ id, name, price, salePrice, image, badge, badgeColor, stock, quantity, onQuantityChange, onSetQuantity, isFeatured, onToggleFeatured }) => {
+const ProductCard: React.FC<{id: string, name: string, price: string, salePrice: string, image: string, badge?: string, badgeColor?: string, stock: number, rentBlocked?: boolean, quantity: number, onQuantityChange: (delta: number) => void, onSetQuantity?: (val: number) => void, isFeatured: boolean, onToggleFeatured: () => void}> = ({ id, name, price, salePrice, image, badge, badgeColor, stock, rentBlocked, quantity, onQuantityChange, onSetQuantity, isFeatured, onToggleFeatured }) => {
   // Strip out text- classes since some badges have "text-blue-700" but we want white text here, or just keep as is
   const displayBadgeColor = badgeColor?.includes('bg-') ? badgeColor.split(' ').find(c => c.startsWith('bg-')) : 'bg-primary';
 
@@ -386,8 +391,9 @@ const ProductCard: React.FC<{id: string, name: string, price: string, salePrice:
             {SALES_ENABLED && <p className="text-[10px] text-slate-500 mt-1">販売価格: ¥{salePrice}</p>}
           </Link>
           <div className="mt-2 flex items-center justify-between">
-            <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>
-              <button disabled={stock === 0 || quantity <= 0} onClick={() => onQuantityChange(-1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">remove</span></button>
+            {/* レンタル単価未設定は ¥0 レンタル注文になるためカート投入不可(C4) */}
+            <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 && !rentBlocked ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>
+              <button disabled={stock === 0 || rentBlocked || quantity <= 0} onClick={() => onQuantityChange(-1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">remove</span></button>
               <input 
                 type="number" 
                 value={quantity === 0 ? '' : quantity} 
@@ -396,12 +402,12 @@ const ProductCard: React.FC<{id: string, name: string, price: string, salePrice:
                   if (isNaN(val) && onSetQuantity) onSetQuantity(0);
                   else if (onSetQuantity) onSetQuantity(val);
                 }}
-                disabled={stock === 0}
+                disabled={stock === 0 || rentBlocked}
                 className="px-0 w-8 text-[16px] font-bold text-center inline-block bg-transparent outline-none hide-arrows" 
                 inputMode="numeric"
                 pattern="[0-9]*"
               />
-              <button disabled={stock === 0 || quantity >= stock} onClick={() => onQuantityChange(1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">add</span></button>
+              <button disabled={stock === 0 || rentBlocked || quantity >= stock} onClick={() => onQuantityChange(1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">add</span></button>
             </div>
           </div>
         </div>

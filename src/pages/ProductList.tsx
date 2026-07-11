@@ -261,6 +261,8 @@ function ProductListMobile() {
 }
 
 const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?: number, rentPriceLongTerm?: number, buyPrice?: number, badge?: string, badgeColor?: string, stock: number, quantity: number, onQuantityChange: (delta: number) => void, onSetQuantity: (val: number) => void, isFeatured: boolean, onToggleFeatured: () => void }> = ({ id, name, image, rentPrice, rentPriceLongTerm, buyPrice, badge, badgeColor, stock, quantity, onQuantityChange, onSetQuantity, isFeatured, onToggleFeatured }) => {
+  // レンタル単価未設定は SALES_ENABLED=false ではカート投入不可（¥0 レンタル注文の防止）(C4)。
+  const rentBlocked = !SALES_ENABLED && !(Number(rentPrice) > 0);
   return (
     <div className="group flex flex-col bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-700/50">
       <div className="relative w-full aspect-square bg-slate-50 dark:bg-slate-900 overflow-hidden">
@@ -317,8 +319,8 @@ const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?:
             <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400">{SALES_ENABLED ? "在庫なし (販売のみ)" : "在庫なし"}</p>
           )}
           <div className="flex items-center gap-1">
-            <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>
-              <button disabled={stock === 0 || quantity <= 0} onClick={() => onQuantityChange(-1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">remove</span></button>
+            <div className={`flex items-center border border-slate-200 dark:border-slate-700 rounded-lg ${stock > 0 && !rentBlocked ? 'bg-slate-50 dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800 opacity-50'}`}>
+              <button disabled={stock === 0 || rentBlocked || quantity <= 0} onClick={() => onQuantityChange(-1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">remove</span></button>
               <input 
                 type="number" 
                 value={quantity === 0 ? '' : quantity} 
@@ -327,12 +329,12 @@ const ProductListItem: FC<{ id: string, name: string, image: string, rentPrice?:
                   if (isNaN(val)) onSetQuantity(0);
                   else onSetQuantity(val);
                 }}
-                disabled={stock === 0}
+                disabled={stock === 0 || rentBlocked}
                 className="px-0 w-8 text-[16px] font-bold text-center inline-block bg-transparent outline-none hide-arrows" 
                 inputMode="numeric"
                 pattern="[0-9]*"
               />
-              <button disabled={stock === 0 || quantity >= stock} onClick={() => onQuantityChange(1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">add</span></button>
+              <button disabled={stock === 0 || rentBlocked || quantity >= stock} onClick={() => onQuantityChange(1)} className="p-1 text-slate-500 disabled:opacity-50"><span className="material-symbols-outlined text-[18px]">add</span></button>
             </div>
             <Link to={`/product/${id}`} className="flex-1 text-center py-2 rounded-lg bg-primary/10 dark:bg-primary/20 text-primary dark:text-blue-300 text-[10px] font-bold transition-colors">詳細</Link>
           </div>

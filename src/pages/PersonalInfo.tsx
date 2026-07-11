@@ -12,7 +12,7 @@ export default function PersonalInfo() {
 
 function PersonalInfoMobile() {
   const navigate = useNavigate();
-  const { profile, setProfile, isEmailTaken } = useUser();
+  const { profile, updateUser, isEmailTaken } = useUser();
   const [formData, setFormData] = useState(profile);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -53,10 +53,17 @@ function PersonalInfoMobile() {
       return;
     }
     setIsSaving(true);
-    setProfile({
-      ...formData,
+    // 画面で編集できるフィールドのみ差分パッチする。formData はマウント時スナップショットのため、
+    // レコード全体を書き戻すと編集中に admin が行ったパスワード再設定・停止(status)まで巻き戻して
+    // しまう(C20)。updateUser は OrderBus.patch なので 409 再ベースも編集フィールド単位で効く。
+    updateUser(profile.id, {
+      lastName: formData.lastName || "",
+      firstName: formData.firstName || "",
       email,
-      companyName: isSubUser ? profile.companyName : formData.companyName,
+      phone: formData.phone || "",
+      address: formData.address || "",
+      avatarUrl: formData.avatarUrl || "",
+      ...(isSubUser ? {} : { companyName: formData.companyName || "" }),
     });
     // クラウド同期の確定を待ち、成功/送信待ちを明示する（失敗を成功と誤認させない）。
     const ok = await OrderBus.flush(8000);

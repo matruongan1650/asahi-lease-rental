@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useProducts } from "../../context/ProductContext";
-import { getSupplyCategories, getCategoryIcon } from "../../utils/productUtils";
+import { getSupplyCategories, getCategoryIcon, getVehicleCategories, VEHICLE_CATEGORY_IMAGES } from "../../utils/productUtils";
 import CustomerNotificationBell from "../../components/CustomerNotificationBell";
 
 /** PC 用 商品カテゴリー（お客様デスクトップサイト）。モバイル Categories と同じ検索・タブ・カテゴリ抽出ロジックを再利用。 */
@@ -173,30 +173,22 @@ export default function CategoriesDesktop() {
               <span className="material-symbols-outlined text-blue-500">local_shipping</span>
               保安車両一覧
             </h2>
-            <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-1 rounded-full">5 カテゴリ</span>
+            <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-1 rounded-full">{getVehicleCategories(products).length} カテゴリ</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-            <VehicleCategoryItem
-              name="軽トラック"
-              bgImage="https://img1.kakaku.k-img.com/Images/prdnews/2021122%2F20211220190008_457_.jpg"
-            />
-            <VehicleCategoryItem
-              name="軽バン"
-              bgImage="https://www.carsensor.net/contents/article_images/_66941/every01.jpg"
-            />
-            <VehicleCategoryItem
-              name="2tノーマル"
-              bgImage="https://www.kaitoriou.net/page/wp-content/uploads/2021/10/aeee94831383a2fa7cc4b3acad0ece5d.png"
-            />
-            <VehicleCategoryItem
-              name="2tロング"
-              bgImage="https://www.trl-chiba.co.jp/images/car/t3-01-01.jpg"
-            />
-            <VehicleCategoryItem
-              name="2t Wキャブノーマル"
-              bgImage="https://www.imagiire.co.jp/files/topics/495_ext_05_0_L.png"
-            />
-          </div>
+          {/* 商品から動的抽出（ハードコード5件の導線欠落を解消）(C6) */}
+          {getVehicleCategories(products).length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {getVehicleCategories(products).map((cat) => (
+                <VehicleCategoryItem
+                  key={cat}
+                  name={cat}
+                  bgImage={VEHICLE_CATEGORY_IMAGES[cat] || products.find((p) => p && p.category === cat && p.image)?.image || ""}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-sm text-slate-500">カテゴリがありません</div>
+          )}
         </section>
       )}
     </div>
@@ -206,7 +198,7 @@ export default function CategoriesDesktop() {
 function CategoryItem({ icon, name }: { icon: string; name: string }) {
   return (
     <Link
-      to={`/products?category=${name}`}
+      to={`/products?category=${encodeURIComponent(name)}`}
       className="flex items-center gap-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-primary/50 hover:shadow-md transition-all"
     >
       <span className="material-symbols-outlined text-primary text-[26px] shrink-0">{icon}</span>
@@ -218,7 +210,7 @@ function CategoryItem({ icon, name }: { icon: string; name: string }) {
 function VehicleCategoryItem({ name, bgImage }: { name: string; bgImage: string }) {
   return (
     <Link
-      to={`/products?category=${name}`}
+      to={`/products?category=${encodeURIComponent(name)}`}
       className="group relative overflow-hidden rounded-2xl bg-slate-900 aspect-[4/3] shadow-sm border border-slate-200"
     >
       <div

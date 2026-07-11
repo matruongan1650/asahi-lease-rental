@@ -92,7 +92,10 @@ function CartMobile() {
           <div className="flex flex-col items-center justify-center py-12 gap-4">
             <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-700">shopping_cart</span>
             <p className="text-slate-500 font-medium">カートは空です</p>
-            <Link to="/" className="text-primary font-bold">商品を見る</Link>
+            {/* 空カート時は全商品一覧へ誘導するボタンを表示（デスクトップ版 CartDesktop と同じ導線） */}
+            <Link to="/products" className="inline-flex items-center gap-2 mt-1 px-6 py-3 rounded-xl bg-primary text-white font-bold shadow-sm active:scale-[0.98] transition-transform">
+              <span className="material-symbols-outlined text-[20px]">storefront</span>すべての商品を見る
+            </Link>
           </div>
         ) : (
           <>
@@ -103,9 +106,11 @@ function CartMobile() {
                 <div className="space-y-1">
                   <p className="font-bold">最小請求日数に関する注意</p>
                   <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {/* 実際の課金ルール＝最低日数は「開始月のブロック」に適用（月跨ぎでは開始月分に対して判定）。
+                        旧文言「期間が10日未満の場合でも…」は総日数基準と誤読され実請求と乖離していた(C2)。 */}
                     {hasVehicle 
-                      ? "※カートに車両が含まれているため、レンタル期間が3日未満の場合でも最低3日分のレンタル料が発生します。"
-                      : "※レンタル期間が10日未満の場合でも最低10日分のレンタル料が発生します（車両が含まれる場合は最低3日分となります）。"
+                      ? "※カートに車両が含まれているため、開始月のご利用日数が3日未満の場合、開始月は最低3日分のレンタル料となります。"
+                      : "※開始月のご利用日数が10日未満の場合、開始月は最低10日分のレンタル料となります（車両が含まれる場合は最低3日分となります）。"
                     }
                   </p>
                 </div>
@@ -141,7 +146,7 @@ function CartMobile() {
                   </div>
                 )}
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-500 dark:text-slate-400">税金 (10%)</span>
+                  <span className="text-slate-500 dark:text-slate-400">税金 ({Math.round(getTaxRate() * 100)}%)</span>
                   <span className="font-medium text-slate-900 dark:text-white">¥{tax.toLocaleString()}</span>
                 </div>
                 <div className="my-1 h-px w-full bg-slate-100 dark:bg-slate-700"></div>

@@ -4,6 +4,7 @@ import { useProducts } from "./ProductContext";
 import { useUser } from "./UserContext";
 import { isVehicleCategory } from '../utils/productUtils';
 import { safeSetJSON } from "../utils/safeStorage";
+import { alertDialog } from "../components/AppDialog";
 
 export interface CartItem {
   id: string;
@@ -64,11 +65,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setItems(prevItems => prevItems.map(item => {
         const prod = products.find(p => p && p.id === item.id);
         if (prod) {
+          // 価格に加えて数量も最新在庫へ再クランプする。カートは localStorage で数日単位に持ち越される
+          // ため、投入時クランプだけでは他注文の受注確定で減った在庫を超えたまま会計に進めてしまう(C1)。
+          const st = Number(prod.stock);
           return {
             ...item,
             rentPrice: prod.rentPrice,
             rentPriceLongTerm: prod.rentPriceLongTerm,
-            buyPrice: prod.buyPrice
+            buyPrice: prod.buyPrice,
+            quantity: Number.isFinite(st) ? Math.min(item.quantity, Math.max(0, st)) : item.quantity,
           };
         }
         return item;
@@ -77,10 +82,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [products]);
 
   const addToCart = useCallback((newItem: CartItem) => {
+    // レンタル単価未設定の商品は SALES_ENABLED=false ではレンタル固定のため ¥0 注文になってしまう。
+    // 全カタログ画面共通の最終防衛としてここで拒否する(C4)。
+    if (newItem.type === 'rent' && !(Number(newItem.rentPrice) > 0)) {
+      void alertDialog("この商品は現在レンタルのお取り扱いがありません。");
+      return;
+    }
     setItems((prevItems) => {
       // マージ後の合計が在庫を超えないよう上限クランプする（updateQuantity/setQuantityAmount と同じ防御）。
       // 在庫5の商品を5個入れた状態でさらに5個追加 → 10 にならず在庫5に丸める（在庫超過注文の作成防止）。
       const stock = products.find(p => p && p.id === newItem.id)?.stock ?? 999;
+      if (Number(stock) <= 0) return prevItems; // 在庫0は追加しない（0数量行の混入防止）(C1)
       const existingItemIndex = prevItems.findIndex(item => item.id === newItem.id && item.type === newItem.type);
       if (existingItemIndex >= 0) {
         // 直接 mutate せず新しいオブジェクトに置き換える（前の state を壊さない／
@@ -99,7 +111,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
         if (item.id === id) {
           const product = products.find(p => p && p.id === id);
           const stock = product ? product.stock : 999;
-          const newQuantity = Math.max(1, Math.min(stock, item.quantity + delta));
+          // 在庫0のときは 0 まで下げられるようにする（Math.max(1,…) だと在庫0でも数量1に固定され
+          // 減らすことも消すこともできない）(C1)。
+          const newQuantity = Number(stock) <= 0 ? 0 : Math.max(1, Math.min(stock, item.quantity + delta));
           return { ...item, quantity: newQuantity };
         }
         return item;
@@ -113,7 +127,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         if (item.id === id) {
           const product = products.find(p => p && p.id === id);
           const stock = product ? product.stock : 999;
-          const newQuantity = amount === 0 ? 0 : Math.max(1, Math.min(stock, amount)); // allow 0 temporarily
+          const newQuantity = (amount === 0 || Number(stock) <= 0) ? 0 : Math.max(1, Math.min(stock, amount)); // allow 0 temporarily / 在庫0は0へ(C1)
           return { ...item, quantity: newQuantity };
         }
         return item;
