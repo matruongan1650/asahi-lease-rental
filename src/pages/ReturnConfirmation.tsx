@@ -5,6 +5,7 @@ import { useOrders } from "../context/OrderContext";
 import { calculateRentalPrice, getOrGenerateInvoiceBlocks, getTaxRate } from "../utils/billing";
 import { isVehicleCategory } from '../utils/productUtils';
 import OrderBus from "../lib/orderBus";
+import { isFullyReturned } from "../utils/orderStatus";
 import { useIsDesktop } from "../hooks/useIsDesktop";
 import ReturnConfirmationDesktop from "./desktop/ReturnConfirmationDesktop";
 
@@ -34,6 +35,17 @@ function ReturnConfirmationMobile() {
   const handleSubmit = async () => {
     if (submittingRef.current) return; // 連打ガード
     submittingRef.current = true;
+    // ブラウザ履歴の「戻る」で確定済み注文の確認画面へ復帰し再送信すると、返却済の注文が
+    // 「検品待ち」へ巻き戻り幽霊チケットが再発行される。location.state のスナップショットではなく
+    // ライブの注文で状態を検証する(R3)。
+    const liveOrder = OrderBus.getAll<any>("orders").find(
+      (o: any) => o && (o.id === order.id || (order.orderNumber && o.orderNumber === order.orderNumber))
+    );
+    if (!liveOrder || isFullyReturned(liveOrder.status) || liveOrder.status === "完了" || liveOrder.status === "キャンセル") {
+      void alertDialog("このご注文は既に確定済みのため、返却リクエストを送信できません。注文履歴をご確認ください。");
+      navigate("/orders", { replace: true });
+      return;
+    }
     // Determine actual return date (pickupDate or today)
     let actualReturnDate = pickupDate;
     if (!actualReturnDate) {
@@ -91,7 +103,9 @@ function ReturnConfirmationMobile() {
 
       // 2. Calculate Remaining Item（rent / buy とも残った数量 newRemainingQty を使う）
       const remainingQtyToKeep = Math.max(0, newRemainingQty);
-      totalRemainingQty += remainingQtyToKeep;
+      // 全量返却→集荷(pickup) のルーティング判定はレンタル行の残数のみで行う。buy 行は返却対象外で
+      // 常に残存扱いのため、混在注文だと全量集荷依頼が持込検品キューへ誤送され回収タスクが生まれない(R2)。
+      if (item.type === 'rent') totalRemainingQty += remainingQtyToKeep;
       if (remainingQtyToKeep > 0) {
         if (item.type === 'rent') {
           const { totalPrice, breakdown } = calculateRentalPrice(
@@ -159,7 +173,11 @@ function ReturnConfirmationMobile() {
         staffStatus: "回収予定",
         returnRequestType: returnReqType,
         requestedReturn: returnQuantities,
-        rentalEndDate: pickupDate || order.rentalEndDate,
+        // 契約終了日(rentalEndDate)は上書きしない。以前は pickupDate で不可逆に短縮され、
+        // 再編集の日付上限がラチェットして後ろ倒し不可＋walkin切替時に課金期間が切り詰められた(R1)。
+        // 集荷希望日は専用フィールドに保持し、締めは仕様どおり回収完了日に確定する。
+        requestedPickupDate: pickupDate || "",
+        requestedPickupTime: pickupTime || "",
         // 再提出時は前回の【回収リクエスト】ブロックを取り除いてから付け直す（編集のたびに古い日時・住所が蓄積しない）(C16)。
         notes: `【回収リクエスト】希望日時: ${pickupDate} ${pickupTime}\n集荷場所: ${address}\n${String(order.notes || order.note || '').replace(/^(【回収リクエスト】希望日時:.*\n集荷場所:.*(\n|$))+/, '')}`
       });
@@ -221,6 +239,8 @@ function ReturnConfirmationMobile() {
         photos: photos || [],
         products: walkinProducts,
         source: "customer_direct_return",
+        // お客様が入力した持込予定日（倉庫が来庫日を把握できるようチケットへ保存）(R4)。
+        plannedReturnDate: pickupDate || "",
         // 2段階検品: まず受付スタッフが一次検品（reception）→ 倉庫が最終検品（recheck）→ 確定
         stage: "reception",
         returningEverything,
@@ -231,7 +251,7 @@ function ReturnConfirmationMobile() {
       updateOrder(order.id, {
         status: "検品待ち",
         returnRequestType: returnReqType,
-        ...(order.staffStatus === "回収予定" ? { staffStatus: "", requestedReturn: {} } : {}),
+        ...(liveOrder.staffStatus === "回収予定" ? { staffStatus: "", requestedReturn: {}, requestedPickupDate: "", requestedPickupTime: "" } : {}),
       });
     }
 
@@ -245,7 +265,7 @@ function ReturnConfirmationMobile() {
           ? "返却リクエストを送信しました。"
           : "返却を受け付けました。倉庫での検品後に内容が確定します。"
     );
-    navigate("/orders");
+    navigate("/orders", { replace: true });
   };
 
   return (

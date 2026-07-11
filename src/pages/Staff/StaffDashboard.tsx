@@ -906,7 +906,9 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
             ...p,
             // 受付で数えた実数を最終検品の expected にする
             expected: p.counted ?? p.expected ?? 0,
-            counted: 0,
+            // 最終検品の初期値も受付実数にする（reinspect と同じ方針）。0 固定だと全品目が 0 点から
+            // 始まり、そのまま確定すると全量 phantom 紛失（全額弁償・明細消失）を許してしまう(R5)。
+            counted: p.counted ?? p.expected ?? 0,
             report: p.report || [],
           })),
           note: (walkinOrder.note ? walkinOrder.note + " / " : "") + "一次受付検品済み — 倉庫最終検品待ち",
@@ -925,6 +927,17 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
     if (finalizingRef.current) return;
     finalizingRef.current = true;
     try {
+    // 多端末ガード: 確定直前にチケットの生存をライブ確認する。別端末が先に確定していれば
+    // チケットは削除済みなので中止（-R 注文の二重作成・二重入庫・継続注文の誤クローズ防止）(R9)。
+    if (walkinOrder && walkinOrder.id) {
+      const ticketAlive = OrderBus.getAll<any>("walkinReturns").some((w: any) => w && w.id === walkinOrder.id);
+      if (!ticketAlive) {
+        void alertDialog("この検品は他の端末で既に確定済みです。検品一覧を確認してください。");
+        setFlow(null);
+        setTab("stock");
+        return;
+      }
+    }
     // 関連注文を解決（あれば）。出庫前(deliveryConfirmedAt 無し)や既に在庫戻し済み(stockRestored)の
     // 注文は、ここで現物在庫を二重加算しないようガードする。
     // 注文に紐づかない持込（来客の直接返却など）は現物が戻っているので従来どおり加算する。
@@ -1071,7 +1084,7 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
           const compensation = computeCompensationCharge({ items: targetOrder.items, itemIssues }, ml.products || []);
           if (compensation) extraFields.compensationCharge = compensation;
 
-          await finalizePartialReturn(
+          const finalizeResult: any = await finalizePartialReturn(
             targetOrder,
             returnQuantities,
             actualReturnDate,
@@ -1087,6 +1100,12 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
               restockedByItem,
             }
           );
+          // 返却品ゼロ等で finalize が実行されなかった場合はチケットを残す。削除すると注文が
+          // 「検品待ち」のままどこからも進められなくなる(R11)。
+          if (finalizeResult && finalizeResult.skipped) {
+            finalizeFailed = true;
+            void alertDialog("返却品が確認できなかったため確定できませんでした。数量（実数）または不足の報告内容を確認してください。");
+          }
         } catch (e) {
           console.error("[completeReturn] 注文の確定に失敗しました。", e);
           finalizeFailed = true;
@@ -1245,6 +1264,8 @@ function UnifiedStaffApp({ outdoorMode: outdoorModeProp }: { outdoorMode: boolea
     } else if (flow.type === "walkin") {
       return (
         <WalkInReturnFlow
+          staffName={staff.name}
+          staffId={myStaffId}
           onExit={() => setFlow(null)}
           onComplete={completeReturn}
         />

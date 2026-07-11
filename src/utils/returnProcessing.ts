@@ -112,10 +112,39 @@ export function computeReturnSplit(
       }
     }
 
+    // 紛失(missing)分のレンタル料は「一次受付日(actualReturnDate)まで」返却側(-R)に計上する。
+    // 以前は返却リストにも残存リストにも載らず、経過月のレンタル料（入金済み月含む）が請求から
+    // 遡って消えていた（破損とは非対称・入金額と請求が食い違う）(R10/R17)。以降の課金は止まる。
+    const missingQtyEff = item.type === "rent"
+      ? Math.min(missingByItem[item.id] || 0, Math.max(0, newRemainingQty))
+      : 0;
+    if (missingQtyEff > 0 && item.type === "rent") {
+      const { totalPrice, breakdown } = calculateRentalPrice(
+        item.rentPrice || 0,
+        order.rentalStartDate,
+        actualReturnDate,
+        hasVehicle,
+        isVehicleCategory(item.category),
+        item.rentPriceLongTerm
+      );
+      const calc = prorateOverride(item, order, totalPrice, hasVehicle);
+      returnedTotalRentalPrice += calc * missingQtyEff;
+      returnedItemsList.push({
+        ...item,
+        name: `${item.name}（紛失分）`,
+        quantity: missingQtyEff,
+        returnedQuantity: missingQtyEff,
+        actualReturnDate,
+        calculatedPrice: calc,
+        monthlyBreakdown: breakdown,
+        guaranteeFeeFlat: 0,
+        isMissingLine: true, // 表示・追跡用（在庫へは戻らない。弁償費は itemIssues 経由で別途計上）
+      });
+    }
+
     // 2. 残存する品目（rent / buy とも「返却後に残る数」= newRemainingQty を使う）
-    //    紛失分は残存から除外（手元に残らない＝レンタル課金を止める。弁償費で別途請求される）。
-    const missingQty = missingByItem[item.id] || 0;
-    const remainingQtyToKeep = Math.max(0, newRemainingQty - missingQty);
+    //    紛失分は残存から除外（手元に残らない＝以降のレンタル課金を止める。弁償費で別途請求される）。
+    const remainingQtyToKeep = Math.max(0, newRemainingQty - missingQtyEff);
     if (remainingQtyToKeep > 0) {
       if (item.type === "rent") {
         const { totalPrice, breakdown } = calculateRentalPrice(
@@ -213,6 +242,11 @@ export async function finalizePartialReturn(
     (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
     { subtotal: 0, tax: 0, total: 0 },
   );
+  // クローズする注文（返却済の元注文・-R 返却注文）の請求ブロックは「集計中(accumulating)」を
+  // 未入金(pending)へ確定させる。クローズ後はもう積み上がらないのに accumulating のままだと
+  // 未入金/延滞の集計に一切載らず、請求漏れになる(R15)。継続（残存）注文には適用しない。
+  const settleAccumulating = (blocks: any[]) => (blocks || []).map((b: any) =>
+    b && (b as any).status === "accumulating" ? { ...b, status: "pending" } : b);
 
   // 全量が紛失(missing)で解決したケース（返却品ゼロ・残存ゼロ）は、注文をクローズせず素通りすると
   // 永久に未返却のまま残るため、スキップせず下の returningEverything 経路でクローズ(返却済)させる。
@@ -225,6 +259,9 @@ export async function finalizePartialReturn(
       orderNumber: order?.orderNumber,
       returnQuantities,
     });
+    // 確定を実行しなかったことを呼び出し側へ明示する。これが無いとチケットだけ削除され、
+    // 注文が「検品待ち」のまま永久に詰む(R11)。
+    (split as any).skipped = true;
     return split;
   }
 
@@ -245,7 +282,7 @@ export async function finalizePartialReturn(
       invoiceBlocks: undefined,
     };
     // 元注文の入金済み印・手動追加費用を月ごとに引き継いでから確定（返却で作り直しても消さない）。
-    const newInvoiceBlocks = regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder));
+    const newInvoiceBlocks = settleAccumulating(regenerateBlocksPreservingState(order.invoiceBlocks, getOrGenerateInvoiceBlocks(tempOrder)));
     const ft = sumBlocks(newInvoiceBlocks);
 
     await deps.updateOrder(order.id, {
@@ -259,6 +296,8 @@ export async function finalizePartialReturn(
       invoiceBlocks: newInvoiceBlocks,
       requestedReturn: {},
       returnRequestType: "", // 依頼中フラグを確定時に消す（「返却済 一括返却」等の残留チップ防止）(C10)
+      requestedPickupDate: "", // 集荷希望日の残骸を掃除(R1)
+      requestedPickupTime: "",
       ...extraFields,
       ...(itemIssues ? { itemIssues } : {}),
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
@@ -312,6 +351,8 @@ export async function finalizePartialReturn(
       invoiceBlocks: remainingInvoiceBlocks,
       requestedReturn: {},
       returnRequestType: "", // 確定済みなのに「一部返却 一部返却」と依頼中チップが重複表示されるのを防ぐ(C10)
+      requestedPickupDate: "", // 集荷希望日の残骸を掃除(R1)
+      requestedPickupTime: "",
       // ★itemIssues は継続注文に載せない（返却分=-R 注文に既に保存済み）。載せると同じ破損/紛失を
       //   継続注文の現場報告からも弁償請求でき、二重請求になる（C15）。表示用途は -R 側で確認する。
       ...(inspectedByWarehouse ? { inspectedByWarehouse: true } : {}),
@@ -361,7 +402,7 @@ export async function finalizePartialReturn(
     if (itemIssues && itemIssues.length) tempCustomOrder.itemIssues = itemIssues;
     // ブロック生成は「未クローズ」ステータスで行う。返却済で生成すると返却分の請求(レンタル料+弁償費)が
     // 最初から status:"paid" で生まれ、AR/延滞に一切出ない(C8)。保存自体は 返却済 のまま。
-    const customInvoiceBlocks = getOrGenerateInvoiceBlocks({ ...tempCustomOrder, status: "一部返却" });
+    const customInvoiceBlocks = settleAccumulating(getOrGenerateInvoiceBlocks({ ...tempCustomOrder, status: "一部返却" }));
     const ct = sumBlocks(customInvoiceBlocks);
 
     await deps.addCustomOrder({

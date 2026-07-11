@@ -235,6 +235,40 @@ export default function AdminRental() {
       { subtotal: 0, tax: 0, total: 0 },
     );
     OrderBus.push("orders", { ...finalOrder, invoiceBlocks: blocks, subtotal: t.subtotal, tax: t.tax, total: t.total });
+    // 「検品待ち（回収済み）」で登録した場合、倉庫の最終検品キューは walkinReturns チケット駆動のため
+    // チケットも発行する。無いと在庫を出庫したまま注文が検品待ちで永久に詰む（R20 / R12 と同じ詰み）。
+    if (isCollected) {
+      const rentItems = items.filter((i: any) => i && i.type === "rent");
+      OrderBus.push("walkinReturns", {
+        id: "WIN-ADM-" + String(orderNumber).replace(/[^A-Za-z0-9]/g, "") + "-" + now.getTime().toString(36),
+        orderId: orderId,
+        orderNumber,
+        company: draft.companyName || "",
+        contact: draft.personName || "",
+        rentalNo: orderNumber,
+        time: now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 登録",
+        note: "既存契約の登録（回収済み） — 倉庫最終検品をお願いします。",
+        source: "admin_recovery",
+        receptionReturnDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+        stage: "recheck",
+        fieldSignature: null,
+        collectionUnsigned: true,
+        collectionAbsentReason: "既存契約の登録（回収済み・受領サイン記録なし）",
+        requestedReturn: {},
+        returningEverything: true,
+        products: rentItems.map((i: any, idx: number) => ({
+          id: i.id || "P-" + idx,
+          qr: "AS-" + (i.id || idx),
+          name: i.name,
+          expected: Number(i.quantity) || 0,
+          counted: Number(i.quantity) || 0,
+          report: [],
+          icon: "package",
+          image: i.image,
+          category: i.category,
+        })),
+      } as any);
+    }
     triggerToast(`レンタル契約 ${orderNumber} を「${st}」で登録しました`, "ok");
     setDocDrawerOpen(false);
     setTimeout(refresh, 300);

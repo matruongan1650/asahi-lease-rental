@@ -149,6 +149,10 @@ export interface Order {
   compensationCharge?: { amount: number; note: string; lines: { itemId?: string; name: string; type: 'missing' | 'broken'; qty: number; unit: number; amount: number }[] };
   /** admin が弁償費の行を削除した印（自動再計上を抑止）。 */
   compensationDismissed?: boolean;
+  /** 業者集荷(pickup)の希望日時。契約終了日(rentalEndDate)を上書きしないための専用フィールド(R1)。
+   *  回収タスクの期日表示に優先使用し、返却確定時にクリアされる。 */
+  requestedPickupDate?: string;
+  requestedPickupTime?: string;
   firestoreId?: string;
   staffStatus?: StaffStatus | string;
   staffNote?: string;

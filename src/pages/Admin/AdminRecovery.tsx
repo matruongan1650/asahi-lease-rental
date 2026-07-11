@@ -106,10 +106,67 @@ export default function AdminRecovery() {
     }
     // 回収完了 → 倉庫の「最終検品」待ちへ。在庫はここでは戻さない（業務要件）。
     // 最終検品が完了したとき（restoreOrderStock）に良品分のみ入庫する。
-    // status:"検品待ち" によりスタッフの倉庫検品キュー（StaffJobList warehouse）へ載る。
     // 既に「一部返却」要求の注文は partial を維持（full で上書きしない）。
     const returnRequestType = live?.returnRequestType === "partial" ? "partial" : "full";
-    OrderBus.patch("orders", id, { status: "検品待ち", staffStatus: "回収完了", returnRequestType });
+    OrderBus.patch("orders", id, { status: "検品待ち", staffStatus: "回収完了", returnRequestType, collectionConfirmedAt: new Date().toISOString() });
+    // 倉庫の最終検品キューは walkinReturns チケット駆動のため、ここでチケットを発行しないと
+    // 注文が「検品待ち」のままどこからも進められず、在庫復元・請求の締めが永久に実行されない(R12)。
+    if (live) {
+      const now = new Date();
+      const requestedReturn = (live as any).requestedReturn || {};
+      const hasRequested = Object.values(requestedReturn).some((v: any) => Number(v) > 0);
+      const prods = ((live as any).items || [])
+        .filter((i: any) => {
+          if (!i || i.type !== "rent") return false;
+          const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+          return remaining > 0 && (!hasRequested || Number(requestedReturn[i.id] || 0) > 0);
+        })
+        .map((i: any, idx: number) => {
+          const remaining = Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0));
+          const requestedQty = Math.max(0, Number(requestedReturn[i.id] || 0));
+          const expectedQty = hasRequested ? Math.min(requestedQty, remaining) : remaining;
+          return {
+            id: i.id || "P-" + idx,
+            qr: "AS-" + (i.id || idx),
+            name: i.name,
+            expected: expectedQty,
+            counted: expectedQty, // 倉庫で実数確認・調整する
+            report: [],
+            icon: "package",
+            image: i.image,
+            category: i.category,
+          };
+        });
+      // 既存の未着手チケットだけ掃除（受付・検品が進行中のチケットは消さない）
+      try {
+        OrderBus.getAll<any>("walkinReturns")
+          .filter((w: any) => w && (w.orderId === (live as any).id || ((live as any).orderNumber && w.orderNumber === (live as any).orderNumber))
+            && !((w.stage === "recheck" || w.receptionAt) && w.source !== "admin_recovery"))
+          .forEach((w: any) => OrderBus.remove("walkinReturns", w.id));
+      } catch { /* ignore */ }
+      OrderBus.push("walkinReturns", {
+        id: "WIN-ADM-" + String((live as any).orderNumber || (live as any).id).replace(/[^A-Za-z0-9]/g, "") + "-" + Date.now().toString(36),
+        orderId: (live as any).id,
+        orderNumber: (live as any).orderNumber,
+        firestoreId: (live as any).firestoreId,
+        company: (live as any).companyName || "",
+        contact: (live as any).personName || "",
+        rentalNo: (live as any).orderNumber,
+        time: now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) + " 回収完了",
+        note: "管理画面の一括回収完了 — 倉庫最終検品をお願いします。",
+        source: "admin_recovery",
+        // 課金の締めは回収完了日（最終検品が後日でも検品日まで課金を伸ばさない）
+        receptionReturnDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+        stage: "recheck",
+        fieldSignature: null,
+        // 管理画面からの一括処理のため受領サインは存在しない（倉庫でサイン必須にしない）
+        collectionUnsigned: true,
+        collectionAbsentReason: "管理画面からの一括回収完了（受領サイン記録なし）",
+        requestedReturn,
+        returningEverything: !hasRequested,
+        products: prods,
+      } as any);
+    }
     triggerToast(`${row.id} を回収完了 → 倉庫最終検品待ちにしました`, "ok");
   };
 

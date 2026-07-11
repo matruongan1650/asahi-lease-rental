@@ -282,7 +282,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     ...rawOrders
       .filter(o => {
         if (isClaimedByOther(o, myId)) return false; // 他スタッフが対応開始済み → この端末の一覧から隠す
-        if (!o.rentalEndDate) return false;
+        // 期日は集荷希望日(requestedPickupDate)を優先（契約終了日はもう上書きしない=R1）。
+        if (!(o.requestedPickupDate || o.rentalEndDate)) return false;
         if (o.status && RECOVERY_EXCLUDED_STATUS.includes(o.status)) return false;
         if (o.staffStatus === "回収完了") return false;
         // 【回収可否】未納品（まだ配送タスク段階）の注文は回収できない。納品が完了して初めて回収対象になる。
@@ -305,7 +306,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         if (!hasUnreturnedRent) return false;
         // JST日付境界で残日数を計算する。new Date("YYYY-MM-DD") は UTC 0時、new Date() は端末ローカル時刻で
         // 9時間ずれ、Math.floor と相まって回収窓が1日早/遅れる。"/"区切りでローカル0時にし、今日のローカル0時と比較する。
-        const end = new Date(String(o.rentalEndDate).replace(/-/g, "/")).getTime();
+        const end = new Date(String(o.requestedPickupDate || o.rentalEndDate).replace(/-/g, "/")).getTime();
         const nowD = new Date();
         const t0 = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate()).getTime();
         const daysLeft = Math.floor((end - t0) / 86400000);
@@ -314,7 +315,7 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       .map(o => ({
         id: (o.orderNumber || o.firestoreId || "").replace("ORD", "RTN"),
         firestoreId: o.firestoreId || o.id,
-        window: o.rentalEndDate ? o.rentalEndDate.replace(/-/g, "/") : "未定",
+        window: (o.requestedPickupDate || o.rentalEndDate) ? String(o.requestedPickupDate || o.rentalEndDate).replace(/-/g, "/") : "未定",
         returnRequestType: o.returnRequestType,
         company: o.companyName || ((o.personLastName || "") + " " + (o.personFirstName || "")).trim() || o.personName || "ゲスト",
         site: o.siteName || "現場",
@@ -355,8 +356,10 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
       }))
   ].sort((a, b) => {
     // 返却期限が近い順（未定は最後）。期限切れ・間近の回収を上に表示。
-    const ta = a.rawOrder?.rentalEndDate ? Date.parse(a.rawOrder.rentalEndDate) : NaN;
-    const tb = b.rawOrder?.rentalEndDate ? Date.parse(b.rawOrder.rentalEndDate) : NaN;
+    const da = a.rawOrder?.requestedPickupDate || a.rawOrder?.rentalEndDate;
+    const db = b.rawOrder?.requestedPickupDate || b.rawOrder?.rentalEndDate;
+    const ta = da ? Date.parse(da) : NaN;
+    const tb = db ? Date.parse(db) : NaN;
     return (Number.isNaN(ta) ? Infinity : ta) - (Number.isNaN(tb) ? Infinity : tb);
   }), [rawOrders, products, myId]);
 
@@ -505,10 +508,13 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
         .reduce((sum: number, i: any) => sum + Math.max(0, (Number(i.quantity) || 0) - (Number(i.returnedQuantity) || 0)), 0);
       const totalExpected = recoveryProducts.reduce((sum: number, p: any) => sum + (Number(p.expected) || 0), 0);
       const returningEverything = totalRemaining > 0 && totalExpected >= totalRemaining;
-      // 同じ注文の既存伝票があれば先に削除（二重登録＝幽霊伝票の防止）
+      // 同じ注文の既存伝票があれば先に削除（二重登録＝幽霊伝票の防止）。
+      // ただし倉庫で受付・検品が進行中の顧客持込チケット(stage=recheck / receptionAt)は消さない
+      //（一次受付結果・お客様写真が消え、課金締日も付け替わる。C12/C13 と同じガードの現場回収版）(R13)。
       try {
         OrderBus.getAll<any>("walkinReturns")
-          .filter(w => w && (w.orderId === targetOrder.id || (targetOrder.orderNumber && w.orderNumber === targetOrder.orderNumber)))
+          .filter(w => w && (w.orderId === targetOrder.id || (targetOrder.orderNumber && w.orderNumber === targetOrder.orderNumber))
+            && !((w.stage === "recheck" || w.receptionAt) && w.source !== "field_recovery"))
           .forEach(w => OrderBus.remove("walkinReturns", w.id));
       } catch { /* ignore */ }
       OrderBus.push("walkinReturns", {
@@ -567,7 +573,8 @@ export function MobileLiveProvider({ children }: { children: React.ReactNode }) 
     });
     try {
       OrderBus.getAll<any>("walkinReturns")
-        .filter(w => w && w.stage === "recheck" && (w.orderId === target.id || (target.orderNumber && w.orderNumber === target.orderNumber)))
+        // 現場回収が発行したチケットのみ削除（顧客持込の受付済みチケットまで消さない）(R13)。
+        .filter(w => w && w.stage === "recheck" && w.source === "field_recovery" && (w.orderId === target.id || (target.orderNumber && w.orderNumber === target.orderNumber)))
         .forEach(w => OrderBus.remove("walkinReturns", w.id));
     } catch { /* ignore */ }
   };

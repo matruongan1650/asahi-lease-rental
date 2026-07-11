@@ -28,7 +28,23 @@ import { confirmDialog } from "../../components/AppDialog";
 export interface WalkInReturnFlowProps {
   onExit: () => void;
   onComplete: (prods: any[], order: any, signature?: string | null, extra?: any) => void;
+  /** ログイン中スタッフの表示名（現場報告の reporter に記録。無ければモックにフォールバック）(R7)。 */
+  staffName?: string;
+  /** ログイン中スタッフのID。チケットの自己割当(claim)に使い、他端末の一覧から隠す(R9)。 */
+  staffId?: string;
 }
+
+// 検品途中の入力（数量・報告・ステップ）の下書き。QRスキャン/写真撮影中に WebView が破棄されても
+// 復元できるようにする（写真データは容量都合で保存しない）(R8)。
+const WALKIN_DRAFT_KEY = "asahi.walkin_draft_v1";
+function readWalkinDraft(): any {
+  try { return JSON.parse(localStorage.getItem(WALKIN_DRAFT_KEY) || "null"); } catch { return null; }
+}
+function clearWalkinDraft() {
+  try { localStorage.removeItem(WALKIN_DRAFT_KEY); } catch { /* ignore */ }
+}
+// チケットの自己割当 TTL。放置(アプリ強制終了等)しても 2時間で他スタッフへ再表示される。
+const WALKIN_CLAIM_TTL_MS = 2 * 60 * 60 * 1000;
 
 const WIN_STEPS = ["受付", "検品", "サイン", "完了"];
 
@@ -47,6 +63,7 @@ function WalkinCard({ o, onClick }: any) {
             {isRecheck ? "最終検品" : "一次受付"}
           </Badge>
           <Badge variant="neutral">{o.time} {o.returningEverything ? '(全量)' : '(一部)'}</Badge>
+          {o.plannedReturnDate ? <Badge variant="neutral" icon="clock">来庫予定 {String(o.plannedReturnDate).replace(/-/g, "/")}</Badge> : null}
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", color: "var(--fg-muted)", fontSize: 13 }}>
@@ -102,9 +119,14 @@ function InspectionHistoryCard({ rec, onReinspect }: any) {
   );
 }
 
-export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlowProps) {
+export default function WalkInReturnFlow({ onExit, onComplete, staffName, staffId }: WalkInReturnFlowProps) {
   const ml = useMobileLive();
-  const walkinList = ml.walkin || [];
+  // 他スタッフが開いている(claim中・TTL内)チケットは一覧から隠す（同一チケットの二重確定防止の第一防衛）(R9)。
+  const claimedByOther = (w: any) => !!(
+    w && w.claimedBy && staffId && w.claimedBy !== staffId && w.claimedAt &&
+    (Date.now() - Date.parse(w.claimedAt) < WALKIN_CLAIM_TTL_MS)
+  );
+  const walkinList = (ml.walkin || []).filter((w: any) => !claimedByOther(w));
   const [order, setOrder] = useState<any>(null);
   const [step, setStep] = useState(0);
   const [confirmingFinal, setConfirmingFinal] = useState(false);
@@ -123,6 +145,26 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
   const [fuelFull, setFuelFull] = useState(true);
   const [fuelCost, setFuelCost] = useState("");
   const [fuelReceipt, setFuelReceipt] = useState<string | null>(null);
+
+  // pick() 時点の品目別レポート件数。最終検品の確定時は「この画面で新たに追加された報告」だけを
+  // 管理者へ送信する（一次受付/現場回収で送信済みの報告を再送して二重登録しない）(R6)。
+  const initialReportCounts = React.useRef<Record<string, number>>({});
+
+  // 検品途中の下書きを保存（写真は除外）。WebView 破棄後、同じチケットを開くと復元される(R8)。
+  React.useEffect(() => {
+    if (!order) return;
+    try {
+      localStorage.setItem(WALKIN_DRAFT_KEY, JSON.stringify({
+        ticketId: order.id,
+        step: Math.min(step, 2),
+        overallMemo, vehKm, vehCondition, fuelFull, fuelCost,
+        prods: prods.map((p: any) => ({
+          id: p.id, counted: p.counted, scanned: !!p.scanned, manualConfirm: !!p.manualConfirm,
+          report: (p.report || []).map((r: any) => ({ reason: r.reason, qty: r.qty, note: r.note })),
+        })),
+      }));
+    } catch { /* 容量超過等は無視（下書きは補助機能） */ }
+  }, [order, step, prods, overallMemo, vehKm, vehCondition, fuelFull, fuelCost]);
 
   const isRecheck = order?.stage === "recheck";
   const priorSignature = order?.receptionSignature || order?.fieldSignature || null;
@@ -159,12 +201,49 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
 
   const pick = (o: any) => {
     setOrder(o);
+    // 開いた瞬間に自己割当(claim)し、他端末の一覧から隠す（二重確定防止）(R9)。
+    try {
+      if (staffId) OrderBus.patch("walkinReturns", o.id, { claimedBy: staffId, claimedByName: staffName || "", claimedAt: new Date().toISOString() });
+    } catch { /* ignore */ }
     // 現場検品の結果（counted/report）が引き継がれていればそれを初期値にする（無ければ expected）。
-    setProds(o.products.map((p: any) => ({ ...p, scanned: false, counted: (p.counted != null ? p.counted : p.expected), report: p.report || [], manualConfirm: false })));
+    let base = o.products.map((p: any) => ({ ...p, scanned: false, counted: (p.counted != null ? p.counted : p.expected), report: p.report || [], manualConfirm: false }));
+    initialReportCounts.current = {};
+    base.forEach((p: any) => { initialReportCounts.current[p.id] = (p.report || []).length; });
+    let restoredStep = 0;
+    // 同じチケットの下書きがあれば復元（写真は保存対象外のため、引き継ぎ分のみ元データを維持）(R8)。
+    const draft = readWalkinDraft();
+    if (draft && draft.ticketId === o.id && Array.isArray(draft.prods)) {
+      const byId: Record<string, any> = {};
+      draft.prods.forEach((d: any) => { if (d && d.id != null) byId[d.id] = d; });
+      base = base.map((p: any) => {
+        const d = byId[p.id];
+        if (!d) return p;
+        const orig = p.report || [];
+        const dr = Array.isArray(d.report) ? d.report : [];
+        // 引き継ぎ分（写真つき）を保持し、下書きで増えた分だけ後ろへ足す。
+        const mergedReport = dr.length <= orig.length ? orig : [...orig, ...dr.slice(orig.length)];
+        return { ...p, counted: (d.counted != null ? d.counted : p.counted), scanned: !!d.scanned, manualConfirm: !!d.manualConfirm, report: mergedReport };
+      });
+      restoredStep = Math.min(Number(draft.step) || 0, 2);
+      setOverallMemo(String(draft.overallMemo || ""));
+      setVehKm(String(draft.vehKm || "")); setVehCondition(String(draft.vehCondition || ""));
+      setFuelFull(draft.fuelFull !== false); setFuelCost(String(draft.fuelCost || ""));
+    } else {
+      setOverallMemo("");
+      setVehKm(""); setVehCondition(""); setFuelFull(true); setFuelCost("");
+    }
+    setProds(base);
     setSigned(null);
-    setOverallMemo("");
-    setVehKm(""); setVehCondition(""); setFuelFull(true); setFuelCost(""); setFuelReceipt(null);
-    setStep(0);
+    setFuelReceipt(null);
+    setStep(restoredStep);
+  };
+
+  // 一覧へ戻る: claim を解放して他スタッフへ再表示する（下書きは復帰用に残す）。
+  const unpick = () => {
+    try {
+      if (order && staffId) OrderBus.patch("walkinReturns", order.id, { claimedBy: "", claimedByName: "", claimedAt: "" });
+    } catch { /* ignore */ }
+    setOrder(null);
   };
 
   // 実カメラで読み取った QR と一致した品目のみ検品済みにする（以前は順番に立てる偽スキャナだった）。
@@ -242,15 +321,19 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         }
         return { ...p, report: rep };
       });
-      const hasIssues = reportable.some(p => p.report && p.report.length > 0);
+      // 一次受付/現場回収で送信済みの報告は再送しない（admin の現場報告が同一事象で二重になる）(R6)。
+      const reportableNew = reportable
+        .map(p => ({ ...p, report: (p.report || []).slice(initialReportCounts.current[p.id] || 0) }))
+        .filter(p => p.report.length > 0);
+      const hasIssues = reportableNew.length > 0;
       if (order && hasIssues) {
         pushFieldReportsLocal({
           source: "持込返却",
           ref: order.id,
-          reporter: STAFF.souko.name,
+          reporter: staffName || STAFF.souko.name, // 実担当者を記録（無ければモック）(R7)
           customer: order.company,
           site: "—（来庫返却）",
-          products: reportable,
+          products: reportableNew,
         }).then(ids => {
           if (ids && ids.length) {
             console.log("[FieldReport] pushed", ids);
@@ -597,7 +680,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
         <div style={{ fontSize: 12.5, color: "var(--warning-bright)", fontWeight: 800, textAlign: "center" }}>確定すると在庫・請求に反映され、取り消せません。よろしいですか？</div>
         <div style={{ display: "flex", gap: 10 }}>
           <Btn variant="secondary" onClick={() => setConfirmingFinal(false)}>戻る（修正）</Btn>
-          <Btn full size="lg" variant="success" icon="check" onClick={() => onComplete(prods, order, signed, buildExtra())}>確定する</Btn>
+          <Btn full size="lg" variant="success" icon="check" onClick={() => { clearWalkinDraft(); onComplete(prods, order, signed, buildExtra()); }}>確定する</Btn>
         </div>
       </div>
     ) : (
@@ -609,7 +692,7 @@ export default function WalkInReturnFlow({ onExit, onComplete }: WalkInReturnFlo
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: 0 }}>
-      <TopBar title={step === 3 ? "完了" : order.company} sub={(isRecheck ? "最終検品 ・ " : "一次受付 ・ ") + order.id} onBack={step === 3 ? undefined : (step === 0 ? () => setOrder(null) : () => setStep(s => Math.max(0, s - 1)))} />
+      <TopBar title={step === 3 ? "完了" : order.company} sub={(isRecheck ? "最終検品 ・ " : "一次受付 ・ ") + order.id} onBack={step === 3 ? undefined : (step === 0 ? unpick : () => setStep(s => Math.max(0, s - 1)))} />
       <div style={{ padding: "4px 16px 14px" }}><Stepper steps={stepLabels} current={step} /></div>
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 16px 16px", minHeight: 0 }}>{body}</div>
       <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>{footer}</div>

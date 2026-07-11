@@ -9,6 +9,9 @@ export interface Order {
   status: string;
   returnRequestType?: "full" | "partial";
   requestedReturn?: Record<string, number>;
+  /** 業者集荷(pickup)の希望日時。契約終了日(rentalEndDate)を上書きしないための専用フィールド(R1)。 */
+  requestedPickupDate?: string;
+  requestedPickupTime?: string;
   items: CartItem[];
   total: number;
   subtotal: number;
