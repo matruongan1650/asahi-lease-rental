@@ -387,6 +387,29 @@ function _persistRevs(): void {
 // patch() で変更したフィールドの累積（レコード別）。409 再ベース時に「自分の変更だけ」を
 // サーバー最新へ重ねるために使う。upsert 確定・push・remove でクリア。
 const _patchUpdates = new Map<string, Record<string, unknown>>();
+
+// 消込の並行編集用: invoiceBlocks を patch した時点の「変更前スナップショット」(pk → 配列)。
+// 409 再ベースはフィールド丸ごと上書きのため、別端末が直前に付けた入金済みマークが自分の再ベースで
+// 巻き戻る(I4)。invoiceBlocks に限り base/mine/server の 3-way でブロック単位マージする。
+const _blockPatchBase = new Map<string, unknown[]>();
+function _mergeInvoiceBlocks(base: any[], mine: any[], server: any[]): any[] {
+  const keyOf = (b: any) => String(b?.id ?? "");
+  const baseBy = new Map(base.map((b: any) => [keyOf(b), b]));
+  const mineBy = new Map(mine.map((b: any) => [keyOf(b), b]));
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const sb of server) {
+    const k = keyOf(sb);
+    seen.add(k);
+    const mb = mineBy.get(k);
+    const bb = baseBy.get(k);
+    if (mb && JSON.stringify(mb) !== JSON.stringify(bb ?? null)) { out.push(mb); continue; } // 自分の意図的変更
+    if (!mb && bb) continue; // 自分が意図的に削除（返却確定の再生成で月が消えた等）
+    out.push(sb); // 自分は触っていない → サーバー値（他端末の消込マーク等）を保存
+  }
+  for (const mb of mine) { if (!seen.has(keyOf(mb))) out.push(mb); } // 自分が追加した月
+  return out.sort((a: any, b: any) => String(a?.monthPeriod || "").localeCompare(String(b?.monthPeriod || "")));
+}
 const _pk = (store: string, id: string) => store + " " + id;
 // バックエンド書き込み失敗（オフライン/サーバーエラー）の購読者。
 // スタッフ現場アプリが「保存に失敗」を即座にユーザへ提示するために使う。
@@ -653,6 +676,7 @@ async function _upsertExternalized(store: BusStore, recordId: string): Promise<v
         }
         _pendingUpserts.delete(pk); // 同期確定 → 未同期解除
         _patchUpdates.delete(pk);   // 変更フィールドの累積をクリア
+        _blockPatchBase.delete(pk);
         return;
       } catch (e) {
         if (e instanceof ConflictError) {
@@ -663,6 +687,7 @@ async function _upsertExternalized(store: BusStore, recordId: string): Promise<v
             // （tombstone の sync は pending 中に既にスキップされていることがあり、待っても届かない。）
             console.warn(`[OrderBus] conflict: "${store}/${recordId}" deleted remotely — dropping local patch`);
             _patchUpdates.delete(pk);
+            _blockPatchBase.delete(pk);
             _pendingUpserts.delete(pk);
             delete _revs[pk];
             _persistRevs();
@@ -670,7 +695,16 @@ async function _upsertExternalized(store: BusStore, recordId: string): Promise<v
             return;
           }
           // 再ベース: サーバー最新レコードへ「自分の変更フィールドだけ」を重ねる（相手の変更を保存）。
-          const rebased = { ...(e.current as BusRecord), ...mine, updatedAt: new Date().toISOString() } as BusRecord;
+          // invoiceBlocks はブロック単位の 3-way マージ（相手の入金済みマークを巻き戻さない）(I4)。
+          const mergedMine: Record<string, unknown> = { ...mine };
+          const baseBlocks = _blockPatchBase.get(pk);
+          const serverBlocks = (e.current as any)?.invoiceBlocks;
+          if (Array.isArray((mine as any).invoiceBlocks) && Array.isArray(serverBlocks) && Array.isArray(baseBlocks)) {
+            mergedMine.invoiceBlocks = _mergeInvoiceBlocks(baseBlocks as any[], (mine as any).invoiceBlocks as any[], serverBlocks as any[]);
+            _patchUpdates.set(pk, { ...mine, invoiceBlocks: mergedMine.invoiceBlocks });
+            _blockPatchBase.set(pk, serverBlocks as unknown[]); // 以後の再ベース基準を更新
+          }
+          const rebased = { ...(e.current as BusRecord), ...mergedMine, updatedAt: new Date().toISOString() } as BusRecord;
           const curRows = _read(store);
           const hasRow = curRows.some((r) => String(r.id) === String(recordId));
           _write(store, hasRow ? curRows.map((r) => (String(r.id) === String(recordId) ? rebased : r)) : [rebased, ...curRows]);
@@ -687,6 +721,7 @@ async function _upsertExternalized(store: BusStore, recordId: string): Promise<v
         if (/→ 4\d\d /.test(String((e as { message?: string })?.message ?? e))) {
           _pendingUpserts.delete(pk);
           _patchUpdates.delete(pk);
+          _blockPatchBase.delete(pk);
         }
         return;
       }
@@ -750,6 +785,7 @@ export const OrderBus: IOrderBus = {
 
     // push は「全置換の意図」なので楽観的排他は掛けない（累積パッチも破棄 = baseRev 無しで送る）。
     _patchUpdates.delete(_pk(store, String(record.id)));
+    _blockPatchBase.delete(_pk(store, String(record.id)));
 
     if (DATA_BACKEND === "api" && !_applyingRemote) {
       void _upsertExternalized(store, String(record.id));
@@ -774,6 +810,11 @@ export const OrderBus: IOrderBus = {
 
       // 楽観的排他: 変更フィールドを累積（409 再ベース時に「自分の変更だけ」を重ねるため）。
       const patchPk = _pk(store, String(targetId));
+      // invoiceBlocks は 3-way マージ用に「変更前」の配列を初回だけ控える(I4)。
+      if (Object.prototype.hasOwnProperty.call(updates, "invoiceBlocks") && !_blockPatchBase.has(patchPk)) {
+        const prevBlocks = (data[idx] as any).invoiceBlocks;
+        _blockPatchBase.set(patchPk, Array.isArray(prevBlocks) ? prevBlocks : []);
+      }
       _patchUpdates.set(patchPk, { ..._patchUpdates.get(patchPk), ...updates });
 
       if (DATA_BACKEND === "api" && !_applyingRemote) {

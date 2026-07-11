@@ -92,6 +92,44 @@ function orderType(order: any) {
   return "レンタル";
 }
 
+// 消込を保存済みブロックへ「最小差分」で反映する。生成配列(getOrGenerateInvoiceBlocks)を丸ごと
+// 保存すると、表示用に本日まで cap された当月ロールフォワードブロックまで永続化され、以降その月の
+// 日数が二度と伸びず月末請求が過少になる(I1)。ライブ注文から直前再取得して多端末の巻き戻りも軽減。
+function applyBlockStatuses(order: any, changes: Map<string, { status: string; paidAt?: string }>): any[] {
+  const live = OrderBus.getAll<any>("orders").find(
+    (o: any) => o && (o.id === order.id || (order.firestoreId && o.firestoreId === order.firestoreId)),
+  ) || order;
+  const saved: any[] = Array.isArray(live.invoiceBlocks) ? live.invoiceBlocks : [];
+  const savedIds = new Set(saved.map((b: any) => String(b?.id || "")));
+  const applyTo = (b: any) => {
+    const c = changes.get(String(b?.id || ""));
+    return c ? { ...b, status: c.status, paidAt: c.paidAt } : b;
+  };
+  let next = saved.map(applyTo);
+  const missing = Array.from(changes.keys()).filter((blockId) => !savedIds.has(blockId));
+  if (missing.length > 0) {
+    // 保存済みに無いブロック（動的生成月）を消し込む場合のみ、そのブロックを追加保存する。
+    // それ以外の動的月（特に本日capの当月・集計中）は保存しない（凍結防止）。
+    const t = new Date();
+    const thisMonth = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
+    const generated = getOrGenerateInvoiceBlocks(live);
+    const extras = generated
+      .filter((b: any) => {
+        const bid = String(b?.id || "");
+        if (savedIds.has(bid)) return false;
+        if (missing.includes(bid)) return true;
+        // キャッシュ皆無の注文は、確定済みの過去月も一緒に保存する（対象月だけ保存すると
+        // 以後のキャッシュ経路で過去月が表示から消えるため）。当月以降は保存しない。
+        return savedIds.size === 0 && !!b?.monthPeriod && b.monthPeriod < thisMonth;
+      })
+      .map(applyTo);
+    next = [...next, ...extras].sort((a: any, b: any) =>
+      String(a?.monthPeriod || "").localeCompare(String(b?.monthPeriod || "")),
+    );
+  }
+  return next;
+}
+
 function makeRows(orders: any[]): InvoiceRow[] {
   return orders.flatMap((order) => {
     if (!Array.isArray(order.items) || order.items.length === 0) return [];
@@ -297,10 +335,9 @@ export default function AdminInvoices() {
     byOrder.forEach((blockIds, order) => {
       const id = order.firestoreId || order.id;
       if (!id) return;
-      const next = getOrGenerateInvoiceBlocks(order).map((block) =>
-        blockIds.has(block.id) ? ({ ...block, status: "paid", paidAt: stamp } as any) : block,
-      );
-      liveOrders.patchOrder(id, { invoiceBlocks: next });
+      const changes = new Map<string, { status: string; paidAt?: string }>();
+      blockIds.forEach((bid) => changes.set(String(bid), { status: "paid", paidAt: stamp }));
+      liveOrders.patchOrder(id, { invoiceBlocks: applyBlockStatuses(order, changes) });
       updated += blockIds.size;
     });
     setSelectedBlockIds(new Set());
@@ -340,6 +377,12 @@ export default function AdminInvoices() {
       return;
     }
     if (payingId) return; // 進行中はガード（連打防止）
+    // キャンセル注文は「入金済ブロックのみ表示」の仕様のため、未入金へ戻すと行が一覧から消えて
+    // この画面では二度と操作できなくなる(I5)。誤操作防止のため戻しを禁止する。
+    if (nextStatus === "pending" && String(row.order.status || "") === "キャンセル") {
+      triggerToast("キャンセル注文の入金記録は取り消せません（行が一覧から消え、復元できなくなります）", "warn");
+      return;
+    }
     // 入金済→未入金 の戻しは売掛消込を巻き戻す破壊的操作。誤クリック防止のため確認する。
     if (nextStatus === "pending") {
       const ok = await confirmDialog("この入金記録を取り消しますか？売掛の消込が巻き戻ります。", { okText: "取り消す", cancelText: "やめる", danger: true });
@@ -348,13 +391,10 @@ export default function AdminInvoices() {
     setPayingId(row.block.id);
     // 入金時は入金日(paidAt)を記録し、未入金へ戻す時はクリアする（AR 追跡用メタデータ）。
     const stamp = new Date().toISOString();
-    const nextBlocks = getOrGenerateInvoiceBlocks(row.order).map((block) =>
-      block.id === row.block.id
-        ? ({ ...block, status: nextStatus, paidAt: nextStatus === "paid" ? stamp : undefined } as any)
-        : block,
-    );
-
-    liveOrders.patchOrder(id, { invoiceBlocks: nextBlocks });
+    const changes = new Map<string, { status: string; paidAt?: string }>([
+      [String(row.block.id), { status: nextStatus, paidAt: nextStatus === "paid" ? stamp : undefined }],
+    ]);
+    liveOrders.patchOrder(id, { invoiceBlocks: applyBlockStatuses(row.order, changes) });
     triggerToast(nextStatus === "paid" ? "入金済みに更新しました" : "未入金に戻しました", "ok");
     setTimeout(() => setPayingId(null), 400); // 反映までボタンを無効化
   };
@@ -571,9 +611,13 @@ export default function AdminInvoices() {
                           表示
                         </Btn>
                         {statusKey(String(row.block.status || "")) === "paid" ? (
+                          // キャンセル注文は paid 行のみ表示される仕様のため、未入金へ戻すと行が消えて
+                          // 復元不能(I5)。ボタン自体を出さない。
+                          String(row.order.status || "") === "キャンセル" ? null : (
                           <Btn size="sm" variant="ghost" icon="undo" disabled={payingId === row.block.id} onClick={() => updateBlockStatus(row, "pending")}>
                             未入金へ
                           </Btn>
+                          )
                         ) : (
                           <Btn size="sm" variant="primary" icon="check_circle" disabled={payingId === row.block.id} onClick={() => updateBlockStatus(row, "paid")}>
                             入金済

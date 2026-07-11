@@ -229,7 +229,13 @@ export default function AdminRental() {
     // 実際の納品日基準で生成される（completeDelivery）。ここで全期間を先に請求すると未納品なのに
     // 課金され、AR一覧に過大計上される。納品済み／履歴(返却済・完了)のみ請求ブロックを確定する。
     const shouldBill = delivered || isClosedReg;
-    const blocks = shouldBill ? getOrGenerateInvoiceBlocks(finalOrder) : [];
+    let blocks = shouldBill ? getOrGenerateInvoiceBlocks(finalOrder) : [];
+    // 過去契約の移行登録（返却済/完了）は「精算済みの履歴」として全ブロックを入金済で確定する
+    //（ユーザー裁定）。動的生成の既定が pending になったため(I2)、ここで明示的に付与する。
+    if (isClosedReg && blocks.length > 0) {
+      const paidStamp = now.toISOString();
+      blocks = blocks.map((b: any) => ({ ...b, status: "paid", paidAt: paidStamp }));
+    }
     const t = (blocks || []).reduce(
       (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
       { subtotal: 0, tax: 0, total: 0 },

@@ -290,7 +290,8 @@ function getInvoiceLineRows(order: any, monthPeriod?: string): InvoiceLineRow[] 
         pushGuarantee(it);
       }
     });
-    getOrGenerateInvoiceBlocks(order).forEach((b: any) => {
+    const allBlocks = getOrGenerateInvoiceBlocks(order);
+    allBlocks.forEach((b: any) => {
       (b.extraCosts || []).forEach((ec: any) => {
         rows.push({
           kubun: "その他", name: ec.itemName || ec.note || "追加費用", qty: 1, days: "", deliveryDate: "",
@@ -298,6 +299,20 @@ function getInvoiceLineRows(order: any, monthPeriod?: string): InvoiceLineRow[] 
         });
       });
     });
+    // 自動延長で追記された月（ロールフォワード）は品目の frozen calculatedPrice に含まれず、
+    // 「明細合計 < ご請求金額」の同一PDF内矛盾になる(I8)。ブロック合計との差額を調整行で補い、
+    // 明細合計 = 請求額を常に保証する。
+    const blockSubtotal = allBlocks.reduce((s: number, b: any) => s + (Number(b.subtotal) || 0), 0);
+    if (blockSubtotal > 0) {
+      const rowSum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const diff = Math.round(blockSubtotal - rowSum);
+      if (diff > 0) {
+        rows.push({
+          kubun: "日額", name: "自動延長分（追加期間のレンタル料）", qty: 1, days: "", deliveryDate: "",
+          unitPrice: diff, amount: diff, remarks: "",
+        });
+      }
+    }
   }
 
   return rows;
@@ -344,8 +359,14 @@ export function buildCompanySummary(group: CompanyGroup, monthPeriod?: string): 
     t: orderTotals(order, monthPeriod),
     label: siteConstructionLabel(order),
   }));
-  // 現場名・工事番号セル(≈256px)は 全角22文字/行、1行=約16px + 余白10px で見積もる。
-  const pages = packByHeight(rowData, (r) => estLines(r.label, 22) * 16 + 10, SUMMARY_BODY_BUDGET_PX);
+  // 行高は「現場名(全角22字/行)」と「受注番号(84px列・等幅で必ず折返す)」の大きい方で見積もる。
+  // 現場名だけだと受注番号2行の実高との差が行数分蓄積し、行が多いページで下段の行と
+  // ページ小計フッタが overflow:hidden で欠落する(I10)。
+  const pages = packByHeight(
+    rowData,
+    (r) => Math.max(estLines(r.label, 22), estLines(receiptNoOf(r.order), 11)) * 16 + 10,
+    SUMMARY_BODY_BUDGET_PX,
+  );
   const totalPages = pages.length;
 
   let runningNo = 0; // ページをまたいで連番（pages.map は順次実行される）。
@@ -645,13 +666,24 @@ export async function issueCompanyInvoice(group: CompanyGroup, monthPeriod?: str
 // 全取引先まとめ（内訳一覧の総合版）
 // ------------------------------------------------------------
 
-/** 全取引先の集計一覧（マスター表紙）。 */
-function renderMasterSummary(groups: CompanyGroup[], totalPages: number, monthPeriod?: string): HTMLElement {
-  const host = document.createElement("div");
-  host.setAttribute("style", pageBaseStyle());
+/** 全取引先の集計一覧（マスター表紙）。会社数が多い場合はページ分割する（A4固定高で行と総合計が
+ * overflow:hidden で切れるのを防ぐ=I11）。総合計行は最終ページのみ。 */
+function renderMasterSummaryPages(groups: CompanyGroup[], detailPageCount: number, monthPeriod?: string): HTMLElement[] {
   const total = aggregateTotals(groups);
+  // 会社名列は可変幅（≈全角26字/行）。1行=約16px + 余白10px。本文予算は総括表と同等の安全値。
+  const pages = packByHeight(
+    groups.map((g, gi) => ({ g, gi })),
+    (e) => estLines(e.g.companyName, 26) * 16 + 10,
+    640,
+  );
+  const totalPages = pages.length + detailPageCount;
 
-  const rows = groups.map((g, gi) => `
+  return pages.map((pageEntries, pageIdx) => {
+    const host = document.createElement("div");
+    host.setAttribute("style", pageBaseStyle());
+    const isLast = pageIdx === pages.length - 1;
+
+    const rows = pageEntries.map(({ g, gi }) => `
     <tr>
       <td style="${tdCell("text-align:center;")}">${gi + 1}</td>
       <td style="${tdCell("font-weight:700;")}">${escapeHtml(g.companyName)}</td>
@@ -661,7 +693,16 @@ function renderMasterSummary(groups: CompanyGroup[], totalPages: number, monthPe
       <td style="${tdCell("text-align:right;font-family:ui-monospace,monospace;font-weight:700;")}">${yen(g.total)}</td>
     </tr>`).join("");
 
-  host.innerHTML = `
+    const grandRow = isLast ? `
+          <tr>
+            <td colspan="2" style="${tdCell("text-align:right;background:#eef2f5;font-weight:800;")}">総合計</td>
+            <td style="${tdCell("text-align:center;background:#eef2f5;font-weight:800;")}">${total.orderCount}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.subtotal)}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.tax)}</td>
+            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.total)}</td>
+          </tr>` : "";
+
+    host.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
       <div style="flex:1;">
         <div style="font-size:18px;font-weight:800;letter-spacing:8px;margin-bottom:12px;">請求一覧表</div>
@@ -684,22 +725,17 @@ function renderMasterSummary(groups: CompanyGroup[], totalPages: number, monthPe
         </thead>
         <tbody>
           ${rows}
-          <tr>
-            <td colspan="2" style="${tdCell("text-align:right;background:#eef2f5;font-weight:800;")}">総合計</td>
-            <td style="${tdCell("text-align:center;background:#eef2f5;font-weight:800;")}">${total.orderCount}</td>
-            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.subtotal)}</td>
-            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.tax)}</td>
-            <td style="${tdCell("text-align:right;background:#eef2f5;font-family:ui-monospace,monospace;font-weight:800;")}">${yen(total.total)}</td>
-          </tr>
+          ${grandRow}
         </tbody>
       </table>
     </div>
 
     <div style="margin-top:10px;">${bankFooterHtml()}</div>
-    <div style="position:absolute;bottom:12px;right:56px;font-size:9px;color:#9ca3af;font-family:ui-monospace,monospace;">1 / ${totalPages}</div>
+    <div style="position:absolute;bottom:12px;right:56px;font-size:9px;color:#9ca3af;font-family:ui-monospace,monospace;">${pageIdx + 1} / ${totalPages}</div>
   `;
 
-  return host;
+    return host;
+  });
 }
 
 export function buildAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string): { nodes: HTMLElement[]; filename: string } {
@@ -711,10 +747,9 @@ export function buildAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: s
     ...flattenOrders(g).flatMap((o) => renderOrderInvoicePage(o, { companyName: g.companyName, monthPeriod })),
   ]);
   const detailNodes = companySections.flat();
-  const totalPages = 1 + detailNodes.length;
-  const master = renderMasterSummary(groups, totalPages, monthPeriod);
+  const masters = renderMasterSummaryPages(groups, detailNodes.length, monthPeriod);
 
-  return { nodes: [master, ...detailNodes], filename: `内訳請求書_${monthPeriod ?? todayShort()}.pdf` };
+  return { nodes: [...masters, ...detailNodes], filename: `内訳請求書_${monthPeriod ?? todayShort()}.pdf` };
 }
 
 export async function issueAggregatedBreakdown(groups: CompanyGroup[], monthPeriod?: string) {

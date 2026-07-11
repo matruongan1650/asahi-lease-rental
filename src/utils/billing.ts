@@ -493,22 +493,36 @@ export function regenerateBlocksPreservingState(
  *   ため。入金済み・手動状態は変更しない）。これで期限超過の当月請求が、イベント無しでも自動で現れる。
  */
 function appendRolledForwardMonths(order: Order, cached: InvoiceBlock[]): InvoiceBlock[] {
-  if (isClosedOrder(order.status)) return cached;
-  const end = billingEndDate(order);
-  if (!end) return cached;
-  const endMonth = String(end).replace(/\//g, "-").slice(0, 7);
-  if (endMonth.length !== 7) return cached;
   const thisMonthStr = (() => {
     const t = new Date();
     return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
   })();
+  // 過去のまま「集計中(accumulating)」の月を「未入金(pending)」へ確定させる。以前は「新月の追記に
+  // 成功した時」しか実行されず、納品時に全期間キャッシュ済みの長期契約では経過月が永久に集計中の
+  // まま AR/延滞から漏れていた(I3)。追記の有無に関係なく毎回適用する（入金済み・手動状態は不変）。
+  const settlePast = (arr: InvoiceBlock[]) => arr.map((b) =>
+    b && (b as any).status === "accumulating" && b.monthPeriod && b.monthPeriod < thisMonthStr
+      ? ({ ...b, status: "pending" } as InvoiceBlock)
+      : b,
+  );
+  // クローズ済み注文はもう積み上がらない: 残骸の「集計中」は月を問わず未入金へ確定する
+  //（settleAccumulating(R15) 導入前にクローズされた既存データの救済）。
+  if (isClosedOrder(order.status)) {
+    return cached.map((b) =>
+      b && (b as any).status === "accumulating" ? ({ ...b, status: "pending" } as InvoiceBlock) : b,
+    );
+  }
+  const end = billingEndDate(order);
+  if (!end) return settlePast(cached);
+  const endMonth = String(end).replace(/\//g, "-").slice(0, 7);
+  if (endMonth.length !== 7) return settlePast(cached);
   // 追記対象は「当月まで」。将来返却予定(未来の rentalEndDate)でも未経過の将来月は先取り請求しない。
   const targetMonth = endMonth > thisMonthStr ? thisMonthStr : endMonth;
   const lastCachedMonth = cached.reduce(
     (m, b) => (b && b.monthPeriod && b.monthPeriod > m ? b.monthPeriod : m),
     "",
   );
-  if (!lastCachedMonth || targetMonth <= lastCachedMonth) return cached;
+  if (!lastCachedMonth || targetMonth <= lastCachedMonth) return settlePast(cached);
   // フル span を再計算し、最終キャッシュ月より後 〜 当月 の月ブロックだけ採用（既存月・将来月は不変）。
   const fresh = getOrGenerateInvoiceBlocks({ ...order, invoiceBlocks: undefined } as Order);
   const appended = fresh
@@ -521,13 +535,8 @@ function appendRolledForwardMonths(order: Order, cached: InvoiceBlock[]): Invoic
       const cleaned = { ...b, extraCosts: (b.extraCosts || []).filter((c: any) => !AUTO_EXTRA_COST_IDS.has(String(c?.id || ""))) };
       return recalculateInvoiceBlock(cleaned);
     });
-  if (appended.length === 0) return cached;
-  const finalized = cached.map((b) =>
-    b && (b as any).status === "accumulating" && b.monthPeriod && b.monthPeriod < thisMonthStr
-      ? ({ ...b, status: "pending" } as InvoiceBlock)
-      : b,
-  );
-  return [...finalized, ...appended];
+  if (appended.length === 0) return settlePast(cached);
+  return [...settlePast(cached), ...appended];
 }
 
 /**
@@ -689,7 +698,11 @@ export function getOrGenerateInvoiceBlocks(order: Order): InvoiceBlock[] {
       subtotal: baseSubtotal,
       tax: 0,
       total: 0,
-      status: order.status === "完了" || isFullyReturned(order.status) ? "paid" : (monthStr >= thisMonthStr ? "accumulating" : "pending"),
+      // クローズ済み(完了/返却済)注文の動的生成は「未入金(pending)」を既定にする。以前は無条件 paid で、
+      // ブロック未永続化のままクローズされた注文（顧客チェックアウト由来・過去データ等）の未収が
+      // AR/延滞から silent に消えていた(I2)。過去契約の移行登録だけは AdminRental 側で明示的に
+      // paid を付与する（ユーザー裁定: 移行登録=精算済みの履歴）。クローズ済みに accumulating は付けない。
+      status: (order.status === "完了" || isFullyReturned(order.status)) ? "pending" : (monthStr >= thisMonthStr ? "accumulating" : "pending"),
       extraCosts: []
     };
 

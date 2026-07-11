@@ -101,7 +101,10 @@ export function groupOrdersByCompany(orders: any[], opts: GroupOpts = {}): Compa
     if (String(order?.status) === "キャンセル") continue;
 
     const orderCompany = companyNameOf(order);
-    if (filterCompany && orderCompany !== filterCompany) continue;
+    // フィルタ比較は表示側(AdminInvoices.companyOf)と同じ「未設定フォールバック後」の名前で行う。
+    // 素の空文字と比較すると「(会社名未設定)」を選んだとき何もヒットせず、一覧に請求行があるのに
+    // 会社別発行が常に0件で発行不能になる(I7)。
+    if (filterCompany && (orderCompany || EMPTY_COMPANY) !== filterCompany) continue;
 
     const matched = orderSubtotal(order, opts.monthPeriod).matched;
     if (!matched) continue;

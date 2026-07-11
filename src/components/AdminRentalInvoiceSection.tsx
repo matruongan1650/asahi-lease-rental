@@ -47,7 +47,18 @@ export default function AdminRentalInvoiceSection({ orders, monthPeriod, company
           r.orders.some((o: any) => (o.orderNumber || "").toLowerCase().includes(q)),
         ),
       }))
-      .filter(g => g.renters.length > 0 || g.companyName.toLowerCase().includes(q));
+      .filter(g => g.renters.length > 0 || g.companyName.toLowerCase().includes(q))
+      // 検索で担当者を絞った場合は、合計・件数を「残った担当者」から再計算する。
+      // ...g のままだと全社合計が残り、絞り込み中に発行した会社請求書/内訳請求書の総額が
+      // 明細行と食い違う（過大請求 PDF）(I6)。
+      .map(g => ({
+        ...g,
+        subtotal: g.renters.reduce((s, r) => s + r.subtotal, 0),
+        tax: g.renters.reduce((s, r) => s + r.tax, 0),
+        total: g.renters.reduce((s, r) => s + r.total, 0),
+        guaranteeFee: g.renters.reduce((s, r) => s + r.guaranteeFee, 0),
+        orderCount: g.renters.reduce((s, r) => s + r.orders.length, 0),
+      }));
   }, [baseGroups, query]);
 
   const totals = useMemo(() => aggregateTotals(filtered), [filtered]);
