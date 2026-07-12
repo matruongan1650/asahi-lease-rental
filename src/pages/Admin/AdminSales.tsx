@@ -7,7 +7,7 @@ import { useServerQuery } from "../../lib/ordersQuery";
 import { byOrderDateDesc } from "../../utils/orderSort";
 import OrderBus from "../../lib/orderBus";
 import { confirmDialog } from "../../components/AppDialog";
-import { deductOrderStock, settleReturnStock } from "../../utils/stockLedger";
+import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
 import { getTaxRate } from "../../utils/billing";
 
 type SalesView = "all" | "pending" | "confirmed" | "closed";
@@ -273,7 +273,7 @@ export default function AdminSales() {
         onUpdateStatus={(id, status, staffStatus) => {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定。出庫を確実に行う。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status); // 混在注文のキャンセル/返却でレンタル在庫を戻す（他画面と統一）
+          const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);

@@ -14,7 +14,7 @@ import {
 import { useAdminCollection, useAdminOrders } from "../context/AdminDataContext";
 import { byOrderDateDesc } from "../utils/orderSort";
 import { isVehicleCategory } from "../utils/productUtils";
-import { deductOrderStock, settleReturnStock } from "../utils/stockLedger";
+import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../utils/stockLedger";
 import OrderBus from "../lib/orderBus";
 import AdminOrderDrawer from "./AdminOrderDrawer";
 import { Btn, Modal, triggerToast } from "./AdminUI";
@@ -1321,7 +1321,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
         onUpdateStatus={(id, status, staffStatus) => {
           // 受注確定(確認済み)で出庫、返却系クローズで入庫（AdminRental と同じ在庫台帳処理）。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
+          const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("注文ステータスを更新しました", "ok");
         }}

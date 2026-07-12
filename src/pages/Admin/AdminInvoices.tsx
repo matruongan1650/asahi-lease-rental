@@ -8,7 +8,7 @@ import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { useAdminOrders } from "../../context/AdminDataContext";
 import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
-import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
+import { settleReturnStock, deductOrderStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
 import OrderBus from "../../lib/orderBus";
 import type { InvoiceBlock } from "../../types";
 
@@ -674,7 +674,7 @@ export default function AdminInvoices() {
         onUpdateStatus={(id, status, staffStatus) => {
           // 受注確定（確認済み）は出庫、返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || openOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
+          const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}

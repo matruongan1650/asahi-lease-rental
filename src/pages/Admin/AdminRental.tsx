@@ -6,7 +6,7 @@ import { useAdminOrders } from "../../context/AdminDataContext";
 import { useServerQuery } from "../../lib/ordersQuery";
 import { byOrderDateDesc } from "../../utils/orderSort";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
-import { settleReturnStock, deductOrderStock } from "../../utils/stockLedger";
+import { settleReturnStock, deductOrderStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
 import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
 import { confirmDialog } from "../../components/AppDialog";
 import OrderBus from "../../lib/orderBus";
@@ -434,7 +434,7 @@ export default function AdminRental() {
         onUpdateStatus={(id, status, staffStatus) => {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
+          const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
           liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);

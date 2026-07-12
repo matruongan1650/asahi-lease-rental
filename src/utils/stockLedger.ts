@@ -34,7 +34,10 @@ function stampDate(): string {
 export function adjustProductStock(productId: string, productName: string, delta: number): any | null {
   if (!delta) return null;
   const list = OrderBus.getAll<any>("products");
-  const p = list.find((x: any) => x && (x.id === productId || x.name === productName));
+  // ID一致を最優先し、名称はIDで見つからない時のフォールバックにする。OR 単一パスだと同名の別商品
+  // （先に登録された方）へ出庫/入庫が誤爆し、両カテゴリの在庫が狂う（resolveLiveOrder と同じ理由）(K8)。
+  const p = (productId ? list.find((x: any) => x && x.id === productId) : null)
+    || (productName ? list.find((x: any) => x && x.name === productName) : null);
   if (p) {
     OrderBus.patch("products", p.id, { stock: Math.max(0, Number(p.stock || 0) + delta) });
     return p;
@@ -104,7 +107,8 @@ export function deductOrderStock(order: any): { stockDeducted?: boolean; stockDe
     const prod = adjustProductStock(pid, pname, -qty);
     if (!prod) { it.stockDeductedQty = 0; return; }
     const key = pid || pname;
-    const before = productList.find((x: any) => x && (x.id === pid || x.name === pname));
+    const before = (pid ? productList.find((x: any) => x && x.id === pid) : null)
+      || (pname ? productList.find((x: any) => x && x.name === pname) : null); // ID優先(K8)
     const avail = remaining[key] != null ? remaining[key] : (before ? Math.max(0, Number(before.stock || 0)) : qty);
     // 実際に在庫から引けた数量（過剰受注で 0 クランプされた分を、返却時に水増ししないため記録）。
     const actual = Math.min(qty, avail);
@@ -209,6 +213,19 @@ export function restoreOrderStock(
  * 通常の戻しは倉庫最終検品（restoreOrderStock 直接呼び出し）で行う。
  * 返却以外への遷移では何もしない。注文へマージすべきフラグ更新を返す。
  */
+/**
+ * admin のステータス直接変更（注文ドロワー等）に伴う在庫フラグを解決する共通ヘルパー。
+ * - 稼働系ステータスへの遷移: 未出庫なら出庫する（deductOrderStock は冪等）。以前は「確認済み」のみ
+ *   出庫していたため、処理中→レンタル中 等の直接変更で在庫未減算のまま「貸出中」に計上され、
+ *   倉庫の総数・カテゴリ別集計が二重計上＋実在庫の過剰受注リスクになっていた(K7)。
+ * - クローズ系（返却済/完了/キャンセル）: settleReturnStock に委譲（従来どおり）。
+ */
+export function stockFlagsForStatusChange(order: any, nextStatus: string): Record<string, any> {
+  const ACTIVE = ["確認済み", "準備中", "配送中", "配送済み", "レンタル中", "回収予定", "回収中", "検品待ち", "一部返却", "延滞", "遅延"];
+  if (ACTIVE.includes(String(nextStatus))) return deductOrderStock(order);
+  return settleReturnStock(order, nextStatus);
+}
+
 export function settleReturnStock(order: any, nextStatus?: string): { stockRestored?: boolean } {
   if (!order) return {};
   if (!isClosedOrder(nextStatus)) return {};

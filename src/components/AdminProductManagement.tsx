@@ -84,7 +84,9 @@ export default function AdminProductManagement() {
   const [selectedSecurityCategory, setSelectedSecurityCategory] = useState("すべて");
   const [selectedVehicleCategory, setSelectedVehicleCategory] = useState("すべて");
   
-  const securityProducts = (products || []).filter(p => p && !isVehicleCategory(p?.category));
+  // 車両連動商品(vehicleId 付き)はカテゴリ名が車両プリセットからずれても保安用品タブへ混入させない
+  //（他の在庫4画面と同じ二重計上防止の二段防御）(K12)。
+  const securityProducts = (products || []).filter(p => p && !(p as any).vehicleId && !isVehicleCategory(p?.category));
   const securityCategories = ["すべて", ...Array.from(new Set(securityProducts.map(p => p?.category).filter(Boolean)))];
   const vehicleCategories = ["すべて", ...Array.from(new Set((vehicles || []).map(v => v.category).filter(Boolean)))];
   // 保安用品のカテゴリー一覧（実データ）:
@@ -119,7 +121,9 @@ export default function AdminProductManagement() {
   const securityStock = securityProducts.reduce((acc, p) => acc + (p.stock || 0), 0);
   const vehicleStock = (vehicles || []).reduce((acc, v) => {
     const linkedProduct = (products || []).find(p => p && p.id === (v.productId || v.id));
-    return acc + (v.stock || linkedProduct?.stock || 0);
+    // 商品マスタ(products.stock)が唯一の真実。v.stock は登録時の値で固定される古いミラーのため、
+    // 出庫中でも登録台数を表示してしまう（編集ダイアログ 1342 行と同じ優先順位に統一）(K1)。
+    return acc + (linkedProduct?.stock ?? v.stock ?? 0);
   }, 0);
   const lowStockSecurityCount = securityProducts.filter(p => Number(p.stock || 0) <= 5).length;
   const vehicleMaintenanceCount = (vehicles || []).filter(v => v.status === "整備中").length;
@@ -138,6 +142,13 @@ export default function AdminProductManagement() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   // 二重送信ガード: 保存処理中はフラグを立て、送信ボタンを無効化する。
   const [productSaving, setProductSaving] = useState(false);
+  // カテゴリ選択肢: 保存済みの生カテゴリ（trim 前・リスト外の旧値）を必ず含める。含めないと
+  // uncontrolled select が defaultValue を解決できず先頭の「カラーコーン」へ無言で差し替わり、
+  // 価格だけ直した保存でカテゴリが化ける(K4)。
+  const productCategoryOptions = Array.from(new Set([
+    ...(editingProduct?.category ? [String(editingProduct.category)] : []),
+    ...categoriesList,
+  ]));
   const [qrProduct, setQrProduct] = useState<Product | null>(null);
   const [qrImage, setQrImage] = useState("");
   const [isGuaranteeChecked, setIsGuaranteeChecked] = useState(false);
@@ -218,18 +229,37 @@ export default function AdminProductManagement() {
     }
   };
 
-  const saveProduct = (e: React.FormEvent<HTMLFormElement>) => {
+  const saveProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     // 二重送信ガード: 保存中の再送信は無視する。
     if (productSaving) return;
     setProductSaving(true);
     const formData = new FormData(e.currentTarget);
-    const productId = editingProduct?.id || String(formData.get("id") || "") || "p-" + Math.random().toString(36).substring(7);
+    const productId = (editingProduct?.id || String(formData.get("id") || "").trim() || "p-" + Math.random().toString(36).substring(7));
+    // 管理IDの重複ガード: 既存IDで登録すると OrderBus.push（全置換 upsert）が既存商品のマスタを
+    // 黙って上書きする（車両連動 vprod_ の乗っ取り含む）(K2)。
+    if (!editingProduct && (products || []).some((p: any) => p && String(p.id) === productId)) {
+      void alertDialog(`管理ID「${productId}」は既に使用されています。別のIDを入力するか、空欄で自動採番してください。`);
+      setProductSaving(false);
+      return;
+    }
+    // 同名商品の警告: 同名が併存すると入出庫・在庫調整の名称フォールバックが別商品へ誤爆しうる(K9)。
+    const newName = String(formData.get("name") || "").trim();
+    const dupName = (products || []).some((p: any) => p && String(p.id) !== productId && String(p.name || "").trim() === newName);
+    if (dupName) {
+      const ok = await confirmDialog(`同名の商品「${newName}」が既に存在します。このまま保存しますか？（同名商品は入出庫の取り違えの原因になります）`, { okText: "保存する", cancelText: "やめる" });
+      if (!ok) { setProductSaving(false); return; }
+    }
     const qrFields = makeProductQrFields({ ...(editingProduct || {}), id: productId } as Product);
+    // 在庫はフォームのプリフィル値（モーダルを開いた時点のスナップショット）を無条件に書き戻さない。
+    // 開いている間に受注確定/入庫で動いた live 在庫を巻き戻すため、ユーザーが在庫欄を変更した時だけ
+    // 書き込む（車両編集パスの stockPatch と同じ方針）(K3)。
+    const stockInput = Number(formData.get("stock"));
+    const stockPrefill = Number(editingProduct?.stock || 0);
     const productData: any = {
-      name: formData.get("name"),
-      category: formData.get("category"),
-      stock: Number(formData.get("stock")),
+      name: newName,
+      category: String(formData.get("category") || "").trim(), // trim 保存でカテゴリの空白重複を防ぐ(K4)
+      ...((!editingProduct || stockInput !== stockPrefill) ? { stock: stockInput } : {}),
       rentPrice: Number(formData.get("rentPrice")),
       rentPriceLongTerm: Number(formData.get("rentPriceLongTerm")),
       // 販売無効時は入力欄を隠すため、既存の販売価格をそのまま保持（再有効化で復活）。
@@ -281,6 +311,24 @@ export default function AdminProductManagement() {
     e.target.value = "";
   };
 
+  // 簡易CSV分割: ダブルクォート内の区切り文字を分割しない（Excel 出力の "コーンバー,2m" 等で
+  // 列がずれたまま「正常」判定で登録されるのを防ぐ）。"" は " に戻す(K6)。
+  const splitBulkLine = (line: string, delimiter: string): string[] => {
+    const out: string[] = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (ch === delimiter && !inQ) { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map((p) => p.trim());
+  };
+
   const parseBulkText = (text: string) => {
     const lines = text.split("\n");
     const parsed: Array<{
@@ -298,7 +346,7 @@ export default function AdminProductManagement() {
       if (!trimmed) return;
 
       const delimiter = trimmed.includes("\t") ? "\t" : ",";
-      const parts = trimmed.split(delimiter).map((p) => p.trim());
+      const parts = splitBulkLine(trimmed, delimiter); // クォート対応(K6)
 
       const name = parts[0] || "";
       const category = parts[1] || "";
@@ -358,7 +406,7 @@ export default function AdminProductManagement() {
       if (!trimmed) return;
 
       const delimiter = trimmed.includes("\t") ? "\t" : ",";
-      const parts = trimmed.split(delimiter).map((p) => p.trim());
+      const parts = splitBulkLine(trimmed, delimiter); // クォート対応(K6)
 
       const name = parts[0] || "";
       const category = parts[1] || "";
@@ -405,16 +453,19 @@ export default function AdminProductManagement() {
         if (idx !== index) return item;
         const updated = { ...item, [field]: field.includes("Price") || field === "stock" ? Number(value) || 0 : value };
 
-        // Inline validation checks（モード別）
+        // Inline validation checks（モード別）。判定は trim 値で行う — 生値のままだと
+        // 「軽トラック 」(空白付き)が車両カテゴリガードをすり抜けて保安用品に登録される(K5)。
+        const nm = String(updated.name || "").trim();
+        const cat = String(updated.category || "").trim();
         if (bulkMode === "vehicles") {
-          if (!updated.name) updated.error = "車両名は必須です";
-          else if (!updated.category) updated.error = "カテゴリは必須です";
-          else if (!VEHICLE_CATEGORIES.includes(updated.category)) updated.error = "車両カテゴリーから選択してください";
+          if (!nm) updated.error = "車両名は必須です";
+          else if (!cat) updated.error = "カテゴリは必須です";
+          else if (!VEHICLE_CATEGORIES.includes(cat)) updated.error = "車両カテゴリーから選択してください";
           else delete updated.error;
         } else {
-          if (!updated.name) updated.error = "商品名は必須です";
-          else if (!updated.category) updated.error = "カテゴリは必須です";
-          else if (isVehicleCategory(updated.category)) updated.error = "車両カテゴリーは保安車両タブから登録してください";
+          if (!nm) updated.error = "商品名は必須です";
+          else if (!cat) updated.error = "カテゴリは必須です";
+          else if (isVehicleCategory(cat)) updated.error = "車両カテゴリーは保安車両タブから登録してください";
           else delete updated.error;
         }
 
@@ -425,7 +476,13 @@ export default function AdminProductManagement() {
 
   const handleBulkSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const validItems = bulkItems.filter((item) => !item.error);
+    // 登録直前に name/category を trim して再検証する（プレビューのセル編集は生値で保持されるため）(K5)。
+    const normalized = bulkItems.map((item) => ({
+      ...item,
+      name: String(item.name || "").trim(),
+      category: String(item.category || "").trim(),
+    }));
+    const validItems = normalized.filter((item) => item.name && item.category && !isVehicleCategory(item.category) && !item.error);
 
     if (validItems.length === 0) {
       void alertDialog("登録可能な有効なデータがありません。");
@@ -912,7 +969,7 @@ export default function AdminProductManagement() {
                         <div className="mt-0.5 text-xs font-bold text-slate-500">長期 {linkedProduct?.rentPriceLongTerm ? `¥${linkedProduct.rentPriceLongTerm.toLocaleString()}` : "—"}{SALES_ENABLED && ` / 販売 ${linkedProduct?.buyPrice ? `¥${linkedProduct.buyPrice.toLocaleString()}` : "—"}`}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex min-w-12 justify-center rounded-lg bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">{v.stock || linkedProduct?.stock || 0}</span>
+                        <span className="inline-flex min-w-12 justify-center rounded-lg bg-blue-50 px-3 py-1 text-sm font-black text-blue-700">{linkedProduct?.stock ?? v.stock ?? 0}</span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1.5">
@@ -1051,7 +1108,7 @@ export default function AdminProductManagement() {
                         </label>
                         <div className="flex gap-2">
                           <select required defaultValue={editingProduct?.category || "カラーコーン"} name="category" className="flex-1 border border-slate-300 bg-white rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-shadow">
-                            {categoriesList.map(cat => (
+                            {productCategoryOptions.map(cat => (
                               <option key={cat} value={cat}>{cat}</option>
                             ))}
                           </select>

@@ -55,7 +55,21 @@ export default function AdminStockIn() {
   const loginName = currentUser ? (`${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email || "") : "";
   const [staff, setStaff] = useState(loginName || "佐藤");
 
-  const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean), "その他 (直接入力)"];
+  // 選択肢は商品IDを値にする。名前文字列で特定すると同名商品（別カテゴリ/重複登録）の在庫を
+  // 誤って増減する(K9)。同名がある場合はカテゴリを付けて区別表示する。
+  const dupNames = (() => {
+    const seen = new Map<string, number>();
+    supplyProducts.forEach((p: any) => { const k = String(p.name || "").trim(); seen.set(k, (seen.get(k) || 0) + 1); });
+    return new Set(Array.from(seen.entries()).filter(([, n]) => n > 1).map(([k]) => k));
+  })();
+  const itemOptions = [
+    { v: "", l: "選択してください" },
+    ...supplyProducts.filter((p: any) => p.name).map((p: any) => ({
+      v: "id:" + p.id,
+      l: dupNames.has(String(p.name).trim()) ? p.name + "（" + (p.category || p.id) + "）" : p.name,
+    })),
+    { v: "custom", l: "その他 (直接入力)" },
+  ];
   const totalInQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
   const todayCount = rows.filter((row: any) => String(row.date || "").slice(0, 10) === new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "/")).length; // JST 当日（toISOString は UTC のため早朝に前日扱いになるのを防ぐ）
   const purchaseCount = rows.filter((row: any) => row.type === "新規購入").length;
@@ -78,7 +92,10 @@ export default function AdminStockIn() {
   };
   // keepOpen=true: 同じ納品の複数品目を連続登録する（区分/担当者/伝票は維持、品名・数量のみクリア）。
   const saveStockIn = (keepOpen: boolean) => {
-    const itemName = itemSelect === "その他 (直接入力)" ? customItem : itemSelect;
+    const selectedProduct = itemSelect.startsWith("id:")
+      ? supplyProducts.find((p: any) => String(p.id) === itemSelect.slice(3))
+      : null;
+    const itemName = itemSelect === "custom" ? customItem : String(selectedProduct?.name || "");
     if (!itemName.trim()) {
       triggerToast("品名を選択または入力してください", "warn");
       return;
@@ -108,7 +125,7 @@ export default function AdminStockIn() {
     };
 
     OrderBus.push("stockIn", stockInItem);
-    const match = supplyProducts.find((p: any) => p.name === itemName);
+    const match = selectedProduct; // ID で特定（同名商品への誤爆防止, K9）
     if (match) {
       // 書き込み直前に最新在庫を再読込（レンダー時のスナップショットは古く、別端末/受注確定の
       // 在庫変動を絶対値で上書きしてしまうため）。
@@ -229,9 +246,9 @@ export default function AdminStockIn() {
       >
         <form onSubmit={handleSaveStockIn} className="space-y-3">
           <Field label="対象品名" required>
-            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
+            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions} />
           </Field>
-          {itemSelect === "その他 (直接入力)" && (
+          {itemSelect === "custom" && (
             <Field label="直接入力品名" required>
               <TextInput value={customItem} onChange={e => setCustomItem(e.target.value)} placeholder="例：新型カラーコーン 青" />
             </Field>

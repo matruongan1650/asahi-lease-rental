@@ -54,7 +54,19 @@ export default function AdminStockOut() {
   const loginName = currentUser ? (`${currentUser.lastName || ""} ${currentUser.firstName || ""}`.trim() || currentUser.email || "") : "";
   const [staff, setStaff] = useState(loginName || "佐藤");
 
-  const itemOptions = ["", ...supplyProducts.map((p: any) => p.name).filter(Boolean)];
+  // 選択肢は商品IDを値にする（同名商品への在庫誤爆防止, K9）。同名はカテゴリ付きで区別表示。
+  const dupNames = (() => {
+    const seen = new Map<string, number>();
+    supplyProducts.forEach((p: any) => { const k = String(p.name || "").trim(); seen.set(k, (seen.get(k) || 0) + 1); });
+    return new Set(Array.from(seen.entries()).filter(([, n]) => n > 1).map(([k]) => k));
+  })();
+  const itemOptions = [
+    { v: "", l: "選択してください" },
+    ...supplyProducts.filter((p: any) => p.name).map((p: any) => ({
+      v: "id:" + p.id,
+      l: dupNames.has(String(p.name).trim()) ? p.name + "（" + (p.category || p.id) + "）" : p.name,
+    })),
+  ];
   const totalOutQty = rows.reduce((sum: number, row: any) => sum + Number(row.qty || 0), 0);
   const availableTotal = supplyProducts.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
   const rentalOutCount = rows.filter((row: any) => row.type === "レンタル").length;
@@ -92,7 +104,9 @@ export default function AdminStockOut() {
       return;
     }
 
-    const match = supplyProducts.find((p: any) => p.name === itemSelect);
+    const match = itemSelect.startsWith("id:")
+      ? supplyProducts.find((p: any) => String(p.id) === itemSelect.slice(3))
+      : null; // ID で特定（同名商品への誤爆防止, K9）
     if (!match) {
       triggerToast("選択された品目が見つかりません", "err");
       return;
@@ -115,7 +129,7 @@ export default function AdminStockOut() {
     const dateStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace("T", " ").substring(0, 16).replace(/-/g, "/"); // JST（他の入出庫画面と統一）
     const stockOutItem = {
       id: newId,
-      item: itemSelect,
+      item: match.name, // 履歴には名称スナップショットを保存（従来表示互換）
       qty: Number(qty) || 0,
       date: dateStr,
       dst: dst || "現場未設定",
@@ -128,7 +142,7 @@ export default function AdminStockOut() {
     OrderBus.push("stockOut", stockOutItem);
     OrderBus.patch("products", match.id, { stock: Math.max(0, onHand - Number(qty)) });
 
-    triggerToast(`${itemSelect} を -${qty} 出庫しました`, "ok");
+    triggerToast(`${match.name} を -${qty} 出庫しました`, "ok");
     setItemSelect("");
     setQty(10);
     if (!keepOpen) {
@@ -239,9 +253,9 @@ export default function AdminStockOut() {
       >
         <form onSubmit={handleSaveStockOut} className="space-y-3">
           <Field label="対象品名" required>
-            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions.map(v => ({ v, l: v || "選択してください" }))} />
+            <SelectInput autoFocus value={itemSelect} onChange={e => setItemSelect(e.target.value)} options={itemOptions} />
             {itemSelect && (() => {
-              const sel = supplyProducts.find((p: any) => p.name === itemSelect);
+              const sel = itemSelect.startsWith("id:") ? supplyProducts.find((p: any) => String(p.id) === itemSelect.slice(3)) : null;
               const onHand = Number(sel?.stock || 0);
               const short = Number(qty) > onHand;
               return (

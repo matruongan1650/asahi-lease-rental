@@ -115,7 +115,8 @@ function ProductListMobile() {
       : categoryParam
         ? safeProducts.filter(p => p?.category === categoryParam)
         : groupParam === "supplies"
-          ? safeProducts.filter(p => p && !isVehicleCategory(p.category))
+          // 車両連動商品(vehicleId)はカテゴリ名がずれても保安用品グループへ混入させない(K12)
+          ? safeProducts.filter(p => p && !(p as any).vehicleId && !isVehicleCategory(p.category))
           : groupParam === "vehicles"
             ? safeProducts.filter(p => p && isVehicleCategory(p.category))
             : safeProducts;

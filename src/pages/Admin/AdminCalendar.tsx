@@ -17,7 +17,7 @@ import { useAdminData } from "../../context/AdminDataContext";
 import { CAL_TYPES } from "../../data/adminMockData";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
-import { deductOrderStock, settleReturnStock } from "../../utils/stockLedger";
+import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
 
 type CalEvent = {
   t: string;
@@ -539,7 +539,7 @@ export default function AdminCalendar() {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           // （他画面 AdminRental/AdminWarehouse と同じく在庫台帳を必ず通す）
           const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || selectedOrder;
-          const flags = status === "確認済み" ? deductOrderStock(raw) : settleReturnStock(raw, status);
+          const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
           patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
           triggerToast("ステータスを更新しました", "ok");
         }}
