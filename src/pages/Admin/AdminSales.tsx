@@ -8,7 +8,7 @@ import { byOrderDateDesc } from "../../utils/orderSort";
 import OrderBus from "../../lib/orderBus";
 import { confirmDialog } from "../../components/AppDialog";
 import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
-import { getTaxRate } from "../../utils/billing";
+import { getTaxRate, closeOrderBillingPatch } from "../../utils/billing";
 
 type SalesView = "all" | "pending" | "confirmed" | "closed";
 
@@ -274,7 +274,9 @@ export default function AdminSales() {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定。出庫を確実に行う。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags, ...billingClose });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);
         }}

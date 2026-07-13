@@ -28,7 +28,7 @@ import AdminVendors from "./AdminVendors";
 import AdminSettings from "./AdminSettings";
 import AdminAuditLog from "./AdminAuditLog";
 import { buildAdminNotifications } from "../../utils/notifications";
-import { isClosedOrder } from "../../utils/orderStatus";
+import { isClosedOrder, isOverdueRentalOrder } from "../../utils/orderStatus";
 import { useNotificationReads } from "../../lib/notificationReads";
 import { useUser } from "../../context/UserContext";
 import { ROLES as INITIAL_ROLES } from "../../data/adminMockData";
@@ -127,7 +127,7 @@ export default function AdminDashboard() {
   const badgeCounts = useMemo(() => {
     const t0 = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
     const ords = liveOrders.orders || [];
-    const overdue = ords.filter((o: any) => !isClosedOrder(o.status) && o.rentalEndDate && new Date(String(o.rentalEndDate).replace(/\//g, "-") + "T00:00:00").getTime() < t0 && o.items?.some((i: any) => i.type === "rent")).length;
+    const overdue = ords.filter((o: any) => isOverdueRentalOrder(o)).length; // 未納品・回収済みを除外した共通判定(M15)
     const reports = (fieldReports || []).filter((r: any) => !["対応済", "完了"].includes(String(r.status || ""))).length
       + ords.filter((o: any) => (o.itemIssues?.length || 0) > 0 && !isClosedOrder(o.status)).length;
     // 車検残日数は inspectionDate から再計算（保存値は古くなり、車検切れ車両をバッジが取りこぼす。C25）。

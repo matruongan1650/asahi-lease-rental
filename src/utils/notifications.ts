@@ -1,3 +1,5 @@
+import { isOverdueRentalOrder } from "./orderStatus";
+
 export type NotificationTone = "danger" | "warning" | "info" | "success";
 
 export interface AppNotification {
@@ -59,11 +61,8 @@ export function buildAdminNotifications({
     list.push({ id: "admin-inspection", title: `検品待ち ${inspection.length}件`, body: "返却・持込の最終確認が必要です", tone: "warning" });
   }
 
-  const overdue = orders.filter((o: any) => {
-    if (CLOSED.includes(String(o.status || "")) || !hasRentItems(o)) return false;
-    const end = dateOnly(o.rentalEndDate);
-    return !!end && end < today;
-  });
+  // 未納品・回収済み(検品待ち)を延滞に混ぜない共通判定（ダッシュボードと同じ母集団）(M15)。
+  const overdue = orders.filter((o: any) => isOverdueRentalOrder(o));
   if (overdue.length) {
     list.push({ id: "admin-overdue", title: `返却期限超過 ${overdue.length}件`, body: "回収予定を確認してください", tone: "danger" });
   }

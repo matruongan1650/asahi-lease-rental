@@ -18,6 +18,7 @@ import { CAL_TYPES } from "../../data/adminMockData";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
+import { closeOrderBillingPatch } from "../../utils/billing";
 
 type CalEvent = {
   t: string;
@@ -540,7 +541,9 @@ export default function AdminCalendar() {
           // （他画面 AdminRental/AdminWarehouse と同じく在庫台帳を必ず通す）
           const raw = OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id) || selectedOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags, ...billingClose });
           triggerToast("ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

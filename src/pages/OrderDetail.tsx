@@ -153,6 +153,11 @@ function OrderDetailMobile() {
   }
 
   const blocks = getOrGenerateInvoiceBlocks(order);
+  // お支払い明細は保存済み order.total（納品時に凍結）ではなくブロック合計＝請求実態を表示する。
+  // 延滞の自動延長・当月ロールフォワードで金額が伸びても、同画面の月別請求内訳と一致する(M17)。
+  const liveBill = (blocks && blocks.length > 0)
+    ? blocks.reduce((a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }), { subtotal: 0, tax: 0, total: 0 })
+    : { subtotal: Number(order.subtotal) || 0, tax: Number(order.tax) || 0, total: Number(order.total) || 0 };
   const deliveryPhotos = collectCustomerPhotos("納品写真", (order as any).deliveryPhotos);
   const collectionPhotos = collectCustomerPhotos("回収写真", (order as any).collectionPhotos);
   const warehousePhotos = collectCustomerPhotos("倉庫検品写真", (order as any).warehousePhotos);
@@ -419,20 +424,21 @@ function OrderDetailMobile() {
           <div className="flex flex-col gap-3">
             <div className="flex justify-between text-sm">
               <span className="text-slate-500 dark:text-slate-400">小計</span>
-              <span className="font-medium text-slate-900 dark:text-white">¥{order.subtotal.toLocaleString()}</span>
+              <span className="font-medium text-slate-900 dark:text-white">¥{liveBill.subtotal.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">消費税 ({order.subtotal > 0 ? Math.round((order.tax / order.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span>
-              <span className="font-medium text-slate-900 dark:text-white">¥{order.tax.toLocaleString()}</span>
+              <span className="text-slate-500 dark:text-slate-400">消費税 ({liveBill.subtotal > 0 ? Math.round((liveBill.tax / liveBill.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span>
+              <span className="font-medium text-slate-900 dark:text-white">¥{liveBill.tax.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center pt-3 border-t border-slate-200 dark:border-slate-700">
               <span className="font-bold text-slate-900 dark:text-white">合計金額</span>
-              <span className="font-extrabold text-primary text-2xl tracking-tighter">¥{order.total.toLocaleString()}</span>
+              <span className="font-extrabold text-primary text-2xl tracking-tighter">¥{liveBill.total.toLocaleString()}</span>
             </div>
           </div>
         </section>
 
-        {/* Monthly Invoice Blocks */}
+        {/* Monthly Invoice Blocks（キャンセル注文は請求対象外のため非表示=M20） */}
+        {order.status !== "キャンセル" && (
         <section className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm">
           <h3 className="text-[10px] font-bold tracking-widest text-slate-500 dark:text-slate-400 mb-4 flex items-center gap-2">
             <span className="material-symbols-outlined text-[16px]">receipt_long</span>
@@ -529,6 +535,7 @@ function OrderDetailMobile() {
             })}
           </div>
         </section>
+        )}
 
         {/* Field Photos */}
         {hasFieldRecords && (

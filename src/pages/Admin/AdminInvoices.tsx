@@ -7,7 +7,7 @@ import B2BInvoiceViewer from "../../components/B2BInvoiceViewer";
 import { usePagedList } from "../../hooks/usePagedList";
 import DocumentViewer from "../../components/DocumentViewer";
 import { useAdminOrders } from "../../context/AdminDataContext";
-import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
+import { getOrGenerateInvoiceBlocks, closeOrderBillingPatch } from "../../utils/billing";
 import { settleReturnStock, deductOrderStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
 import OrderBus from "../../lib/orderBus";
 import type { InvoiceBlock } from "../../types";
@@ -130,9 +130,19 @@ function applyBlockStatuses(order: any, changes: Map<string, { status: string; p
   return next;
 }
 
+// 請求開始前（未納品）のステータス。受注一覧は納品確定まで請求ブロックを作らない方針
+// (AdminRental の shouldBill)なのに、請求管理側は動的生成で満額を AR/延滞に計上していた(M23)。
+// キャッシュ済みブロックを持つ注文（移行登録・請求済み）は表示を維持する。
+const PRE_BILLING_STATUSES = ["処理中", "注文確認中", "確認済み", "準備中", "配送中"];
+function isPreBilling(order: any): boolean {
+  return PRE_BILLING_STATUSES.includes(String(order?.status || ""))
+    && !(Array.isArray(order?.invoiceBlocks) && order.invoiceBlocks.length > 0);
+}
+
 function makeRows(orders: any[]): InvoiceRow[] {
   return orders.flatMap((order) => {
     if (!Array.isArray(order.items) || order.items.length === 0) return [];
+    if (isPreBilling(order)) return []; // 未納品はまだ請求しない(M23)
     // キャンセル注文の「未入金」ブロックは請求対象外（回収不能額を AR・延滞集計に混ぜない。
     // 決して入金されない）。ただし既に入金済みのブロックは表示を残す — 納品後に入金まで進んだ
     // 注文を後からキャンセルした場合、回収済み売上の記録が請求管理から消えないようにする。
@@ -218,7 +228,8 @@ export default function AdminInvoices() {
   const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set()); // 一括消込の選択（block.id）
 
   const invoiceOrders = useMemo(
-    () => (liveOrders.orders || []).filter((order: any) => Array.isArray(order.items) && order.items.length > 0),
+    () => (liveOrders.orders || []).filter((order: any) =>
+      Array.isArray(order.items) && order.items.length > 0 && !isPreBilling(order)), // 未納品は請求対象外(M23)
     [liveOrders.orders],
   );
 
@@ -675,7 +686,9 @@ export default function AdminInvoices() {
           // 受注確定（確認済み）は出庫、返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || openOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags, ...billingClose });
           triggerToast("ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

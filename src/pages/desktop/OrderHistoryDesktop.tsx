@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
 import { Link } from "react-router-dom";
 import { useOrders, Order } from "../../context/OrderContext";
 import { useUser } from "../../context/UserContext";
@@ -7,6 +8,14 @@ import { isClosedOrder } from "../../utils/orderStatus";
 import { byOrderDateDesc } from "../../utils/orderSort";
 
 /** PC 用 注文履歴（お客様デスクトップサイト）。モバイル OrderHistory と同じ絞り込み・状態判定ロジックを再利用。 */
+function liveOrderTotalD(order: any): number {
+  try {
+    const blocks = getOrGenerateInvoiceBlocks(order);
+    if (Array.isArray(blocks) && blocks.length > 0) return blocks.reduce((s: number, b: any) => s + (Number(b?.total) || 0), 0);
+  } catch { /* fallthrough */ }
+  return Number(order?.total) || 0;
+}
+
 export default function OrderHistoryDesktop() {
   const { orders } = useOrders();
   const { currentUser } = useUser();
@@ -142,7 +151,7 @@ export default function OrderHistoryDesktop() {
                   productName={firstItem ? firstItem.name : "不明な商品"}
                   provider={order.items.length > 1 ? `他 ${order.items.length - 1} 点` : "提供: 株式会社ビルドテック"}
                   detail={displayProps.detail}
-                  price={order.total.toLocaleString()}
+                  price={liveOrderTotalD(order).toLocaleString()}
                   image={firstItem ? firstItem.image : ""}
                   type={firstItem?.type === 'rent' ? "レンタル" : "購入"}
                   progress={displayProps.progress}

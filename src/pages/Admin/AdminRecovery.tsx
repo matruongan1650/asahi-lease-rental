@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { isOverdueRentalOrder } from "../../utils/orderStatus";
 import { Badge, Btn, triggerToast } from "../../components/AdminUI";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 import { useAdminCollection, useAdminOrders } from "../../context/AdminDataContext";
@@ -70,7 +71,8 @@ export default function AdminRecovery() {
   const fullOrders = returnedOrders.filter((o: any) => isFullReturn(o) && !isPartialReturn(o));
   const inspectionRecords = [...(inspections || [])].sort((a: any, b: any) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const pendingReports = fieldReports.filter((fr: any) => fr.status === "未対応").length;
-  const overdueCount = rentals.filter((r: any) => r.status === "延滞").length;
+  // status==="延滞" はどの経路でも書き込まれず常に0件だった(M26)。共通判定で実数を数える。
+  const overdueCount = (orders || []).filter((o: any) => isOverdueRentalOrder(o)).length;
 
   const filteredSchedule = useMemo(() => {
     const q = query.trim().toLowerCase();

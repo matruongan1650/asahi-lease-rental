@@ -26,3 +26,36 @@ const RETURN_ELIGIBLE_STATUSES = ["レンタル中", "配送済み", "一部返�
 export function isReturnEligible(status?: string | null): boolean {
   return RETURN_ELIGIBLE_STATUSES.includes(String(status ?? ""));
 }
+
+/** 日付文字列を YYYY-MM-DD（ゼロ埋め）へ正規化。不正は ""。 */
+function ymdNorm(s: any): string {
+  const m = String(s || "").replace(/\//g, "-").match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : "";
+}
+
+/**
+ * 「回収しに行ける」レンタル注文か: 納品済み・未回収・未クローズで、未返却のレンタル残がある。
+ * 未納品（処理中/確認済み/準備中/配送中）や回収済み（検品待ち・staffStatus=回収完了）を
+ * 延滞・未回収の母集団に混ぜない（ダッシュボードの延滞過大計上防止, M8/M15/M27）。
+ */
+export function isRecoverableRentalOrder(o: any): boolean {
+  if (!o || isClosedOrder(o.status)) return false;
+  const status = String(o.status || "");
+  const staffStatus = String(o.staffStatus || "");
+  if (status === "検品待ち" || staffStatus === "回収完了") return false; // 回収済み・倉庫検品待ち
+  const delivered = Boolean(o.deliveryConfirmedAt)
+    || ["配送完了", "回収予定", "回収中"].includes(staffStatus)
+    || ["配送済み", "レンタル中", "回収中", "一部返却", "遅延", "延滞"].includes(status);
+  if (!delivered) return false;
+  return (o.items || []).some((i: any) =>
+    i && i.type === "rent" && Math.max(0, Number(i.quantity || 0) - Number(i.returnedQuantity || 0)) > 0);
+}
+
+/** レンタル終了予定日を過ぎて未回収（=延滞）の注文か。課金の自動延長対象と同じ母集団で判定する。 */
+export function isOverdueRentalOrder(o: any, now: Date = new Date()): boolean {
+  if (!isRecoverableRentalOrder(o)) return false;
+  const end = ymdNorm(o?.rentalEndDate);
+  if (!end) return false;
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return end < today;
+}

@@ -213,19 +213,43 @@ export function calculateTotalPayment(subtotal: number): { subtotal: number; tax
  * - それ以外（処理中・キャンセル等）: 返却予定日のまま（延長しない）。
  */
 const ACTIVE_RENTAL_STATUSES = ["配送済み", "レンタル中", "回収予定", "回収中"];
+/** 日付文字列を YYYY-MM-DD（ゼロ埋め）へ正規化。不正なら ""。辞書順比較を安全にする(M12)。 */
+function _ymdNorm(s: any): string {
+  const m = String(s || "").replace(/\//g, "-").match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return "";
+  return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+}
 export function billingEndDate(order: any): string | undefined {
   if (order?.actualReturnDate) return order.actualReturnDate;
   const end = order?.rentalEndDate;
   if (!end) return end;
+  const status = String(order?.status || "");
+  // クローズ済み注文はここで打ち切り（staffStatus=配送完了 の残骸で本日まで再延長され
+  // クローズ後の期間まで課金される事故を防ぐ）(M2)。
+  if (isClosedOrder(status)) return end;
+  const staffStatus = String(order?.staffStatus || "");
   const isActive =
-    ACTIVE_RENTAL_STATUSES.includes(String(order?.status || "")) ||
-    order?.staffStatus === "配送完了";
+    ACTIVE_RENTAL_STATUSES.includes(status) ||
+    staffStatus === "配送完了" ||
+    status === "検品待ち" ||
+    staffStatus === "回収完了";
   if (!isActive) return end;
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const endClean = String(end).replace(/\//g, "-").slice(0, 10);
+  // ゼロ埋め無し日付(2026/7/5 等)は辞書順比較で誤判定し延滞の自動延長が全く効かなかった(M12)。
+  const endYmd = _ymdNorm(end);
+  if (!endYmd) return end;
+  // 回収完了・一次受付が済んで最終検品待ちの間は、その日で課金を止める。本日まで伸ばし続けると
+  // 確定額（一次受付日/回収完了日締め）より過大表示になり(M21)、逆に自動延長を切ると
+  // 発生済みの延滞分が消える(M28)。受付前の検品待ち（顧客が送信直後）は本日まで延長を継続。
+  const cutoff = _ymdNorm((order as any)?.receptionReturnDate)
+    || _ymdNorm((order as any)?.collectionConfirmedAt);
+  if (cutoff) {
+    if (cutoff <= endYmd) return end; // 期限内に回収済み → 契約終了日のまま（確定は最終検品時）
+    return cutoff <= todayStr ? cutoff : todayStr;
+  }
   // 返却予定日 < 本日（未返却） → 本日まで自動延長
-  return endClean >= todayStr ? end : todayStr;
+  return endYmd >= todayStr ? end : todayStr;
 }
 
 export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
@@ -272,12 +296,27 @@ export function ensureMonthlyBreakdowns(order: Order): Order["items"] {
         );
         // 未確定の span 再計算時は新値で上書き（古い1か月分の値を残すと breakdown と総額が食い違う）。
         // 確定注文での空補完時は既存の手動上書き値を尊重する。
+        // 手動単価(priceOverride)は、延滞自動延長等でスパンが変わった場合「比率維持」で新スパンへ
+        // 按分する(E1 と同方針)。旧スパンの絶対額のまま温存すると、追記月ぶんが圧縮スケーリングされ
+        // 延滞課金が実質タダになる(M16)。
+        let overrideCalc = item.calculatedPrice ?? totalPrice;
+        if (!hasCachedBlocks && item.priceOverride && Number(item.calculatedPrice) > 0) {
+          const endOrig = order.rentalEndDate ? String(order.rentalEndDate).replace(/\//g, "-").slice(0, 10) : "";
+          if (endOrig && endOrig !== endNorm) {
+            try {
+              const nat = calculateRentalPrice(
+                item.rentPrice, startNorm, endOrig, hasVehicle, isVehicleCategory(item.category), item.rentPriceLongTerm,
+              ).totalPrice;
+              if (nat > 0) overrideCalc = Math.round(totalPrice * (Number(item.calculatedPrice) / nat));
+            } catch { /* 按分不能時は温存 */ }
+          }
+        }
         result = {
           ...item,
           monthlyBreakdown: breakdown,
           // 確定注文 or 手動上書きは calculatedPrice を温存（override は下のスケーリングで breakdown を総額へ整合）。
           // それ以外は再計算した自然総額を採用（期限延長を反映）。日数は常に再計算値（実期間）を使う。
-          calculatedPrice: (hasCachedBlocks || item.priceOverride) ? (item.calculatedPrice ?? totalPrice) : totalPrice,
+          calculatedPrice: hasCachedBlocks ? (item.calculatedPrice ?? totalPrice) : (item.priceOverride ? overrideCalc : totalPrice),
           rentalDays: hasCachedBlocks ? (item.rentalDays ?? totalActualDays) : totalActualDays,
           billedDays: hasCachedBlocks ? (item.billedDays ?? totalBilledDays) : totalBilledDays,
         };
@@ -522,9 +561,28 @@ function appendRolledForwardMonths(order: Order, cached: InvoiceBlock[]): Invoic
     (m, b) => (b && b.monthPeriod && b.monthPeriod > m ? b.monthPeriod : m),
     "",
   );
-  if (!lastCachedMonth || targetMonth <= lastCachedMonth) return settlePast(cached);
+  // ── 最終キャッシュ月の「月内成長」(M3) ─────────────────────────
+  // rentalEndDate が月半ばの注文は、翌月以降の追記だけでは「期限翌日〜月末」の延滞日数が
+  // どこにも反映されない（appendRolledForwardMonths は lastCachedMonth より後しか追記しない）。
+  // 課金終了日が最終キャッシュ月ブロックの endDate より後なら、その月を fresh で置き換える
+  //（入金済み(paid)は凍結を尊重。状態・手動費用は regenerateBlocksPreservingState で引き継ぐ）。
+  let freshCache: InvoiceBlock[] | null = null;
+  const getFresh = () => (freshCache ??= getOrGenerateInvoiceBlocks({ ...order, invoiceBlocks: undefined } as Order));
+  const endYmdFull = String(end).replace(/\//g, "-").slice(0, 10);
+  let base = cached;
+  const finalBlock = cached.find((b) => b && b.monthPeriod === lastCachedMonth);
+  const finalEndYmd = finalBlock ? String((finalBlock as any).endDate || "").replace(/\//g, "-").slice(0, 10) : "";
+  const needGrow = !!(finalBlock && (finalBlock as any).status !== "paid" && finalEndYmd && endYmdFull > finalEndYmd);
+  if (needGrow) {
+    const freshFinal = getFresh().find((b) => b && b.monthPeriod === lastCachedMonth);
+    if (freshFinal) {
+      const mergedFinal = regenerateBlocksPreservingState([finalBlock as InvoiceBlock], [freshFinal])[0];
+      base = cached.map((b) => (b === finalBlock ? mergedFinal : b));
+    }
+  }
+  if (!lastCachedMonth || targetMonth <= lastCachedMonth) return settlePast(base);
   // フル span を再計算し、最終キャッシュ月より後 〜 当月 の月ブロックだけ採用（既存月・将来月は不変）。
-  const fresh = getOrGenerateInvoiceBlocks({ ...order, invoiceBlocks: undefined } as Order);
+  const fresh = getFresh();
   const appended = fresh
     .filter((b) => b && b.monthPeriod && b.monthPeriod > lastCachedMonth && b.monthPeriod <= targetMonth)
     .map((b) => {
@@ -535,8 +593,59 @@ function appendRolledForwardMonths(order: Order, cached: InvoiceBlock[]): Invoic
       const cleaned = { ...b, extraCosts: (b.extraCosts || []).filter((c: any) => !AUTO_EXTRA_COST_IDS.has(String(c?.id || ""))) };
       return recalculateInvoiceBlock(cleaned);
     });
-  if (appended.length === 0) return settlePast(cached);
-  return [...settlePast(cached), ...appended];
+  if (appended.length === 0) return settlePast(base);
+  return [...settlePast(base), ...appended];
+}
+
+/**
+ * クローズ系ステータスへの直接変更（注文ドロワー等）用の請求パッチ(M2)。
+ * 発生済みの延滞課金（未永続のロールフォワード分）をフル再生成で確定し、入金済み印・手動費用を
+ * 引き継ぎ、集計中を未入金へ確定してから閉じる。actualReturnDate 未設定なら本日で補完する
+ * （正規の返却フロー finalizePartialReturn と同じ手順に揃える）。キャンセルは請求を確定しない。
+ */
+export function closeOrderBillingPatch(order: any, nextStatus: string): Record<string, any> {
+  if (!order || !isClosedOrder(nextStatus) || isClosedOrder(order?.status)) return {};
+  if (String(nextStatus) === "キャンセル") return {}; // 未収は AR から除外する既存仕様（makeRows）に委ねる
+  if (!Array.isArray(order.items) || order.items.length === 0) return {};
+  try {
+    const t = new Date();
+    const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    const actualReturnDate = order.actualReturnDate || todayStr;
+    const fresh = getOrGenerateInvoiceBlocks({ ...order, actualReturnDate, invoiceBlocks: undefined } as Order);
+    const merged = regenerateBlocksPreservingState(order.invoiceBlocks, fresh).map((b: any) =>
+      b && b.status === "accumulating" ? { ...b, status: "pending" } : b,
+    );
+    const sums = merged.reduce(
+      (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b?.subtotal) || 0), tax: a.tax + (Number(b?.tax) || 0), total: a.total + (Number(b?.total) || 0) }),
+      { subtotal: 0, tax: 0, total: 0 },
+    );
+    return { actualReturnDate, invoiceBlocks: merged, subtotal: sums.subtotal, tax: sums.tax, total: sums.total };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 「本日まで」で cap された表示用ロールフォワード当月ブロックを、永続化対象から除外する(I1/M1)。
+ * 永続化すると以後その月の日数が二度と伸びず月末請求が過少になる。除外対象は「末尾月・集計中・
+ * 当月・endDate=本日・手動追加費用なし」のブロックのみ（納品時にキャッシュされた通常の当月/将来月
+ * ブロックや、手動費用付き・消込済みブロックは保持）。表示は毎回の roll-forward が補う。
+ */
+export function stripVolatileRolledForward(blocks?: InvoiceBlock[]): InvoiceBlock[] | undefined {
+  if (!Array.isArray(blocks) || blocks.length === 0) return blocks;
+  const t = new Date();
+  const tm = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
+  const td = `${tm}-${String(t.getDate()).padStart(2, "0")}`;
+  const maxMonth = blocks.reduce((m, b: any) => (b && b.monthPeriod > m ? b.monthPeriod : m), "");
+  return blocks.filter((b: any) => {
+    if (!b) return false;
+    if (b.monthPeriod !== maxMonth) return true;
+    if (String(b.status) !== "accumulating") return true;
+    if (String(b.monthPeriod) !== tm) return true;
+    const endYmd = String(b.endDate || "").replace(/\//g, "-").slice(0, 10);
+    if (endYmd !== td) return true;
+    return (b.extraCosts || []).some((c: any) => c && !AUTO_EXTRA_COST_IDS.has(String(c.id || "")));
+  });
 }
 
 /**

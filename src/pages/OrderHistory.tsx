@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { getOrGenerateInvoiceBlocks } from "../utils/billing";
 import { Link } from "react-router-dom";
 import { useOrders, Order } from "../context/OrderContext";
 import { useUser } from "../context/UserContext";
@@ -47,6 +48,14 @@ function OrderHistoryMobile() {
     // 新しい注文を上に表示（管理サイトと一貫）。
     return [...filtered].sort(byOrderDateDesc);
   }, [orders, currentUser, activeTab, searchQuery]);
+
+  const liveOrderTotal = (order: any): number => {
+    try {
+      const blocks = getOrGenerateInvoiceBlocks(order);
+      if (Array.isArray(blocks) && blocks.length > 0) return blocks.reduce((s: number, b: any) => s + (Number(b?.total) || 0), 0);
+    } catch { /* fallthrough */ }
+    return Number(order?.total) || 0;
+  };
 
   const getOrderDisplayProps = (order: Order) => {
     switch (order.status) {
@@ -154,7 +163,7 @@ function OrderHistoryMobile() {
                 productName={firstItem ? firstItem.name : "不明な商品"}
                 provider={order.items.length > 1 ? `他 ${order.items.length - 1} 点` : "提供: 株式会社ビルドテック"}
                 detail={displayProps.detail}
-                price={order.total.toLocaleString()}
+                price={liveOrderTotal(order).toLocaleString()}
                 image={firstItem ? firstItem.image : ""}
                 type={firstItem?.type === 'rent' ? "レンタル" : "購入"}
                 progress={displayProps.progress}

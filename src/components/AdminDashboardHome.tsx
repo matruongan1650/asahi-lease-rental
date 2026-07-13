@@ -15,6 +15,8 @@ import { useAdminCollection, useAdminOrders } from "../context/AdminDataContext"
 import { byOrderDateDesc } from "../utils/orderSort";
 import { isVehicleCategory } from "../utils/productUtils";
 import { deductOrderStock, settleReturnStock, stockFlagsForStatusChange } from "../utils/stockLedger";
+import { closeOrderBillingPatch, getOrGenerateInvoiceBlocks } from "../utils/billing";
+import { isOverdueRentalOrder, isRecoverableRentalOrder } from "../utils/orderStatus";
 import OrderBus from "../lib/orderBus";
 import AdminOrderDrawer from "./AdminOrderDrawer";
 import { Btn, Modal, triggerToast } from "./AdminUI";
@@ -105,7 +107,7 @@ function itemLineSubtotal(item: any): number {
   return Number(item.buyPrice || 0) * qty;
 }
 
-function splitOrderRevenue(order: any): { rental: number; sales: number } {
+function splitOrderRevenue(order: any, totalOverride?: number): { rental: number; sales: number } {
   let rentalSub = 0;
   let salesSub = 0;
   (order.items || []).forEach((item: any) => {
@@ -115,7 +117,7 @@ function splitOrderRevenue(order: any): { rental: number; sales: number } {
   });
 
   const subtotal = rentalSub + salesSub;
-  const total = Number(order.total || 0);
+  const total = Number(totalOverride ?? order.total ?? 0);
   if (subtotal <= 0) {
     // 明細価格が degenerate(0) のときは品目「件数」で按分する。rent 行が1つでもあれば全額レンタルに
     // するのは、rent+buy 混在注文でレンタル比率を過大計上するため。
@@ -147,6 +149,22 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [viewAllModal, setViewAllModal] = useState<"unreturned" | "transactions" | null>(null);
 
+  // 請求実態ベースの注文合計（延滞自動延長・当月ロールフォワード込みのブロック合計）。
+  // 保存済み order.total は納品時に凍結され、延滞中の注文では毎日ズレる(M5/M6)。
+  const effTotals = useMemo(() => {
+    const m = new Map<any, number>();
+    orders.forEach((o: any) => {
+      let v = Number(o?.total) || 0;
+      try {
+        const blocks = getOrGenerateInvoiceBlocks(o);
+        if (Array.isArray(blocks) && blocks.length > 0) v = blocks.reduce((sum: number, b: any) => sum + (Number(b?.total) || 0), 0);
+      } catch { /* 保存値へフォールバック */ }
+      m.set(o, v);
+    });
+    return m;
+  }, [orders]);
+  const eff = (o: any) => effTotals.get(o) ?? (Number(o?.total) || 0);
+
   // ══════════════════════════════════════
   // KPIs
   // ══════════════════════════════════════
@@ -155,12 +173,12 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
     const buyOrders = orders.filter((o) => o.items?.some((i) => i.type === "buy"));
     // 売上系の集計はキャンセル注文を除外（実現売上のみ）。件数(totalOrders等)は従来どおり全件。
     const revenueOrders = orders.filter((o) => String(o.status) !== "キャンセル");
-    const avgTransaction = revenueOrders.length > 0 ? Math.round(revenueOrders.reduce((s, o) => s + (o.total || 0), 0) / revenueOrders.length) : 0;
+    const avgTransaction = revenueOrders.length > 0 ? Math.round(revenueOrders.reduce((s, o) => s + eff(o), 0) / revenueOrders.length) : 0;
 
     let rentalRevenue = 0;
     let salesRevenue = 0;
     revenueOrders.forEach((o) => {
-      const split = splitOrderRevenue(o);
+      const split = splitOrderRevenue(o, eff(o));
       rentalRevenue += split.rental;
       salesRevenue += split.sales;
     });
@@ -200,8 +218,9 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       totalOrders: orders.length,
       rentCount: rentOrders.length,
       buyCount: buyOrders.length,
+      revenueCount: revenueOrders.length,
     };
-  }, [orders, products]);
+  }, [orders, products, effTotals]);
 
   // ══════════════════════════════════════
   // Trend chart data
@@ -226,14 +245,15 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       } else {
         key = formatDateKey(d);
       }
-      totalsByKey.set(key, (totalsByKey.get(key) || 0) + Number(order.total || 0));
+      totalsByKey.set(key, (totalsByKey.get(key) || 0) + eff(order));
     });
 
     for (let i = numPoints - 1; i >= 0; i--) {
-      const d = new Date(now);
-      if (trendRange === "daily") d.setDate(d.getDate() - i);
-      else if (trendRange === "weekly") d.setDate(d.getDate() - i * 7);
-      else d.setMonth(d.getMonth() - i);
+      // 月別は「1日固定」で遡る。now の日を保持したまま setMonth すると 29〜31日実行時に月が
+      // オーバーフローして重複/欠落する(M7)。
+      const d = trendRange === "monthly"
+        ? new Date(now.getFullYear(), now.getMonth() - i, 1)
+        : new Date(now.getFullYear(), now.getMonth(), now.getDate() - (trendRange === "weekly" ? i * 7 : i));
       const key = trendRange === "monthly"
         ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
         : trendRange === "weekly"
@@ -245,7 +265,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       points.push({ date: label, value: Math.round(totalsByKey.get(key) || 0) });
     }
     return points;
-  }, [orders, trendRange]);
+  }, [orders, trendRange, effTotals]);
 
   // ══════════════════════════════════════
   // Donut chart data
@@ -336,12 +356,8 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
     // Overdue rentals（日付のみで比較。今日が返却日の注文を終日「延滞」と誤判定しないよう深夜0時基準にする）
     const _now = new Date();
     const t0 = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate()).getTime();
-    const overdueRentals = orders.filter((o) => {
-      if (isClosedOrder(o.status)) return false;
-      if (!o.rentalEndDate) return false;
-      const end = new Date(o.rentalEndDate.replace(/\//g, "-") + "T00:00:00").getTime();
-      return end < t0 && o.items?.some((i) => i.type === "rent");
-    });
+    // 未納品や回収済み(検品待ち)を「回収手配が必要」に混ぜない共通判定を使う(M8/M27)。
+    const overdueRentals = orders.filter((o) => isOverdueRentalOrder(o));
     if (overdueRentals.length > 0) {
       list.push({
         icon: <Clock size={18} />,
@@ -420,17 +436,15 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
     // 残日数は日付（深夜0時）基準で計算。時刻成分や UTC 解釈による ±1 日のズレを防ぐ。
     const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     return orders
-      .filter((o) => {
-        if (isClosedOrder(o.status)) return false;
-        return o.items?.some((i) => i.type === "rent");
-      })
+      // 未納品・回収済み(検品待ち)は「未回収機材」ではない（回収に行けない/既に回収済み）(M27)。
+      .filter((o) => isRecoverableRentalOrder(o))
       .map((o) => {
         const endDate = o.rentalEndDate ? new Date(o.rentalEndDate.replace(/\//g, "-") + "T00:00:00") : null;
         const daysRemaining = endDate ? Math.round((endDate.getTime() - t0) / 86400000) : null;
-        return { ...o, daysRemaining };
+        return { ...o, daysRemaining, _effTotal: eff(o) };
       })
       .sort((a, b) => (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999));
-  }, [orders]);
+  }, [orders, effTotals]);
   const unreturnedOrders = allUnreturnedOrders.slice(0, 5);
 
   // ══════════════════════════════════════
@@ -442,7 +456,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       if (String(o.status) === "キャンセル") return; // 売上ランキングはキャンセルを除外
       const key = o.companyName || o.personName || "不明";
       if (!map[key]) map[key] = { name: key, total: 0, count: 0 };
-      map[key].total += o.total || 0;
+      map[key].total += eff(o);
       map[key].count += 1;
     });
     const list = Object.values(map).sort((a, b) => b.total - a.total).slice(0, 5);
@@ -455,6 +469,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
   const popularEquipment = useMemo(() => {
     const map: Record<string, { name: string; count: number; category: string; image: string }> = {};
     orders.forEach((o) => {
+      if (String(o.status) === "キャンセル") return; // 他の売上系集計と同じくキャンセル除外(M10)
       o.items?.forEach((item) => {
         if (item.type !== "rent") return;
         if (!map[item.id]) map[item.id] = { name: item.name, count: 0, category: item.category || "レンタル品", image: item.image };
@@ -493,8 +508,8 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
     const thisMonthOrders = notCancelled.filter((o) => orderMonthKey(o) === thisMonthStr);
     const lastMonthOrders = notCancelled.filter((o) => orderMonthKey(o) === lastMonthStr);
 
-    const thisRevenue = thisMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
-    const lastRevenue = lastMonthOrders.reduce((s, o) => s + (o.total || 0), 0);
+    const thisRevenue = thisMonthOrders.reduce((s, o) => s + eff(o), 0);
+    const lastRevenue = lastMonthOrders.reduce((s, o) => s + eff(o), 0);
     const thisCount = thisMonthOrders.length;
     const lastCount = lastMonthOrders.length;
     const thisRental = thisMonthOrders.reduce((s, o) => s + splitOrderRevenue(o).rental, 0);
@@ -558,7 +573,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
       {/* ─── 当日アクションバー（業務開始時の最優先: 配送/回収の残・延滞・未対応報告を最上部に） ─── */}
       {(() => {
         const t0 = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
-        const overdue = orders.filter((o) => !isClosedOrder(o.status) && o.rentalEndDate && new Date(String(o.rentalEndDate).replace(/\//g, "-") + "T00:00:00").getTime() < t0 && o.items?.some((i: any) => i.type === "rent")).length;
+        const overdue = orders.filter((o) => isOverdueRentalOrder(o)).length; // 共通判定(M15)
         const items = [
           { label: "配送 残", n: todaySchedule.deliveries.length, tab: "orders", icon: "local_shipping", on: "bg-blue-50 border-blue-200 text-blue-700" },
           { label: "回収 残", n: todaySchedule.collections.length, tab: "orders", icon: "assignment_return", on: "bg-emerald-50 border-emerald-200 text-emerald-700" },
@@ -657,7 +672,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
           </div>
           <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight mb-3">{fmtYen(kpis.avg)}</h2>
           <p className="text-xs text-slate-400 font-medium">
-            今月 {monthComparison.thisCount.toLocaleString()} 件の実取引から算出
+            全期間 {kpis.revenueCount.toLocaleString()} 件の実取引から算出
           </p>
         </div>
 
@@ -1184,7 +1199,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
                       : <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-xs font-bold">販売</span>
                     }
                   </td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-800 font-mono">{fmtYen(o.total || 0)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-800 font-mono">{fmtYen(eff(o))}</td>
                   <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => setSelectedOrder(o)}
@@ -1246,7 +1261,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
                       <span className="px-2.5 py-1 bg-emerald-50 text-emerald-600 rounded-full text-xs font-bold">{o.status || "レンタル中"}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen(o.total || 0)}</td>
+                  <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen((o as any)._effTotal ?? eff(o))}</td>
                 </tr>
               )) : (
                 <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">未回収データなし</td></tr>
@@ -1302,7 +1317,7 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
                     <td className="px-4 py-3 text-center">
                       <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold">{o.status || "—"}</span>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen(o.total || 0)}</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{fmtYen(eff(o))}</td>
                   </tr>
                 );
               }) : (
@@ -1322,7 +1337,9 @@ export default function AdminDashboardHome({ onNavigate }: { onNavigate?: (tab: 
           // 受注確定(確認済み)で出庫、返却系クローズで入庫（AdminRental と同じ在庫台帳処理）。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags, ...billingClose });
           triggerToast("注文ステータスを更新しました", "ok");
         }}
         onUpdateOrder={(id, updates) => {

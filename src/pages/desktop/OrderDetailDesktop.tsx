@@ -118,6 +118,10 @@ export default function OrderDetailDesktop() {
   }
 
   const blocks = getOrGenerateInvoiceBlocks(order);
+  // お支払い明細はブロック合計＝請求実態（延滞自動延長込み）を表示（保存済み order.total は凍結値）(M17)。
+  const liveBill = (blocks && blocks.length > 0)
+    ? blocks.reduce((a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }), { subtotal: 0, tax: 0, total: 0 })
+    : { subtotal: Number(order.subtotal) || 0, tax: Number(order.tax) || 0, total: Number(order.total) || 0 };
   const deliveryPhotos = collectCustomerPhotos("納品写真", (order as any).deliveryPhotos);
   const collectionPhotos = collectCustomerPhotos("回収写真", (order as any).collectionPhotos);
   const warehousePhotos = collectCustomerPhotos("倉庫検品写真", (order as any).warehousePhotos);
@@ -286,7 +290,8 @@ export default function OrderDetailDesktop() {
             </div>
           </section>
 
-          {/* Monthly invoice blocks */}
+          {/* Monthly invoice blocks（キャンセル注文は請求対象外のため非表示=M20） */}
+          {order.status !== "キャンセル" && (
           <section className={card}>
             <h3 className={sectionTitle}><span className="material-symbols-outlined text-[16px]">receipt_long</span>月別請求内訳 ({blocks.length}期)</h3>
             <div className="flex flex-col gap-4 divide-y divide-slate-100">
@@ -346,6 +351,7 @@ export default function OrderDetailDesktop() {
               })}
             </div>
           </section>
+          )}
 
           {/* Field photos */}
           {hasFieldRecords && (
@@ -463,9 +469,9 @@ export default function OrderDetailDesktop() {
           <section className="bg-slate-100 border border-slate-200 rounded-2xl p-6">
             <h3 className={sectionTitle}>お支払い明細</h3>
             <div className="flex flex-col gap-3">
-              <div className="flex justify-between text-sm"><span className="text-slate-500">小計</span><span className="font-medium text-slate-900">¥{order.subtotal.toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-slate-500">消費税 ({order.subtotal > 0 ? Math.round((order.tax / order.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span><span className="font-medium text-slate-900">¥{order.tax.toLocaleString()}</span></div>
-              <div className="flex justify-between items-center pt-3 border-t border-slate-200"><span className="font-bold text-slate-900">合計金額</span><span className="font-extrabold text-primary text-2xl tracking-tighter">¥{order.total.toLocaleString()}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-slate-500">小計</span><span className="font-medium text-slate-900">¥{liveBill.subtotal.toLocaleString()}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-slate-500">消費税 ({liveBill.subtotal > 0 ? Math.round((liveBill.tax / liveBill.subtotal) * 100) : Math.round(getTaxRate() * 100)}%)</span><span className="font-medium text-slate-900">¥{liveBill.tax.toLocaleString()}</span></div>
+              <div className="flex justify-between items-center pt-3 border-t border-slate-200"><span className="font-bold text-slate-900">合計金額</span><span className="font-extrabold text-primary text-2xl tracking-tighter">¥{liveBill.total.toLocaleString()}</span></div>
             </div>
           </section>
 

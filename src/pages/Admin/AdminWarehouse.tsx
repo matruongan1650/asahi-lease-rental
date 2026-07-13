@@ -22,6 +22,7 @@ import { useUser } from "../../context/UserContext";
 import OrderBus from "../../lib/orderBus";
 import { getCategoryIcon, getSupplyCategories, isVehicleCategory } from "../../utils/productUtils";
 import { settleReturnStock, deductOrderStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
+import { closeOrderBillingPatch } from "../../utils/billing";
 import AdminOrderDrawer from "../../components/AdminOrderDrawer";
 
 type WarehouseTab = "overview" | "supplies" | "vehicles" | "alerts";
@@ -1044,7 +1045,9 @@ export default function AdminWarehouse() {
           // 「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          OrderBus.patch("orders", id, { status, staffStatus, ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          OrderBus.patch("orders", id, { status, staffStatus, ...flags, ...billingClose });
           setSelectedOrder((prev: any) => prev ? { ...prev, status, staffStatus, ...flags } : prev);
           triggerToast("注文ステータスを更新しました", "ok");
         }}

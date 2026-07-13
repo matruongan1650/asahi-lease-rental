@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Drawer, Badge, triggerToast } from "./AdminUI";
-import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock, getTaxRate, regenerateBlocksPreservingState } from "../utils/billing";
+import { getOrGenerateInvoiceBlocks, recalculateInvoiceBlock, getTaxRate, regenerateBlocksPreservingState, stripVolatileRolledForward } from "../utils/billing";
 import { isClosedOrder } from "../utils/orderStatus";
 import DocumentViewer from "./DocumentViewer";
 import ProductCombobox from "./ProductCombobox";
@@ -157,6 +157,14 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
   const livePhone = (liveUser?.phone || order.userPhone || "") as string;
 
   const blocks = getOrGenerateInvoiceBlocks(order);
+  // 表示合計は保存済み order.total（納品時に凍結された値）ではなく、延滞自動延長・当月ロール
+  // フォワードを含むブロック合計＝請求実態を使う（同一ドロワー内で上下の金額が矛盾しない）(M24)。
+  const liveTotals = (blocks && blocks.length > 0)
+    ? blocks.reduce(
+        (a, b) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
+        { subtotal: 0, tax: 0, total: 0 },
+      )
+    : { subtotal: Number(order.subtotal) || 0, tax: Number(order.tax) || 0, total: Number(order.total) || 0 };
   const deliveryPhotos = collectFieldPhotos("納品写真", order.deliveryPhotos);
   const collectionPhotos = collectFieldPhotos("回収写真", order.collectionPhotos);
   const warehousePhotos = collectFieldPhotos("倉庫検品写真", order.warehousePhotos);
@@ -218,8 +226,11 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
     const overallTotal = updatedBlocks.reduce((sum, b) => sum + b.total, 0);
 
     if (onUpdateOrder) {
+      // 本日capの当月ロールフォワードブロックは永続化しない（永続化するとその月の日数が二度と
+      // 伸びず月末請求が過少になる=I1と同型, M1）。費用を載せた対象ブロックは手動費用付きになる
+      // ため strip 対象から自動的に外れる。
       onUpdateOrder(order.firestoreId || order.id, { 
-        invoiceBlocks: updatedBlocks,
+        invoiceBlocks: stripVolatileRolledForward(updatedBlocks),
         subtotal: overallSubtotal,
         tax: overallTax,
         total: overallTotal
@@ -252,7 +263,7 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
 
     if (onUpdateOrder) {
       onUpdateOrder(order.firestoreId || order.id, {
-        invoiceBlocks: updatedBlocks,
+        invoiceBlocks: stripVolatileRolledForward(updatedBlocks), // 本日cap当月の凍結防止(M1)
         subtotal: overallSubtotal,
         tax: overallTax,
         total: overallTotal,
@@ -403,7 +414,8 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
       const blocks = hadBlocks
         ? regenerateBlocksPreservingState(order.invoiceBlocks, fresh)
         : fresh;
-      updates.invoiceBlocks = hadBlocks ? blocks : undefined;
+      // 本日capの当月ロールフォワードは永続化しない（月内凍結の防止, M1）。表示は roll-forward が補う。
+      updates.invoiceBlocks = hadBlocks ? stripVolatileRolledForward(blocks) : undefined;
       const sums = (blocks || []).reduce(
         (a: any, b: any) => ({ subtotal: a.subtotal + (Number(b.subtotal) || 0), tax: a.tax + (Number(b.tax) || 0), total: a.total + (Number(b.total) || 0) }),
         { subtotal: 0, tax: 0, total: 0 },
@@ -650,15 +662,15 @@ export default function AdminOrderDrawer({ open, order, onClose, onUpdateStatus,
           <div className="bg-slate-50 p-4 border-t border-slate-200 text-sm flex flex-col gap-2">
             <div className="flex justify-between text-slate-600">
               <span>小計</span>
-              <span>¥{order.subtotal?.toLocaleString() || 0}</span>
+              <span>¥{liveTotals.subtotal.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-slate-600">
               <span>消費税</span>
-              <span>¥{order.tax?.toLocaleString() || 0}</span>
+              <span>¥{liveTotals.tax.toLocaleString()}</span>
             </div>
             <div className="flex justify-between font-bold text-lg text-slate-900 border-t border-slate-200 pt-2 mt-1">
               <span>合計</span>
-              <span className="text-blue-700">¥{order.total?.toLocaleString() || 0}</span>
+              <span className="text-blue-700">¥{liveTotals.total.toLocaleString()}</span>
             </div>
           </div>
         </div>

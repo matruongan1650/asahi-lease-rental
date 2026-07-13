@@ -7,7 +7,7 @@ import { useServerQuery } from "../../lib/ordersQuery";
 import { byOrderDateDesc } from "../../utils/orderSort";
 import { formatStatusWithReturnRequest } from "../../utils/returnLabels";
 import { settleReturnStock, deductOrderStock, stockFlagsForStatusChange } from "../../utils/stockLedger";
-import { getOrGenerateInvoiceBlocks } from "../../utils/billing";
+import { getOrGenerateInvoiceBlocks, closeOrderBillingPatch } from "../../utils/billing";
 import { confirmDialog } from "../../components/AppDialog";
 import OrderBus from "../../lib/orderBus";
 
@@ -58,6 +58,18 @@ const QUEUE_STATUS: Record<RentalQueue, string[]> = {
   closed: ["返却済", "返却済み", "完了", "キャンセル", "検品待ち", "一部返却", "回収予定", "回収中"],
 };
 
+// 一覧の金額はブロック合計（延滞自動延長・当月ロールフォワード込みの請求実態）。保存済み o.total は
+// 納品時に凍結された値で、延滞中の注文では毎日ズレていく(M4)。ブロックが無い注文のみ保存値。
+function liveOrderTotal(o: any): number {
+  try {
+    const blocks = getOrGenerateInvoiceBlocks(o);
+    if (Array.isArray(blocks) && blocks.length > 0) {
+      return blocks.reduce((s: number, b: any) => s + (Number(b?.total) || 0), 0);
+    }
+  } catch { /* fallthrough */ }
+  return Number(o?.total) || 0;
+}
+
 function toRentalRow(o: any) {
   return {
     _raw: o,
@@ -70,7 +82,7 @@ function toRentalRow(o: any) {
     start: (o.rentalStartDate || "").replace(/-/g, "/") || "—",
     end: (o.rentalEndDate || "").replace(/-/g, "/") || "—",
     items: (o.items || []).length,
-    amount: o.total || 0,
+    amount: liveOrderTotal(o),
     status: o.status,
     returnRequestType: o.returnRequestType,
   };
@@ -435,7 +447,9 @@ export default function AdminRental() {
           // ドロワーの「手配する」(処理中→確認済み) も受注確定 → 出庫。返却系クローズは settleReturnStock で入庫。
           const raw = (OrderBus.getAll<any>("orders").find((o: any) => o.id === id || o.firestoreId === id)) || selectedOrder;
           const flags = stockFlagsForStatusChange(raw, status); // 稼働系への直接変更も未出庫なら出庫（二重計上防止, K7）
-          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags });
+          // クローズ時は発生済みの延滞課金（未永続の roll-forward 分）を確定してから閉じる(M2)。
+          const billingClose = closeOrderBillingPatch(raw, status);
+          liveOrders.patchOrder(id, { status, ...(staffStatus ? { staffStatus } : {}), ...flags, ...billingClose });
           triggerToast("ステータスを更新しました", "ok");
           setTimeout(refresh, 300);
         }}
